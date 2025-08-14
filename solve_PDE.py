@@ -6,15 +6,19 @@ from dataclasses import dataclass
 @dataclass
 class Params:
     m: float = 1.0
-    U: float = 1.0
+    U: float = 0.04          # c_s = sqrt(U*n0/m) ~ 0.2 при n0=1
     n0: float = 1.0
-    u0: float = 0.20
+    u_target: float = 0.20   # desired mean velocity
     Gamma0: float = 0.10
     w: float = 1.0
     e_charge: float = 1.0
     E0: float = 0.0
-    epsilon: float = 5.0
+    epsilon: float = 20.0    # larger -> weaker Φ contribution
     include_poisson: bool = True
+    
+    # Flow control feedback (for stabilizing mean flow)
+    feedback_Kp: float = 0.3  # proportional feedback gain
+    
     L: float = 100.0
     Nx: int = 128*8          # reduced grid for speed
     t_final: float = 50.0  # shorter horizon for demo
@@ -61,24 +65,33 @@ def phi_from_n(n, n0, epsilon, inv_k2):
     phi_hat[0] = 0.0
     return np.fft.ifft(phi_hat).real
 
+# Base field for maintaining mean flow
+Gamma_bg = Gamma_of_n(P.n0, P.Gamma0, P.w)
+E_base = Gamma_bg * P.m * P.u_target / P.e_charge
+
 def rhs_full(t, y):
     N = P.Nx
     n = y[:N]
     p = y[N:]
     n_eff = np.maximum(n, P.n_floor)
     v = p / (P.m * n_eff)
+    
+    # Mean velocity for feedback control
+    mean_u = v.mean()
+    E = E_base + P.feedback_Kp * (P.u_target - mean_u)  # uniform field with feedback
+    
     dn_dt = -Dx(n * v)
     Pi = Pi_of_np(n, p, P.m, P.U, P.n_floor)
     if P.include_poisson:
         phi = phi_from_n(n, P.n0, P.epsilon, inv_k2)
-        Ex = P.E0 - Dx(phi)
+        Ex = E - Dx(phi)
     else:
-        Ex = P.E0 * np.ones_like(n)
+        Ex = E * np.ones_like(n)
     dp_dt = -Gamma_of_n(n, P.Gamma0, P.w) * p - Dx(Pi) + P.e_charge * n * Ex
     return np.concatenate([dn_dt, dp_dt])
 
 n = P.n0 * np.ones(P.Nx)
-u = P.u0 * np.ones(P.Nx)
+u = P.u_target * np.ones(P.Nx)
 if P.mode is not None and P.amp_n != 0.0:
     kx = 2*np.pi*P.mode / P.L
     n += P.amp_n * np.cos(kx * x)
@@ -95,11 +108,23 @@ sol = solve_ivp(rhs_full, (0.0, P.t_final), y0, t_eval=t_eval,
 N = P.Nx
 n_t = sol.y[:N, :]
 p_t = sol.y[N:, :]
+v_t = p_t / (P.m * np.maximum(n_t, P.n_floor))
+mean_u = v_t.mean(axis=0)
+
+# Characteristic lines for wave propagation analysis
+c_s = np.sqrt(P.U * P.n0 / P.m)
+u_plus, u_minus = P.u_target + c_s, P.u_target - c_s
 
 plt.figure(figsize=(8, 4.5))
 extent = [x.min(), x.max(), sol.t.min(), sol.t.max()]
 plt.imshow(n_t.T, origin="lower", aspect="auto", extent=extent)
-plt.xlabel("x"); plt.ylabel("t"); plt.title("n(x,t)")
+# Characteristic lines x = x0 + (u±c_s)t
+x0 = P.L / 4
+for uu in [P.u_target, u_plus, u_minus]:
+    t_line = np.array([sol.t.min(), sol.t.max()])
+    x_line = (x0 + uu * t_line) % P.L
+    plt.plot(x_line, t_line, "--", alpha=0.7)
+plt.xlabel("x"); plt.ylabel("t"); plt.title("n(x,t) with characteristic lines")
 plt.colorbar(label="n"); plt.tight_layout(); plt.savefig("img/density_profile.png", bbox_inches='tight'); plt.savefig("img/density_profile.pdf", bbox_inches='tight')
 if not P.isPreview:
     plt.show()
@@ -121,10 +146,9 @@ plt.tight_layout(); plt.savefig("img/mass_conservation.png", bbox_inches='tight'
 if not P.isPreview:
     plt.show()
 
-mean_u = (p_t / (P.m * np.maximum(n_t, P.n_floor))).mean(axis=0)
 plt.figure(figsize=(8, 4.5))
-plt.plot(sol.t, mean_u)
-plt.xlabel("t"); plt.ylabel("⟨u⟩"); plt.title("Mean velocity vs time")
+plt.plot(sol.t, mean_u); plt.axhline(P.u_target, ls=":", alpha=0.7)
+plt.xlabel("t"); plt.ylabel("⟨u⟩"); plt.title("Mean velocity vs time (should stay ~ constant)")
 plt.tight_layout(); plt.savefig("img/mean_velocity.png", bbox_inches='tight'); plt.savefig("img/mean_velocity.pdf", bbox_inches='tight')
 if not P.isPreview:
     plt.show()
