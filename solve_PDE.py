@@ -6,9 +6,9 @@ from dataclasses import dataclass
 @dataclass
 class Params:
     m: float = 1.0
-    U: float = 0.04          # c_s = sqrt(U*n0/m) ~ 0.2 при n0=1
+    U: float = 0.09         # c_s = sqrt(U*n0/m) ~ 0.2 при n0=1
     n0: float = 1.0
-    u_target: float = 0.20   # desired mean velocity
+    u_target: float = 0.2   # desired mean velocity
     Gamma0: float = 0.10
     w: float = 1.0
     e_charge: float = 1.0
@@ -20,9 +20,9 @@ class Params:
     feedback_Kp: float = 0.3  # proportional feedback gain
     
     L: float = 100.0
-    Nx: int = 128*8          # reduced grid for speed
-    t_final: float = 50.0  # shorter horizon for demo
-    n_save: int = 160
+    Nx: int = 192
+    t_final: float = 600.0
+    n_save: int = 180
     rtol: float = 1e-6
     atol: float = 1e-8
     n_floor: float = 1e-6
@@ -99,11 +99,18 @@ if P.mode is not None and P.amp_u != 0.0:
     kx = 2*np.pi*P.mode / P.L
     u += P.amp_u * np.cos(kx * x)
 p = P.m * n * u
+
+
+# Another method proposed by Leonid while debugging: δp = 2 δn
+
+# p0 = P.m * P.n0 * P.u_target
+# p = p0 - 2.0 * P.amp_n * (-np.cos(kx * x*0))
+
 y0 = np.concatenate([n, p])
 t_eval = np.linspace(0.0, P.t_final, P.n_save)
 
 sol = solve_ivp(rhs_full, (0.0, P.t_final), y0, t_eval=t_eval,
-                method="RK45", rtol=P.rtol, atol=P.atol)
+                method="RK45", rtol=P.rtol, atol=P.atol)    # RK45 seems to work incorrectly here, while BDF model works slowly but more physically accurate
 
 N = P.Nx
 n_t = sol.y[:N, :]
@@ -115,23 +122,36 @@ mean_u = v_t.mean(axis=0)
 c_s = np.sqrt(P.U * P.n0 / P.m)
 u_plus, u_minus = P.u_target + c_s, P.u_target - c_s
 
+print(u_plus, u_minus)
+
 plt.figure(figsize=(8, 4.5))
 extent = [x.min(), x.max(), sol.t.min(), sol.t.max()]
 plt.imshow(n_t.T, origin="lower", aspect="auto", extent=extent)
 # Characteristic lines x = x0 + (u±c_s)t
 x0 = P.L / 4
-for uu in [P.u_target, u_plus, u_minus]:
+
+line_colors = ["red", "lime", "cyan"]  # Strong contrast colors
+for uu, color in zip([P.u_target, u_plus, u_minus], line_colors):
     t_line = np.array([sol.t.min(), sol.t.max()])
     x_line = (x0 + uu * t_line) % P.L
-    plt.plot(x_line, t_line, "--", alpha=0.7)
-plt.xlabel("x"); plt.ylabel("t"); plt.title("n(x,t) with characteristic lines")
+    plt.plot(
+        x_line, t_line,
+        linestyle="--",
+        linewidth=3,       # Thicker lines
+        alpha=0.95,        # Almost fully opaque
+        color=color,
+        dash_capstyle='round'
+    )
+
+
+plt.xlabel("x"); plt.ylabel("t"); plt.title("n(x,t)")
 plt.colorbar(label="n"); plt.tight_layout(); plt.savefig("img/density_profile.png", bbox_inches='tight'); plt.savefig("img/density_profile.pdf", bbox_inches='tight')
 if not P.isPreview:
     plt.show()
 
 plt.figure(figsize=(8, 4.5))
-for frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
-    idx = int(frac * (len(sol.t) - 1))
+for idx in range(0, 60, 3):
+    # idx = int(frac * (len(sol.t) - 1))
     plt.plot(x, n_t[:, idx], label=f"t={sol.t[idx]:.1f}")
 plt.xlabel("x"); plt.ylabel("n(x,t)"); plt.title("Density at different times")
 plt.legend(); plt.tight_layout(); plt.savefig("img/density_snapshots.png", bbox_inches='tight'); plt.savefig("img/density_snapshots.pdf", bbox_inches='tight')
