@@ -35,14 +35,14 @@ class P:
     e: float = 1.0
     U: float = 0.04         # barotropic EOS slope (mu' = U n)
     n0: float = 1.0
-    Gamma0: float = 0.12
+    Gamma0: float = 1.0
     w: float = 1.0
     epsilon: float = 15.0  # dielectric
     E: float = 0.035       # choose so that c_pred ~ 0.2
     # Numerics (PDE)
-    L: float = 100.0
+    L: float = 10.0
     Nx: int = 384
-    t_final: float = 60.0
+    t_final: float = 10.0
     n_save: int = 240
     rtol: float = 1e-6
     atol: float = 1e-8
@@ -93,7 +93,10 @@ def init_fields_with_u(u_target):
     n_init = par.n0 * np.ones(par.Nx)
     if par.amp_n != 0.0:
         kx = 2*np.pi*par.mode / par.L
-        n_init += par.amp_n * np.cos(kx * x)
+        # n_init += par.amp_n * np.cos(kx * x)
+        n_init += 0.01 * np.cos(5 * x)
+        # print("kx", kx)
+        # print("amp_n", par.amp_n)
     p_init = par.m * n_init * u_target
     return n_init, p_init
 
@@ -247,7 +250,7 @@ def rhs_pde(t, y):
 #                 method="BDF", rtol=par.rtol, atol=par.atol)
 
 U_desired = 0.04
-u_desired = 0
+u_desired = 0.6
 
 # 2) Set them (open-loop, no feedback to keep exactness):
 set_U_and_u(U_desired, u_desired, use_feedback=False)
@@ -373,12 +376,12 @@ print(f"c_s (cross-corr)    = {cs_corr:.6f}  [v_front≈{v_front:.6f}, u_mean≈
 
 
 
+print(f"PDE (measured): k*={k_star:.4f}, Λ_sim ≈ {Lambda_sim:.2f}, c_sim ≈ {c_sim:.4f}")
 
-# print(f"PDE (measured): k*={k_star:.4f}, Λ_sim ≈ {Lambda_sim:.2f}, c_sim ≈ {c_sim:.4f}")
-
-plt.figure(figsize=(8,4.5))
+plt.figure(figsize=(8,6))
 extent=[x.min(),x.max(),sol.t.min(),sol.t.max()]
-plt.imshow(n_t.T, origin="lower", aspect="auto", extent=extent)
+plt.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, cmap="inferno")
+plt.xlim(3,9)
 plt.xlabel("x"); plt.ylabel("t"); plt.title("Eq. (3) PDE: n(x,t)")
 plt.colorbar(label="n"); plt.tight_layout(); #plt.show()
 
