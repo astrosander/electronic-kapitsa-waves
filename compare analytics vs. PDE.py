@@ -48,8 +48,13 @@ class P:
     atol: float = 1e-8
     n_floor: float = 1e-6
     # Initial perturbation (PDE)
-    amp_n: float = 8e-3
-    mode: int = 3
+    amp_n: float = 0.004
+    mode: int = 2
+    n1: float = 0.02       # bump height; set >0 to enable (e.g., 0.1)
+    lam: float = 0.6      # λ in the Gaussian
+    x0: float = 6.0       # bump center (any x in [0,L))
+    wave_phase: float = 0.0  # optional phase shift for the cosine
+
     # Small feedback to keep <u> near c_pred
     Kp: float = 0.15
 
@@ -86,18 +91,40 @@ def set_U_and_u(U_value, u_target, use_feedback=False):
     c_pred = par.e * par.E / (par.m * Gamma_n0)
     print(f"[set_U_and_u] U={par.U:.6f}, E={par.E:.6f}, predicted u={c_pred:.6f} (target={u_target:.6f})")
 
+def periodic_delta(x, x0, L):
+    # shortest signed distance on a periodic domain of length L
+    return (x - x0 + 0.5*L) % L - 0.5*L
+
+
 def init_fields_with_u(u_target):
     """
     Build initial fields with the chosen target speed.
     """
-    n_init = par.n0 * np.ones(par.Nx)
-    if par.amp_n != 0.0:
-        kx = 2*np.pi*par.mode / par.L
-        # n_init += par.amp_n * np.cos(kx * x)
-        n_init += 0.01 * np.cos(5 * x)
-        # print("kx", kx)
-        # print("amp_n", par.amp_n)
+    # n_init = par.n0 * np.ones(par.Nx)
+
+
+    # if par.amp_n != 0.0:
+    #     kx = 2*np.pi*par.mode / par.L
+    #     # n_init += par.amp_n * np.cos(kx * x)
+    #     n_init += 0.01 * np.cos(5 * x)
+    #     # print("kx", kx)
+    #     # print("amp_n", par.amp_n)
+
+    if par.n1 != 0.0:
+        d = periodic_delta(x, par.x0, par.L)
+        n_bar = par.n0 + par.n1 * np.exp(-0.5 * par.lam * d**2)
+    else:
+        n_bar = par.n0 * np.ones(par.Nx)
+
+    n_wave = 0.0
+    if par.amp_n != 0.0 and par.mode != 0:
+        kx = 2.0 * np.pi * par.mode / par.L
+        n_wave = (par.amp_n * par.n0) * np.cos(kx * x + par.wave_phase)
+
+    n_init = np.maximum(n_bar + n_wave, par.n_floor)
     p_init = par.m * n_init * u_target
+
+    # p_init = par.m * n_init * u_target
     return n_init, p_init
 
 def measure_mean_speed(n_t, p_t):
@@ -250,7 +277,7 @@ def rhs_pde(t, y):
 #                 method="BDF", rtol=par.rtol, atol=par.atol)
 
 U_desired = 0.04
-u_desired = 0.6
+u_desired = 0.35
 
 # 2) Set them (open-loop, no feedback to keep exactness):
 set_U_and_u(U_desired, u_desired, use_feedback=False)
@@ -387,7 +414,7 @@ plt.colorbar(label="n"); plt.tight_layout(); #plt.show()
 
 plt.tight_layout()
 
-plt.savefig("img.pdf")
+plt.savefig("img.png")
 
 plt.figure(figsize=(8,4.5))
 for frac in [0.0,0.25,0.5,0.75,1.0]:
