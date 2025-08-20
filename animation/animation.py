@@ -216,37 +216,6 @@ param_sweep = [
     dict(U_desired=0.04, u_desired=0.75, n1=0.100, lam=2.20, mode=3, amp_n=0.004, x0=-2.0),
 ]
 
-# param_sweep = [
-#     # 1. Very smooth background, tiny ripple (almost uniform plasma)
-#     dict(U_desired=0.04, u_desired=0.25,
-#          n1=0.005, lam=0.30, mode=1, amp_n=0.001, x0=6.0),
-
-#     # 2. Broader bump + moderate wave train
-#     dict(U_desired=0.04, u_desired=0.32,
-#          n1=0.015, lam=0.50, mode=2, amp_n=0.003, x0=5.0),
-
-#     # 3. Narrow, sharper bump — localized scattering
-#     dict(U_desired=0.04, u_desired=0.35,
-#          n1=0.025, lam=1.20, mode=2, amp_n=0.004, x0=7.0),
-
-#     # 4. Stronger traveling wave with small bump
-#     dict(U_desired=0.04, u_desired=0.38,
-#          n1=0.010, lam=0.40, mode=3, amp_n=0.006, x0=4.0),
-
-#     # 5. Large bump, but slow carrier wave (wave feels the “hill”)
-#     dict(U_desired=0.04, u_desired=0.28,
-#          n1=0.030, lam=0.70, mode=1, amp_n=0.002, x0=6.5),
-
-#     # 6. Symmetry check: same bump, higher velocity
-#     dict(U_desired=0.04, u_desired=0.45,
-#          n1=0.030, lam=0.70, mode=1, amp_n=0.002, x0=6.5),
-
-#     # 7. Double challenge: sharp bump AND high-k wave
-#     dict(U_desired=0.04, u_desired=0.40,
-#          n1=0.020, lam=1.50, mode=4, amp_n=0.004, x0=5.5),
-# ]
-
-
 frame_idx = 1
 for cfg in param_sweep:
     # apply configuration
