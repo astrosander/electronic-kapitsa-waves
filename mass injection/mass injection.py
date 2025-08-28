@@ -21,7 +21,7 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.5#0.03
+    Dn: float = 5.0#0.03
     Dp: float = 0.1
 
     J0: float = 1.0#0.04
@@ -35,11 +35,11 @@ class P:
 
     L: float = 10.0
     Nx: int = 512
-    t_final: float = 10.0
+    t_final: float = 50.0
     n_save: int = 360
     # rtol: float = 5e-7
     # atol: float = 5e-9
-    rtol = 1e-5
+    rtol = 1e-3
     atol = 1e-7
     n_floor: float = 1e-7
     dealias_23: bool = True
@@ -168,7 +168,7 @@ def run_once(tag="drift"):
     E_base = E_base_from_drift(nbar_profile()) if par.maintain_drift in ("field","feedback") else 0.0
 
     # print(E_base)
-    E_base = 10.0#10.0
+    E_base = 15.0#10.0
 
     y0 = np.concatenate([n0, p0])
     t_eval = np.linspace(0.0, par.t_final, par.n_save)
