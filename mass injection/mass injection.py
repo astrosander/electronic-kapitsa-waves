@@ -9,21 +9,21 @@ import os
 class P:
     m: float = 1.0
     e: float = 1.0
-    U: float = 0.03
+    U: float = 0.06
     nbar0: float = 1.0
     Gamma0: float = 0.08
     w: float = 1.0
     include_poisson: bool = False
     eps: float = 20.0
 
-    u_d: float = 0.10
+    u_d: float = 0.40
     maintain_drift: str = "field"
     Kp: float = 0.15
 
     Dn: float = 0.03
-    Dp: float = 0.1#0.06
+    Dp: float = 0.06
 
-    J0: float = 0.004#0.04
+    J0: float = 0.04
     sigma_J: float = 6.0
     x0: float = 60.0
     source_model: str = "as_given"
@@ -34,14 +34,14 @@ class P:
 
     L: float = 200.0
     Nx: int = 512
-    t_final: float = 800.0
+    t_final: float = 200.0
     n_save: int = 360
     rtol: float = 5e-7
     atol: float = 5e-9
     n_floor: float = 1e-9
     dealias_23: bool = True
 
-    seed_amp_n: float = 0.0#5e-3
+    seed_amp_n: float = 5e-3
     seed_mode: int = 3
     seed_amp_p: float = 0.0
 
@@ -89,14 +89,13 @@ def nbar_profile():
         return np.full_like(x, par.nbar0)
 
 def pbar_profile(nbar):
-    # print(par.m * nbar * par.u_d)
     return par.m * nbar * par.u_d
 
 def J_profile():
     d = periodic_delta(x, par.x0, par.L)
     return par.J0 * np.exp(-0.5*(d/par.sigma_J)**2)
 
-def gamma_from_J(Jx): return np.trapz(Jx, x)#/par.L
+def gamma_from_J(Jx): return np.trapz(Jx, x)/par.L
 
 def S_injection(n, nbar, Jx, gamma):
     if par.source_model == "as_given":
@@ -121,7 +120,6 @@ def rhs(t, y, E_base):
 
     Jx = J_profile()
     gamma = gamma_from_J(Jx)
-    # print(gamma)
     SJ = S_injection(n_eff, nbar, Jx, gamma)
 
     v = p/(par.m*n_eff)
@@ -131,9 +129,7 @@ def rhs(t, y, E_base):
     else:
         E_eff = E_base
 
-    # print(Dxx(n)*1667*3)
-    # print(0.03*1667*3)
-    dn_dt = -Dx(p) + (par.Dn * Dxx(n)*1667*3 + SJ)*0.01
+    dn_dt = -Dx(p) + par.Dn * Dxx(n) + SJ
     dn_dt = filter_23(dn_dt)
 
     Pi = Pi0(n_eff) + (p**2)/(par.m*n_eff)
