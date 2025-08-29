@@ -105,7 +105,7 @@ def gamma_from_J(Jx):
 def S_injection(n, nbar, Jx, gamma):
     if par.source_model == "as_given":
         # print(f"nbar: {nbar}")
-        return Jx * nbar - gamma * (n - nbar*0)
+        return Jx * nbar - gamma * (n - nbar)
     elif par.source_model == "balanced":
         return Jx * nbar - gamma * n
     else:
