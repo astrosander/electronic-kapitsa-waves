@@ -20,8 +20,8 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.03
-    Dp: float = 0.1#0.06
+    Dn: float = 0.00
+    Dp: float = 0.06
 
     J0: float = 0.004#0.04
     sigma_J: float = 6.0
@@ -34,7 +34,7 @@ class P:
 
     L: float = 200.0
     Nx: int = 512
-    t_final: float = 800.0
+    t_final: float = 2000.0
     n_save: int = 360
     rtol: float = 5e-7
     atol: float = 5e-9
