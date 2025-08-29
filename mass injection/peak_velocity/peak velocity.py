@@ -283,20 +283,67 @@ def plot_spacetime_with_tracks(n_sub, t_sub, x_sub, levels, tracks, tag="traj"):
     print(f"[saved] {fname}")
 
 def plot_velocities(levels, tracks, tag="traj"):
-    plt.figure(figsize=(10.0, 4.0))
+    vmin = 1e-6
+    acc_thresh = 5e-3
+    min_pts = 8
+
+    plt.figure(figsize=(10.0, 4.4))
     colors = plt.cm.tab20(np.linspace(0, 1, len(levels)))
+
     for i, lev in enumerate(levels):
-        t_curve = tracks[lev]["t_grid"]
-        v = tracks[lev]["v_inst"]
-        v_mean = np.nanmean(v)
-        plt.plot(t_curve, v, color=colors[i], lw=2.0,
-                 label=rf"$n={lev:.3f}, \langle v \rangle\approx {v_mean:.3f}$")
-    plt.axhline(par.u_d, color="k", ls="--", alpha=0.6, label="drift u_d")
-    plt.xlabel("t"); plt.ylabel("trajectory speed  dx/dt")
-    plt.title("Instantaneous speeds of iso-density trajectories (cropped window)")
+        t = tracks[lev]["t_grid"]
+        x_unw = tracks[lev]["x_unwrap"].astype(float)
+
+        good0 = ~np.isnan(x_unw)
+        if good0.sum() < min_pts:
+            continue
+
+        v = np.gradient(x_unw, t)
+        a = np.gradient(v, t)
+
+        good = good0 & (v > vmin) & (np.abs(a) < acc_thresh)
+
+        plt.plot(t[good0], v[good0], color=colors[i], lw=1.0, alpha=0.25)
+
+        idx = np.flatnonzero(np.diff(good.astype(int)))
+        seg_starts = np.r_[0, idx + 1]
+        seg_ends   = np.r_[idx, len(good)-1]
+
+        for s, e in zip(seg_starts, seg_ends):
+            if not good[s]:
+                continue
+            if (e - s + 1) < min_pts:
+                continue
+
+            t_seg = t[s:e+1]
+            x_seg = x_unw[s:e+1]
+
+            coeff = np.polyfit(t_seg, x_seg, 1)
+            v_ls = coeff[0]
+
+            plt.hlines(v_ls, t_seg[0], t_seg[-1],
+                       color=colors[i], lw=2.4, alpha=0.95)
+
+        vls_list = []
+        for s, e in zip(seg_starts, seg_ends):
+            if not good[s]: continue
+            if (e - s + 1) < min_pts: continue
+            t_seg = t[s:e+1]; x_seg = x_unw[s:e+1]
+            vls_list.append(np.polyfit(t_seg, x_seg, 1)[0])
+        if len(vls_list) > 0:
+            v_med = float(np.median(vls_list))
+            plt.plot([], [], color=colors[i], lw=2.4,
+                     label=rf"$n={lev:.3f},\, v_{{\rm LS}}\!\approx\!{v_med:.3f}$")
+        else:
+            plt.plot([], [], color=colors[i], lw=2.4,
+                     label=rf"$n={lev:.3f},\, v_{{\rm LS}}\ {{\rm n/a}}$")
+
+    plt.axhline(par.u_d, color="k", ls="--", alpha=0.6, label="drift $u_d$")
+    plt.xlabel("t"); plt.ylabel("trajectory speed  $dx/dt$")
+    plt.title("Least-squares segment speeds of iso-density trajectories")
     plt.legend(ncol=2, fontsize=9, frameon=False)
     os.makedirs(par.outdir, exist_ok=True)
-    fname = f"{par.outdir}/velocities_iso_density_{tag}.png"
+    fname = f"{par.outdir}/velocities_iso_density_LS_{tag}.png"
     plt.tight_layout(); plt.savefig(fname, dpi=170); plt.close()
     print(f"[saved] {fname}")
 
@@ -311,7 +358,7 @@ if __name__ == "__main__":
 
     x_sub_preview, t_sub_preview, n_sub_preview = crop_xt(n_t, t, x, x_min=60.0, x_max=200.0, t_max=750.0)
 
-    qs = np.quantile(n_sub_preview, np.arange(0.35, 1, 0.05))
+    qs = np.quantile(n_sub_preview, np.arange(0.4, 1.0, 0.05))
     levels = [float(q) for q in qs]
     print("[levels] chosen n levels:", ", ".join(f"{lv:.6f}" for lv in levels))
 
