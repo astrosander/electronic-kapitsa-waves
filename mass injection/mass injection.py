@@ -9,36 +9,39 @@ import os
 class P:
     m: float = 1.0
     e: float = 1.0
-    U: float = 0.03
-    nbar0: float = 1.0
-    Gamma0: float = 0.08
-    w: float = 1.0
+    U: float = 1.0#0.06
+    nbar0: float = 0.2
+    Gamma0: float = 2.50#0.08
+    w: float = 5.0
     include_poisson: bool = False
     eps: float = 20.0
 
-    u_d: float = 0.10
+    u_d: float = 0.40
+    # u_d: float = .0
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.00
-    Dp: float = 0.06
+    Dn: float = 0.5#0.03
+    Dp: float = 0.1
 
-    J0: float = 0.004#0.04
-    sigma_J: float = 6.0
-    x0: float = 60.0
+    J0: float = 1.0#0.04
+    sigma_J: float = 2.0**1/2#6.0
+    x0: float = 5.0
     source_model: str = "as_given"
 
     use_nbar_gaussian: bool = False
     nbar_amp: float = 0.0
     nbar_sigma: float = 120.0
 
-    L: float = 200.0
+    L: float = 10.0
     Nx: int = 512
-    t_final: float = 2000.0
+    t_final: float = 10.0
     n_save: int = 360
-    rtol: float = 5e-7
-    atol: float = 5e-9
-    n_floor: float = 1e-9
+    # rtol: float = 5e-7
+    # atol: float = 5e-9
+    rtol = 1e-5
+    atol = 1e-7
+    n_floor: float = 1e-7
     dealias_23: bool = True
 
     seed_amp_n: float = 0.0#5e-3
@@ -89,25 +92,25 @@ def nbar_profile():
         return np.full_like(x, par.nbar0)
 
 def pbar_profile(nbar):
-    # print(par.m * nbar * par.u_d)
     return par.m * nbar * par.u_d
 
 def J_profile():
     d = periodic_delta(x, par.x0, par.L)
     return par.J0 * np.exp(-0.5*(d/par.sigma_J)**2)
 
-def gamma_from_J(Jx): return np.trapz(Jx, x)#/par.L
+def gamma_from_J(Jx): return np.trapz(Jx, x)/par.L
 
 def S_injection(n, nbar, Jx, gamma):
     if par.source_model == "as_given":
-        return Jx * nbar - gamma * (n - nbar)
+        return Jx * nbar - gamma * (n - nbar*0)
     elif par.source_model == "balanced":
         return Jx * nbar - gamma * n
     else:
         raise ValueError("source_model must be 'as_given' or 'balanced'")
 
 def E_base_from_drift(nbar):
-    return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e
+    # print(par.m * par.u_d * np.mean(Gamma(nbar)) /0.8187307530779819*40.0)
+    return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e /0.8187307530779819*40.0
 
 def rhs(t, y, E_base):
     N = par.Nx
@@ -121,7 +124,6 @@ def rhs(t, y, E_base):
 
     Jx = J_profile()
     gamma = gamma_from_J(Jx)
-    # print(gamma)
     SJ = S_injection(n_eff, nbar, Jx, gamma)
 
     v = p/(par.m*n_eff)
@@ -131,9 +133,7 @@ def rhs(t, y, E_base):
     else:
         E_eff = E_base
 
-    # print(Dxx(n)*1667*3)
-    # print(0.03*1667*3)
-    dn_dt = -Dx(p) + (par.Dn * Dxx(n)*1667*3 + SJ)*0.01
+    dn_dt = -Dx(p) + par.Dn * Dxx(n) + SJ
     dn_dt = filter_23(dn_dt)
 
     Pi = Pi0(n_eff) + (p**2)/(par.m*n_eff)
@@ -167,6 +167,9 @@ def run_once(tag="drift"):
     n0, p0 = initial_fields()
     E_base = E_base_from_drift(nbar_profile()) if par.maintain_drift in ("field","feedback") else 0.0
 
+    # print(E_base)
+    E_base = 10.0#10.0
+
     y0 = np.concatenate([n0, p0])
     t_eval = np.linspace(0.0, par.t_final, par.n_save)
 
@@ -181,6 +184,13 @@ def run_once(tag="drift"):
     n_eff_t = np.maximum(n_t, par.n_floor)
     v_t = p_t/(par.m*n_eff_t)
     print(f"[run]  <u>(t=0)={np.mean(v_t[:,0]):.4f},  <u>(t_end)={np.mean(v_t[:,-1]):.4f},  target u_d={par.u_d:.4f}")
+
+    # print(n_t.T)
+
+    # for i in n_t.T:
+    #     for j in i:
+    #         print(j, end=" ")
+    #     print()
 
     extent=[x.min(), x.max(), sol.t.min(), sol.t.max()]
     plt.figure(figsize=(9.6,4.3))
@@ -206,6 +216,7 @@ def run_once(tag="drift"):
     for frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
         j = int(frac*(len(sol.t)-1))
         plt.plot(x, n_t[:,j], label=f"t={sol.t[j]:.1f}")
+        # break
     plt.legend(); plt.xlabel("x"); plt.ylabel("n"); plt.title(f"Density snapshots  {tag}")
     plt.tight_layout(); plt.savefig(f"{par.outdir}/snapshots_n_{tag}.png", dpi=160); plt.close()
 
@@ -215,6 +226,8 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
     oldA, oldm = par.seed_amp_n, par.seed_mode
     par.seed_amp_n, par.seed_mode = A, m_pick
     t, n_t, _ = run_once(tag=f"sigma_m{m_pick}")
+
+    # print(n_t.T)
     par.seed_amp_n, par.seed_mode = oldA, oldm
 
     nhat_t = fft(n_t, axis=0)[m_pick, :]
