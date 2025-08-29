@@ -16,7 +16,7 @@ class P:
     include_poisson: bool = False
     eps: float = 20.0
 
-    u_d: float = 0.40
+    u_d: float = 14.00
     # u_d: float = .0
     maintain_drift: str = "field"
     Kp: float = 0.15
@@ -35,7 +35,7 @@ class P:
 
     L: float = 10.0
     Nx: int = 512
-    t_final: float = 50.0
+    t_final: float = 5.0
     n_save: int = 360
     # rtol: float = 5e-7
     # atol: float = 5e-9
@@ -98,10 +98,13 @@ def J_profile():
     d = periodic_delta(x, par.x0, par.L)
     return par.J0 * np.exp(-0.5*(d/par.sigma_J)**2)
 
-def gamma_from_J(Jx): return np.trapz(Jx, x)/par.L
+def gamma_from_J(Jx): 
+    # print(np.trapz(Jx, x)/par.L)
+    return np.trapz(Jx, x)/par.L
 
 def S_injection(n, nbar, Jx, gamma):
     if par.source_model == "as_given":
+        # print(f"nbar: {nbar}")
         return Jx * nbar - gamma * (n - nbar*0)
     elif par.source_model == "balanced":
         return Jx * nbar - gamma * n
