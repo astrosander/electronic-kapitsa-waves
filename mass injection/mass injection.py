@@ -301,6 +301,66 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
     finally:
         par.seed_amp_n, par.seed_mode = oldA, oldm
 
+def run_all_modes_snapshots_p(tag="snapshots_p_panels"):
+    os.makedirs(par.outdir, exist_ok=True)
+
+    modes = range(1, 6)
+    results = []
+
+    oldA, oldm = par.seed_amp_n, par.seed_mode
+
+    try:
+        for m in modes:
+            par.seed_mode = m
+            t, n_t, p_t = run_once(tag=f"m{m}")
+
+            np.savez(
+                f"{par.outdir}/snapshots_p_m{m}.npz",
+                x=x, t=t, p_t=p_t
+            )
+            print(f"[data] saved {par.outdir}/snapshots_p_m{m}.npz")
+
+            results.append((m, t, p_t))
+
+        fig, axes = plt.subplots(
+            len(modes), 1, sharex=True,
+            figsize=(10, 12),
+            constrained_layout=True
+        )
+        if not isinstance(axes, (list, np.ndarray)):
+            axes = [axes]
+
+        for ax, (m, t, p_t) in zip(axes, results):
+            for frac in [0.0, 1.0]:
+                j = int(frac*(len(t)-1))
+                ax.plot(x, p_t[:, j], lw=1.2)
+
+            ax.set_ylabel(f"m={m}", color="red", fontsize=11)
+            ax.tick_params(axis='y', labelcolor='red')
+
+        axes[-1].set_xlabel("x")
+
+        # Global caption
+        tmin, tmax = results[0][1].min(), results[0][1].max()
+        fig.text(
+            0.5, 0.01,
+            f"Snapshots shown for t = {tmin:.1f} … {tmax:.1f}",
+            ha="center", va="bottom", fontsize=12, color="black"
+        )
+
+        plt.suptitle(f"Momentum snapshots p(x,t) for modes m=1..5  [{tag}]")
+        outpath = f"{par.outdir}/snapshots_p_panels_{tag}.png"
+        plt.savefig(outpath, dpi=160)
+        outpath = f"{par.outdir}/snapshots_p_panels_{tag}.svg"
+        plt.savefig(outpath, dpi=160)
+        outpath = f"{par.outdir}/snapshots_p_panels_{tag}.pdf"
+        plt.savefig(outpath, dpi=160)
+        plt.close()
+        print(f"[plot] saved {outpath}")
+
+    finally:
+        par.seed_amp_n, par.seed_mode = oldA, oldm
+
 
 if __name__ == "__main__":
-    run_all_modes_snapshots(tag="seed_modes_1to5")
+    run_all_modes_snapshots_p(tag="seed_modes_1to5")
