@@ -21,8 +21,8 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 5.0#0.03
-    Dp: float = 0.1
+    Dn: float = 5.0#/10#0.03
+    Dp: float = 0.1/10
 
     J0: float = 1.0#0.04
     sigma_J: float = 2.0**1/2#6.0
@@ -44,9 +44,9 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 20e-3#5e-3
+    seed_amp_n: float = 20e-3
     seed_mode: int = 3
-    seed_amp_p: float = 20e-3#5e-3
+    seed_amp_p: float = 20e-3
 
     outdir: str = "out_drift"
     cmap: str = "inferno"
@@ -201,7 +201,7 @@ def run_once(tag="drift"):
     plt.xlabel("x"); plt.ylabel("t"); plt.title(f"n(x,t)  [lab]  {tag}")
     plt.colorbar(label="n")
     plt.plot([par.x0, par.x0], [sol.t.min(), sol.t.max()], 'w--', lw=1, alpha=0.7)
-    plt.tight_layout(); plt.savefig(f"{par.outdir}/spacetime_n_lab_{tag}.svg", dpi=160); plt.close()
+    plt.tight_layout(); plt.savefig(f"{par.outdir}/spacetime_n_lab_{tag}.png", dpi=160); plt.close()
 
     n_co = np.empty_like(n_t)
     for j, tj in enumerate(sol.t):
@@ -213,7 +213,7 @@ def run_once(tag="drift"):
                extent=[x.min(), x.max(), sol.t.min(), sol.t.max()], cmap=par.cmap)
     plt.xlabel("ξ = x - u_d t"); plt.ylabel("t"); plt.title(f"n(ξ,t)  [co-moving u_d={par.u_d}]  {tag}")
     plt.colorbar(label="n"); plt.tight_layout()
-    plt.savefig(f"{par.outdir}/spacetime_n_comoving_{tag}.svg", dpi=160); plt.close()
+    plt.savefig(f"{par.outdir}/spacetime_n_comoving_{tag}.png", dpi=160); plt.close()
 
     plt.figure(figsize=(9.6,3.4))
     for frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
@@ -221,7 +221,10 @@ def run_once(tag="drift"):
         plt.plot(x, n_t[:,j], label=f"t={sol.t[j]:.1f}")
         # break
     plt.legend(); plt.xlabel("x"); plt.ylabel("n"); plt.title(f"Density snapshots  {tag}")
-    plt.tight_layout(); plt.savefig(f"{par.outdir}/snapshots_n_{tag}.svg", dpi=160); plt.close()
+    plt.text(0.5, 0.08, f"Dp={par.Dp}, Dn={par.Dn}", color="red",
+         fontsize=12, ha="right", va="top", transform=plt.gca().transAxes)
+
+    plt.tight_layout(); plt.savefig(f"{par.outdir}/snapshots_n_{tag}.png", dpi=160); plt.close()
 
     return sol.t, n_t, p_t
 
