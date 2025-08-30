@@ -16,7 +16,7 @@ class P:
     include_poisson: bool = False
     eps: float = 20.0
 
-    u_d: float = 14.00
+    u_d: float = 20.00
     # u_d: float = .0
     maintain_drift: str = "field"
     Kp: float = 0.15
@@ -44,9 +44,9 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 0.0#5e-3
+    seed_amp_n: float = 20e-3#5e-3
     seed_mode: int = 3
-    seed_amp_p: float = 0.0
+    seed_amp_p: float = 20e-3#5e-3
 
     outdir: str = "out_drift"
     cmap: str = "inferno"
@@ -136,7 +136,7 @@ def rhs(t, y, E_base):
     else:
         E_eff = E_base
 
-    dn_dt = -Dx(p) + par.Dn * Dxx(n) + SJ
+    dn_dt = -Dx(p) + par.Dn * Dxx(n) + SJ *0
     dn_dt = filter_23(dn_dt)
 
     Pi = Pi0(n_eff) + (p**2)/(par.m*n_eff)
@@ -201,7 +201,7 @@ def run_once(tag="drift"):
     plt.xlabel("x"); plt.ylabel("t"); plt.title(f"n(x,t)  [lab]  {tag}")
     plt.colorbar(label="n")
     plt.plot([par.x0, par.x0], [sol.t.min(), sol.t.max()], 'w--', lw=1, alpha=0.7)
-    plt.tight_layout(); plt.savefig(f"{par.outdir}/spacetime_n_lab_{tag}.png", dpi=160); plt.close()
+    plt.tight_layout(); plt.savefig(f"{par.outdir}/spacetime_n_lab_{tag}.svg", dpi=160); plt.close()
 
     n_co = np.empty_like(n_t)
     for j, tj in enumerate(sol.t):
@@ -213,7 +213,7 @@ def run_once(tag="drift"):
                extent=[x.min(), x.max(), sol.t.min(), sol.t.max()], cmap=par.cmap)
     plt.xlabel("ξ = x - u_d t"); plt.ylabel("t"); plt.title(f"n(ξ,t)  [co-moving u_d={par.u_d}]  {tag}")
     plt.colorbar(label="n"); plt.tight_layout()
-    plt.savefig(f"{par.outdir}/spacetime_n_comoving_{tag}.png", dpi=160); plt.close()
+    plt.savefig(f"{par.outdir}/spacetime_n_comoving_{tag}.svg", dpi=160); plt.close()
 
     plt.figure(figsize=(9.6,3.4))
     for frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
@@ -221,7 +221,7 @@ def run_once(tag="drift"):
         plt.plot(x, n_t[:,j], label=f"t={sol.t[j]:.1f}")
         # break
     plt.legend(); plt.xlabel("x"); plt.ylabel("n"); plt.title(f"Density snapshots  {tag}")
-    plt.tight_layout(); plt.savefig(f"{par.outdir}/snapshots_n_{tag}.png", dpi=160); plt.close()
+    plt.tight_layout(); plt.savefig(f"{par.outdir}/snapshots_n_{tag}.svg", dpi=160); plt.close()
 
     return sol.t, n_t, p_t
 
