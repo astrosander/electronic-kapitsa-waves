@@ -274,17 +274,17 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
             axes = [axes]
 
         for ax, (m, t, n_t) in zip(axes, results):
-            for frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
+            for frac in [0.0, 1.0]:
                 j = int(frac*(len(t)-1))
                 ax.plot(x, n_t[:, j], label=f"t={t[j]:.1f}")
 
             ax.legend(fontsize=8, loc="upper right")
-            ax.set_ylabel("n")
-            ax.text(
-                -0.02, 0.5, f"m={m}",
-                transform=ax.transAxes, rotation=90,
-                va="center", ha="right", color="red", fontsize=11
-            )
+            ax.set_ylabel(f"m={m}")
+            # ax.text(
+            #     -0.02, 0.5, f"m={m}",
+            #     transform=ax.transAxes, rotation=90,
+            #     va="center", ha="right", color="red", fontsize=11
+            # )
 
         axes[-1].set_xlabel("x")
 
