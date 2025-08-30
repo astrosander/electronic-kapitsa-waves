@@ -2,8 +2,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 U0 = 1.0
-eta_p = 5e-3
-eta_n = 5e-3
+eta_p = 20e-3
+eta_n = 20e-3
 n = 0.2
 w = 5.0
 gamma0 = 2.50
@@ -43,12 +43,29 @@ mask = k_out >= 0
 k_right = k_out[mask]
 im1_right = np.imag(omega1)[mask]
 k_max_right = k_right[np.argmax(im1_right)]
-ax.axvline(k_max_right, color="blue", linestyle="--", linewidth=1.2,
+ax.axvline(k_max_right, color="black", linestyle="-", linewidth=2.0,
            label=f"max at k={k_max_right:.2f}")
 
 L = 10.0
-k_line = 6 * np.pi / L
-ax.axvline(k_line, color="red", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
+
+
+colors = ["green","red","blue","orange", "purple"]
+mirror_vals = [9,10,15,16,15]
+
+for i in range(1,6):
+    # print(i)
+    k_line = 2*i * np.pi / L
+    ax.axvline(k_line, color=colors[i-1], linestyle="--", linewidth=1.2, label=f"$m = {i}$")
+
+for i in range(1,6):
+    # print(i)
+    k_line = 2*mirror_vals[i-1] * np.pi / L
+    ax.axvline(k_line, color=colors[i-1], linestyle="-.", linewidth=1.2, label=f"$m = {i}$")
+
+
+# for i in range(1,6):
+#     k_line = 2*i * np.pi / L
+#     ax.axvline(k_line, color="green", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
 
 # k_line = 20 * np.pi / L
 # ax.axvline(k_line, color="purple", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
