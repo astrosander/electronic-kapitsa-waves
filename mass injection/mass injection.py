@@ -255,8 +255,12 @@ if __name__ == "__main__":
     par.source_model = "as_given"
     par.maintain_drift = "field" # fixed E to hold mean drift
     par.seed_mode = 1
-    par.seed_amp_n = 1e-4 * par.nbar0
-    par.seed_amp_p = 1e-4 * par.m * par.nbar0 * par.u_d
+    # par.seed_amp_n = 1e-4 * par.nbar0 / 2.2
+    # par.seed_amp_p = 1e-4 * par.m * par.nbar0 * par.u_d/ 2.2
+
+    par.seed_amp_n = 1e-05#1e-4 * par.nbar0 / 2.2
+    par.seed_amp_p = 1e-04#0.0001#1e-4 * par.m * par.nbar0 * par.u_d/ 2.2
+
 
     print(par.seed_amp_n)
     print(par.seed_amp_p)
