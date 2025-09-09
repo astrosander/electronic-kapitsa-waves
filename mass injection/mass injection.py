@@ -21,7 +21,7 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 5.0#0.03
+    Dn: float = 0.5#/10#0.03
     Dp: float = 0.1
 
     J0: float = 1.0#0.04
@@ -35,7 +35,7 @@ class P:
 
     L: float = 10.0
     Nx: int = 512
-    t_final: float = 20.0
+    t_final: float = 5.0
     n_save: int = 360
     # rtol: float = 5e-7
     # atol: float = 5e-9
@@ -44,9 +44,9 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 20e-3#5e-3
-    seed_mode: int = 3
-    seed_amp_p: float = 20e-3#5e-3
+    seed_amp_n: float = 20e-3
+    seed_mode: int = 1
+    seed_amp_p: float = 20e-3
 
     outdir: str = "out_drift"
     cmap: str = "inferno"
@@ -164,7 +164,7 @@ def initial_fields():
         p0 += par.seed_amp_p * np.cos(kx * x)
     return n0, p0
 
-def run_once(tag="drift"):
+def run_once(tag="seed_mode"):
     os.makedirs(par.outdir, exist_ok=True)
 
     n0, p0 = initial_fields()
@@ -198,7 +198,6 @@ def run_once(tag="drift"):
     extent=[x.min(), x.max(), sol.t.min(), sol.t.max()]
     plt.figure(figsize=(9.6,4.3))
     plt.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, cmap=par.cmap)
-    # plt.ylim(12,22)
     plt.xlabel("x"); plt.ylabel("t"); plt.title(f"n(x,t)  [lab]  {tag}")
     plt.colorbar(label="n")
     plt.plot([par.x0, par.x0], [sol.t.min(), sol.t.max()], 'w--', lw=1, alpha=0.7)
@@ -217,11 +216,14 @@ def run_once(tag="drift"):
     plt.savefig(f"{par.outdir}/spacetime_n_comoving_{tag}.png", dpi=160); plt.close()
 
     plt.figure(figsize=(9.6,3.4))
-    for frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
+    for frac in [0.0, 1.0]:
         j = int(frac*(len(sol.t)-1))
         plt.plot(x, n_t[:,j], label=f"t={sol.t[j]:.1f}")
         # break
     plt.legend(); plt.xlabel("x"); plt.ylabel("n"); plt.title(f"Density snapshots  {tag}")
+    plt.text(0.5, 0.08, f"Dp={par.Dp}, Dn={par.Dn}, m={par.seed_mode}", color="red",
+         fontsize=12, ha="right", va="top", transform=plt.gca().transAxes)
+
     plt.tight_layout(); plt.savefig(f"{par.outdir}/snapshots_n_{tag}.png", dpi=160); plt.close()
 
     return sol.t, n_t, p_t
@@ -241,28 +243,186 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
     print(f"[sigma] mode m={m_pick}, sigma≈{slope:+.3e}")
     return slope
 
-if __name__ == "__main__":
+# if __name__ == "__main__":
+     
+#     for i in range(1, 6):
+#         run_once(tag=f"seed_mode={par.seed_mode}")
+#         par.seed_mode+=1
+#         print(par.seed_mode)
+#     print(par.seed_mode)
+
+def run_all_modes_snapshots(tag="snapshots_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    # par.maintain_drift = "feedback"
-    # par.include_poisson = False
-    # par.source_model = "as_given"
+    modes = range(1, 60,10)
+    results = []
+
+    oldA, oldm = par.seed_amp_n, par.seed_mode
+
+    try:
+        for m in modes:
+            par.seed_mode = m
+            t, n_t, _ = run_once(tag=f"m{m}")  
+            results.append((m, t, n_t))
+
+        fig, axes = plt.subplots(
+            len(modes), 1, sharex=True,
+            figsize=(10, 12),
+            constrained_layout=True
+        )
+        if not isinstance(axes, (list, np.ndarray)):
+            axes = [axes]
+
+        for ax, (m, t, n_t) in zip(axes, results):
+            for frac in [0.0, 1.0]:
+                j = int(frac*(len(t)-1))
+                ax.plot(x, n_t[:, j], label=f"t={t[j]:.1f}")
+
+            ax.legend(fontsize=8, loc="upper right")
+            ax.set_ylabel(f"m={m}")
+            # ax.text(
+            #     -0.02, 0.5, f"m={m}",
+            #     transform=ax.transAxes, rotation=90,
+            #     va="center", ha="right", color="red", fontsize=11
+            # )
+
+        axes[-1].set_xlabel("x")
+
+        plt.suptitle(f"Density snapshots for modes m=1..5  [{tag}]")
+        outpath = f"{par.outdir}/snapshots_panels_{tag}.png"
+        plt.savefig(outpath, dpi=160)
+        outpath = f"{par.outdir}/snapshots_panels_{tag}.svg"
+        plt.savefig(outpath, dpi=160)
+        outpath = f"{par.outdir}/snapshots_panels_{tag}.pdf"
+        plt.savefig(outpath, dpi=160)
+        plt.close()
+        print(f"[plot] saved {outpath}")
+
+    finally:
+        par.seed_amp_n, par.seed_mode = oldA, oldm
+
+def run_all_modes_snapshots_p(tag="snapshots_p_panels"):
+    os.makedirs(par.outdir, exist_ok=True)
+
+    modes = range(1, 6)
+    results = []
+
+    oldA, oldm = par.seed_amp_n, par.seed_mode
+
+    try:
+        for m in modes:
+            par.seed_mode = m
+            t, n_t, p_t = run_once(tag=f"m{m}")
+
+            np.savez(
+                f"{par.outdir}/snapshots_p_m{m}.npz",
+                x=x, t=t, p_t=p_t
+            )
+            print(f"[data] saved {par.outdir}/snapshots_p_m{m}.npz")
+
+            results.append((m, t, p_t))
+
+        fig, axes = plt.subplots(
+            len(modes), 1, sharex=True,
+            figsize=(10, 12),
+            constrained_layout=True
+        )
+        if not isinstance(axes, (list, np.ndarray)):
+            axes = [axes]
+
+        for ax, (m, t, p_t) in zip(axes, results):
+            for frac in [0.0, 1.0]:
+                j = int(frac*(len(t)-1))
+                ax.plot(x, p_t[:, j], lw=1.2)
+
+            ax.set_ylabel(f"m={m}", color="red", fontsize=11)
+            ax.tick_params(axis='y', labelcolor='red')
+
+        axes[-1].set_xlabel("x")
+
+        # Global caption
+        tmin, tmax = results[0][1].min(), results[0][1].max()
+        fig.text(
+            0.5, 0.01,
+            f"Snapshots shown for t = {tmin:.1f} … {tmax:.1f}",
+            ha="center", va="bottom", fontsize=12, color="black"
+        )
+
+        plt.suptitle(f"Momentum snapshots p(x,t) for modes m=1..5  [{tag}]")
+        outpath = f"{par.outdir}/snapshots_p_panels_{tag}.png"
+        plt.savefig(outpath, dpi=160)
+        outpath = f"{par.outdir}/snapshots_p_panels_{tag}.svg"
+        plt.savefig(outpath, dpi=160)
+        outpath = f"{par.outdir}/snapshots_p_panels_{tag}.pdf"
+        plt.savefig(outpath, dpi=160)
+        plt.close()
+        print(f"[plot] saved {outpath}")
+
+    finally:
+        par.seed_amp_n, par.seed_mode = oldA, oldm
 
 
-    # --- stability test knobs ---
-    par.include_poisson = False
-    par.J0 = 0.0                 # no injection
-    par.source_model = "as_given"
-    par.maintain_drift = "field" # fixed E to hold mean drift
-    par.seed_mode = 1
-    # par.seed_amp_n = 1e-4 * par.nbar0 / 2.2
-    # par.seed_amp_p = 1e-4 * par.m * par.nbar0 * par.u_d/ 2.2
+def run_all_modes_snapshots_ratio(tag="snapshots_ratio_panels"):
+    """
+    Runs m=1..5 and plots snapshots of p/n (effective velocity).
+    Saves (x, t, ratio_t) for later redraw.
+    """
+    os.makedirs(par.outdir, exist_ok=True)
 
-    par.seed_amp_n = 1e-05#1e-4 * par.nbar0 / 2.2
-    par.seed_amp_p = 1e-04#0.0001#1e-4 * par.m * par.nbar0 * par.u_d/ 2.2
+    modes = range(1, 6)
+    results = []
+
+    oldA, oldm = par.seed_amp_n, par.seed_mode
+
+    try:
+        for m in modes:
+            par.seed_mode = m
+            t, n_t, p_t = run_once(tag=f"m{m}")
+
+            # Avoid division by zero: enforce floor like in run_once
+            n_eff_t = np.maximum(n_t, par.n_floor)
+            ratio_t = p_t / n_eff_t   # p/n
+
+            # Save data for later
+            np.savez(f"{par.outdir}/snapshots_ratio_m{m}.npz", x=x, t=t, data=ratio_t)
+            print(f"[data] saved {par.outdir}/snapshots_ratio_m{m}.npz")
+
+            results.append((m, t, ratio_t))
+
+        fig, axes = plt.subplots(len(modes), 1, sharex=True,
+                                 figsize=(10, 12), constrained_layout=True)
+        if not isinstance(axes, (list, np.ndarray)):
+            axes = [axes]
+
+        for ax, (m, t, ratio_t) in zip(axes, results):
+            for frac in [0.0, 1.0]:
+                j = int(frac*(len(t)-1))
+                ax.plot(x, ratio_t[:, j], lw=1.2)
+
+            ax.set_ylabel(f"m={m}", color="red", fontsize=11)
+            ax.tick_params(axis='y', labelcolor='red')
+
+        axes[-1].set_xlabel("x")
+
+        # Global caption
+        tmin, tmax = results[0][1].min(), results[0][1].max()
+        fig.text(0.5, 0.01,
+                 f"Snapshots shown for t = {tmin:.1f} … {tmax:.1f}",
+                 ha="center", va="bottom", fontsize=12, color="black")
+
+        plt.suptitle(f"Snapshots of p/n(x,t) for modes m=1..5  [{tag}]")
+        outpath = f"{par.outdir}/snapshots_ratio_panels_{tag}.png"
+        plt.savefig(outpath, dpi=160)
+        outpath = f"{par.outdir}/snapshots_ratio_panels_{tag}.svg"
+        plt.savefig(outpath, dpi=160)
+        outpath = f"{par.outdir}/snapshots_ratio_panels_{tag}.pdf"
+        plt.savefig(outpath, dpi=160)
+        plt.close()
+        print(f"[plot] saved {outpath}")
+
+    finally:
+        par.seed_amp_n, par.seed_mode = oldA, oldm
 
 
-    print(par.seed_amp_n)
-    print(par.seed_amp_p)
-
-    run_once(tag="drift_run")
+if __name__ == "__main__":
+    run_all_modes_snapshots(tag="seed_modes_1to5")
