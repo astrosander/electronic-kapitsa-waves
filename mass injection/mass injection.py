@@ -9,20 +9,20 @@ import os
 class P:
     m: float = 1.0
     e: float = 1.0
-    U: float = 1.0#0.06
-    nbar0: float = 0.2
+    U: float = 0.5#0.06
+    nbar0: float = 1.0#0.2
     Gamma0: float = 2.50#0.08
-    w: float = 5.0
+    w: float = 0.5
     include_poisson: bool = False
     eps: float = 20.0
 
-    u_d: float = 20.00
+    u_d: float = 0.7#0.6
     # u_d: float = .0
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 5.0#0.03
-    Dp: float = 1.0
+    Dn: float = 0.2#0.03
+    Dp: float = 0.2
 
     J0: float = 1.0#0.04
     sigma_J: float = 2.0**1/2#6.0
@@ -33,7 +33,7 @@ class P:
     nbar_amp: float = 0.0
     nbar_sigma: float = 120.0
 
-    L: float = 10.0
+    L: float = 3*80.0
     Nx: int = 512
     t_final: float = 5.0
     n_save: int = 360
@@ -44,9 +44,9 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 20e-3#5e-3
+    seed_amp_n: float = 2e-3#5e-3
     seed_mode: int = 3
-    seed_amp_p: float = 20e-3#5e-3
+    seed_amp_p: float = 2e-3#5e-3
 
     outdir: str = "out_drift"
     cmap: str = "inferno"

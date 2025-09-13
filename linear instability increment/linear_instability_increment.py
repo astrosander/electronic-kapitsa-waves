@@ -1,118 +1,67 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from dataclasses import dataclass
 
-@dataclass
-class Par:
-    m: float = 1.0
-    U0: float = 0.5          
-    n: float = 1.0           
-    w: float = 0.5           
-    Gamma0: float = 10.0     
-    Dn: float = 0.01         
-    Dp: float = 0.01         
-    N: int = 200
-    kmin: float = -8.0
-    kmax: float = 8.0
+U0 = 0.5
+eta_p = 0.2
+eta_n = 0.2
+n = 0.2
+w = 0.5
+gamma0 = 2.5
+N = 200
+kmin = -4
+kmax = 4
+Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
+fig, ax = plt.subplots()
 
-par = Par()
+u_values = [0.7]
 
-def filter_23(f):
-    fh = np.fft.fft(f)
-    N = f.shape[0]
-    kc = N//3
-    fh[kc:-kc] = 0.0
-    return np.fft.ifft(fh).real
+for u in u_values:
+    k_out = np.linspace(kmin, kmax, N)
+    omega1 = np.zeros(N, dtype=complex)
+    omega2 = np.zeros(N, dtype=complex)
+    
+    for i1 in range(N):
+        k = k_out[i1]
+        
+        gamma = gamma0 * np.exp(-n / w)
+        p = n * u
+        Pn = n * U0 - p**2 / n**2
+        Pp = 2 * p / n
+        Gamma_n = -(gamma / w)
+        Lambda = (Gamma_n - gamma / n) * p
+        
+        Delta = (gamma + 1j * k * Pp) ** 2 + 4 * 1j * k * Lambda - 4 * k**2 * Pn
+        
+        omega1[i1] = (-1j * gamma + k * Pp + 1j * np.sqrt(Delta)) / 2 - 1j * eta_p * k**2
+        omega2[i1] = (-1j * gamma + k * Pp - 1j * np.sqrt(Delta)) / 2 - 1j * eta_p * k**2
 
-def Gamma(n):            
-    return par.Gamma0 * np.exp(-n/par.w)
+    ax.plot(k_out, np.imag(omega1), label=f'u = {u}', linewidth=1.0)
+    ax.plot(k_out, np.imag(omega2), linewidth=1.0)
 
-def dGamma_dn(n):        
-    return -Gamma(n)/par.w
 
-def Pi_n(n, p, m, U):    
-    return U*n - (p**2)/(m*n**2)
+mask = k_out >= 0
+k_right = k_out[mask]
+im1_right = np.imag(omega1)[mask]
+k_max_right = k_right[np.argmax(im1_right)]
+ax.axvline(k_max_right, color="blue", linestyle="--", linewidth=1.2,
+           label=f"max at k={k_max_right:.2f}")
 
-def Pi_p(n, p, m):       
-    return 2.0*p/(m*n)
+L = 80.0
+k_line = 6 * np.pi / L
+ax.axvline(k_line, color="red", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
 
-def Lambda(n, p):        
-    g = Gamma(n)
-    gp = dGamma_dn(n)
-    return (gp - g/n)*p
+# k_line = 20 * np.pi / L
+# ax.axvline(k_line, color="purple", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
 
-def omega_pm(k, u):
-    m = par.m
-    n = par.n
-    U = par.U0
-    Dn = par.Dn
-    Dp = par.Dp
+# k_line = 12 * np.pi / L
+# ax.axvline(k_line, color="green", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
 
-    p = n*m*u
-    G = Gamma(n)
-    Lam = Lambda(n, p)          
-    Pin = Pi_n(n, p, m, U)      
-    Pip = Pi_p(n, p, m)         
+ax.grid(True)
+ax.set_xlabel('Wavenumber k')
+ax.set_ylabel('Instability increment')
+# ax.set_ylim([-5, 5])
+# ax.set_xlim([-20, 20])
+ax.legend(title='Drift velocity (u)')
+ax.set_title('Instability increments vs Wavenumber')
 
-    k = np.asarray(k, dtype=np.float64)
-    front = -1j*(G + (Dp + Dn)*k**2) + (k*Pip)
-
-    Disc = (G + (Dp - Dn)*k**2 + 1j*k*Pip)**2 + (4j*k*Lam)/m - (4*k**2*Pin)/m
-
-    sqrtDisc = np.sqrt(Disc.astype(np.complex128))  
-
-    omega_plus  = 0.5*(front + 1j*sqrtDisc)
-    omega_minus = 0.5*(front - 1j*sqrtDisc)
-    return omega_plus, omega_minus
-
-def plot_increment_vs_k(u_list, title="Instability increment vs k with $D_n, D_p$"):
-    k_out = np.linspace(par.kmin, par.kmax, par.N)
-    plt.figure(figsize=(8.8,4.6))
-    for u in u_list:
-        _, om_minus = omega_pm(k_out, u)
-        zeta = np.imag(om_minus)
-        plt.plot(k_out, zeta, lw=1.8, label=fr"$u={u:g}$")
-
-    L = 10.0
-
-    colors = ["green","red","blue","orange", "purple"]
-    mirror_vals = [9,10,15,16,15]
-
-    for i in range(1,6):
-        # print(i)
-        k_line = 2*i * np.pi / L
-        plt.axvline(k_line, color=colors[i-1], linestyle="--", linewidth=1.2, label=f"$m = {i}$")
-
-    for i in range(1,6):
-        k_line = 2*mirror_vals[i-1] * np.pi / L
-        plt.axvline(k_line, color=colors[i-1], linestyle="-.", linewidth=1.2, label=f"$m = {i}$")
-
-    mask = k_out >= 0
-    k_right = k_out[mask]
-    im1_right = np.imag(om_minus)[mask]
-    k_max_right = k_right[np.argmax(im1_right)]
-    plt.axvline(k_max_right, color="black", linestyle="-", linewidth=2.0,
-               label=f"max at k={k_max_right:.2f}")
-
-    plt.axhline(0, color="k", lw=0.8, alpha=0.6)
-    plt.grid(True, ls=":", alpha=0.5)
-    plt.xlabel("wavenumber $k$")
-    plt.ylabel("instability increment  $\\zeta(k)=\\mathrm{Im}\\,\\omega_-(k)$")
-    plt.title(title)
-    plt.legend(ncol=2, fontsize=9, frameon=False)
-    plt.tight_layout()
-    plt.savefig("linear_instability_increment.png")
-    plt.show()
-
-if __name__ == "__main__":
-    par.U0   = 0.5
-    par.n    = 1.0
-    par.w    = 5.0
-    par.Gamma0 = 2.5
-    par.Dp   = 0.1
-    par.Dn   = 0.5
-    par.N    = 200
-    par.kmin = -12.0
-    par.kmax = 12.0
-
-    plot_increment_vs_k(u_list=[20.0])
+plt.tight_layout(); plt.savefig(f"linear_instability_increment.png", dpi=160); plt.show()#plt.close()
