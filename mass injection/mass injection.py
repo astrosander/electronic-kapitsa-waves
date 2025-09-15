@@ -16,7 +16,7 @@ class P:
     include_poisson: bool = False
     eps: float = 20.0
 
-    u_d: float = 0.7#0.6
+    u_d: float = 1.0#0.6
     # u_d: float = .0
     maintain_drift: str = "field"
     Kp: float = 0.15
@@ -33,9 +33,9 @@ class P:
     nbar_amp: float = 0.0
     nbar_sigma: float = 120.0
 
-    L: float = 3*80.0
+    L: float = 80.0
     Nx: int = 512
-    t_final: float = 5.0
+    t_final: float = 10.0
     n_save: int = 360
     # rtol: float = 5e-7
     # atol: float = 5e-9
@@ -44,9 +44,9 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 2e-3#5e-3
+    seed_amp_n: float = 2e-1#5e-3
     seed_mode: int = 3
-    seed_amp_p: float = 2e-3#5e-3
+    seed_amp_p: float = 2e-1#5e-3
 
     outdir: str = "out_drift"
     cmap: str = "inferno"
@@ -136,7 +136,7 @@ def rhs(t, y, E_base):
     else:
         E_eff = E_base
 
-    dn_dt = -Dx(p) + par.Dn * Dx(n)**2 + SJ *0
+    dn_dt = -Dx(p) + par.Dn * Dxx(n) + SJ *0 + par.u_d*Dx(p)
     dn_dt = filter_23(dn_dt)
 
     Pi = Pi0(n_eff) + (p**2)/(par.m*n_eff)
@@ -146,7 +146,7 @@ def rhs(t, y, E_base):
         phi = phi_from_n(n_eff, nbar)
         force_Phi = n_eff * Dx(phi)
 
-    dp_dt = -Gamma(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dx(p)**2
+    dp_dt = -Gamma(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p) + par.u_d*Dx(n)
     dp_dt = filter_23(dp_dt)
 
     return np.concatenate([dn_dt, dp_dt])
