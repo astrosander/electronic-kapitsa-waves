@@ -4,16 +4,16 @@ import matplotlib.pyplot as plt
 U0 = 0.5
 eta_p = 0.2
 eta_n = 0.2
-n = 0.2
+n = 1.0
 w = 0.5
 gamma0 = 2.5
-N = 200
-kmin = -4
-kmax = 4
+kmin = -1
+kmax = 1
+N = 20000
 Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
 fig, ax = plt.subplots()
 
-u_values = [0.7]
+u_values = np.arange(0.1, 1.1, 0.1)#[0.7]
 
 for u in u_values:
     k_out = np.linspace(kmin, kmax, N)
@@ -35,20 +35,20 @@ for u in u_values:
         omega1[i1] = (-1j * gamma + k * Pp + 1j * np.sqrt(Delta)) / 2 - 1j * eta_p * k**2
         omega2[i1] = (-1j * gamma + k * Pp - 1j * np.sqrt(Delta)) / 2 - 1j * eta_p * k**2
 
-    ax.plot(k_out, np.imag(omega1), label=f'u = {u}', linewidth=1.0)
-    ax.plot(k_out, np.imag(omega2), linewidth=1.0)
+    ax.plot(k_out, np.imag(omega1), label=f'u = {u:.2f}', linewidth=1.0)
+    # ax.plot(k_out, np.imag(omega2), linewidth=1.0)
 
 
 mask = k_out >= 0
 k_right = k_out[mask]
 im1_right = np.imag(omega1)[mask]
 k_max_right = k_right[np.argmax(im1_right)]
-ax.axvline(k_max_right, color="blue", linestyle="--", linewidth=1.2,
-           label=f"max at k={k_max_right:.2f}")
+# ax.axvline(k_max_right, color="blue", linestyle="--", linewidth=1.2,
+           # label=f"max at k={k_max_right:.2f}")
 
 L = 80.0
 k_line = 6 * np.pi / L
-ax.axvline(k_line, color="red", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
+# ax.axvline(k_line, color="red", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
 
 # k_line = 20 * np.pi / L
 # ax.axvline(k_line, color="purple", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
