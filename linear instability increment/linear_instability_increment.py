@@ -16,7 +16,7 @@ fig, ax = plt.subplots()
 
 u_star = 0.37671861
 
-u_values = np.append(np.arange(0.3, 0.6, 0.05), u_star)
+u_values = np.arange(0.4, 0.46, 0.01)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
 
 for u in u_values:
     k_out = np.linspace(kmin, kmax, N)
@@ -41,6 +41,11 @@ for u in u_values:
     label = f'$u_\\ast = {u:.2f}$' if np.isclose(u, u_star) else f'u = {u:.2f}'
     color = 'k' if np.isclose(u, u_star) else None
     ax.plot(k_out, np.imag(omega1), label=label, linewidth=lw, color=color)
+    
+    k_intersect = 0.23561944901923448
+    omega1_intersect = np.interp(k_intersect, k_out, np.imag(omega1))
+    ax.plot(k_intersect, omega1_intersect, 'ro', markersize=3, alpha=0.7)
+    
     # ax.plot(k_out, np.imag(omega2), linewidth=lw, color=color)
 
     if np.isclose(u, u_star):
@@ -62,7 +67,8 @@ k_max_right = k_right[np.argmax(im1_right)]
 
 L = 80.0
 k_line = 6 * np.pi / L
-# ax.axvline(k_line, color="red", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
+ax.axvline(k_line, color="red", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
+print(k_line)
 
 # k_line = 20 * np.pi / L
 # ax.axvline(k_line, color="purple", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
