@@ -8,16 +8,16 @@ n = 1.0
 w = 0.5
 gamma0 = 2.5
 kmin = -0.02
-kmax = 0.1
+kmax = 0.3
 N = 20000
 Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
 fig, ax = plt.subplots()
 
-L = 628.318530718
+L = 314.15936/1.5
 
 u_star = 0.37671861
 
-u_values = np.arange(0.38, 0.39, 0.1)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
+u_values = np.arange(0.40, 0.41, 0.1)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
 
 print(u_values)
 for u in u_values:
