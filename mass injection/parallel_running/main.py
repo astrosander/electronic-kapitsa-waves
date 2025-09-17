@@ -44,7 +44,7 @@ class P:
     include_poisson: bool = False
     eps: float = 20.0
 
-    u_d: float = 0.42
+    u_d: float = 0.4
     maintain_drift: str = "field"
     Kp: float = 0.15
 
@@ -60,7 +60,7 @@ class P:
     nbar_amp: float = 0.0
     nbar_sigma: float = 120.0
 
-    L: float = 80.0
+    L: float = 314.15936/1.5
     Nx: int = 512
     t_final: float = 25.0
     n_save: int = 3600
@@ -254,40 +254,41 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
     print(f"[sigma] mode m={m_pick}, sigma≈{slope:+.3e}")
     return slope
 
-def run_all_ud_snapshots(tag="snapshots_ud_panels"):
+def run_all_modes_snapshots(tag="snapshots_modes_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    u_d_values = np.arange(0.4, 0.46, 0.01)
+    modes = range(1, 11)
     results = []
 
-    old_ud = par.u_d
+    par.u_d = 0.4
+    old_mode = par.seed_mode
 
     try:
-        for ud in u_d_values:
-            print(ud)
-            par.u_d = ud
-            t, n_t, _ = run_once(tag=f"ud{ud:.2f}")  
-            results.append((ud, t, n_t))
+        for mode in modes:
+            print(f"mode={mode}")
+            par.seed_mode = mode
+            t, n_t, _ = run_once(tag=f"mode{mode}")  
+            results.append((mode, t, n_t))
 
         fig, axes = plt.subplots(
-            len(u_d_values), 1, sharex=True,
+            len(modes), 1, sharex=True,
             figsize=(10, 12),
             constrained_layout=True
         )
         if not isinstance(axes, (list, np.ndarray)):
             axes = [axes]
 
-        for ax, (ud, t, n_t) in zip(axes, results):
+        for ax, (mode, t, n_t) in zip(axes, results):
             for frac in [1.0]:
                 j = int(frac*(len(t)-1))
                 ax.plot(x, n_t[:, j], label=f"t={t[j]:.1f}")
 
             ax.legend(fontsize=8, loc="upper right")
-            ax.set_ylabel(f"$u_d={ud:.2f}$")
+            ax.set_ylabel(f"mode={mode}")
 
         axes[-1].set_xlabel("x")
 
-        plt.suptitle(f"Density snapshots for u_d=0.1..1.0  [{tag}]")
+        plt.suptitle(f"Density snapshots for modes 1-10, u_d=0.38  [{tag}]")
         outpath = f"{par.outdir}/snapshots_panels_{tag}.png"
         plt.savefig(outpath, dpi=160)
         outpath = f"{par.outdir}/snapshots_panels_{tag}.svg"
@@ -298,7 +299,7 @@ def run_all_ud_snapshots(tag="snapshots_ud_panels"):
         print(f"[plot] saved {outpath}")
 
     finally:
-        par.u_d = old_ud
+        par.seed_mode = old_mode
 
 if __name__ == "__main__":
     os.makedirs(par.outdir, exist_ok=True)
@@ -307,4 +308,4 @@ if __name__ == "__main__":
     par.include_poisson = False
     par.source_model = "as_given"
 
-    run_all_ud_snapshots(tag="ud_comparison")
+    run_all_modes_snapshots(tag="modes_comparison")
