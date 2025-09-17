@@ -7,38 +7,52 @@ eta_n = 0.2
 n = 1.0
 w = 0.5
 gamma0 = 2.5
-kmin = -1
-kmax = 1
+kmin = -0.5
+kmax = 0.5
 N = 20000
 Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
 fig, ax = plt.subplots()
 
-u_values = np.arange(0.1, 1.1, 0.1)#[0.7]
+
+u_star = 0.37671861
+
+u_values = np.append(np.arange(0.3, 0.6, 0.05), u_star)
 
 for u in u_values:
     k_out = np.linspace(kmin, kmax, N)
     omega1 = np.zeros(N, dtype=complex)
     omega2 = np.zeros(N, dtype=complex)
     
-    for i1 in range(N):
-        k = k_out[i1]
-        
+    for i1, k in enumerate(k_out):
         gamma = gamma0 * np.exp(-n / w)
         p = n * u
         Pn = n * U0 - p**2 / n**2
         Pp = 2 * p / n
         Gamma_n = -(gamma / w)
         Lambda = (Gamma_n - gamma / n) * p
-        
-        Delta = (gamma + 1j * k * Pp) ** 2 + 4 * 1j * k * Lambda - 4 * k**2 * Pn
-        
+
+        Delta = (gamma + 1j * k * Pp) ** 2 + 4j * k * Lambda - 4 * k**2 * Pn
+
         omega1[i1] = (-1j * gamma + k * Pp + 1j * np.sqrt(Delta)) / 2 - 1j * eta_p * k**2
         omega2[i1] = (-1j * gamma + k * Pp - 1j * np.sqrt(Delta)) / 2 - 1j * eta_p * k**2
 
-    ax.plot(k_out, np.imag(omega1), label=f'u = {u:.2f}', linewidth=1.0)
-    # ax.plot(k_out, np.imag(omega2), linewidth=1.0)
+    # Highlight u_star
+    lw = 2.5 if np.isclose(u, u_star) else 1.0
+    label = f'$u_\\ast = {u:.2f}$' if np.isclose(u, u_star) else f'u = {u:.2f}'
+    color = 'k' if np.isclose(u, u_star) else None
+    ax.plot(k_out, np.imag(omega1), label=label, linewidth=lw, color=color)
+    # ax.plot(k_out, np.imag(omega2), linewidth=lw, color=color)
 
-
+    if np.isclose(u, u_star):
+        mid_idx = len(k_out) // 3  # pick a midpoint for annotation
+        ax.annotate(
+            f'$u_\\ast = {u_star:.2f}$',
+            xy=(k_out[mid_idx], np.imag(omega1[mid_idx])),   # point on the curve
+            xytext=(k_out[mid_idx]*1.2, np.imag(omega1[mid_idx]) - 0.02),  # shifted down
+            arrowprops=dict(arrowstyle="->", color='black', lw=1.5),
+            fontsize=10,
+            color='black'
+        )
 mask = k_out >= 0
 k_right = k_out[mask]
 im1_right = np.imag(omega1)[mask]
@@ -64,4 +78,4 @@ ax.set_ylabel('Instability increment')
 ax.legend(title='Drift velocity (u)')
 ax.set_title('Instability increments vs Wavenumber')
 
-plt.tight_layout(); plt.savefig(f"linear_instability_increment.png", dpi=160); plt.show()#plt.close()
+plt.tight_layout(); plt.savefig(f"linear_instability_increment.pdf", dpi=160); plt.savefig(f"linear_instability_increment.png", dpi=160); plt.show()#plt.close()
