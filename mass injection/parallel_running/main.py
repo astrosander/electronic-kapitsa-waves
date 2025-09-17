@@ -266,7 +266,7 @@ def run_all_ud_snapshots(tag="snapshots_ud_panels"):
         for ud in u_d_values:
             print(ud)
             par.u_d = ud
-            t, n_t, _ = run_once(tag=f"ud{ud:.1f}")  
+            t, n_t, _ = run_once(tag=f"ud{ud:.2f}")  
             results.append((ud, t, n_t))
 
         fig, axes = plt.subplots(
@@ -283,7 +283,7 @@ def run_all_ud_snapshots(tag="snapshots_ud_panels"):
                 ax.plot(x, n_t[:, j], label=f"t={t[j]:.1f}")
 
             ax.legend(fontsize=8, loc="upper right")
-            ax.set_ylabel(f"$u_d={ud:.1f}$")
+            ax.set_ylabel(f"$u_d={ud:.2f}$")
 
         axes[-1].set_xlabel("x")
 
