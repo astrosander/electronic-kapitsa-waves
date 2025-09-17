@@ -44,7 +44,7 @@ class P:
     include_poisson: bool = False
     eps: float = 20.0
 
-    u_d: float = 0.4
+    u_d: float = 0.0
     maintain_drift: str = "field"
     Kp: float = 0.15
 
@@ -60,7 +60,7 @@ class P:
     nbar_amp: float = 0.0
     nbar_sigma: float = 120.0
 
-    L: float = 314.15936/1.5
+    L: float = 80.0
     Nx: int = 512
     t_final: float = 25.0
     n_save: int = 3600
@@ -69,9 +69,9 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 2e-1
+    seed_amp_n: float = 2e-2
     seed_mode: int = 3
-    seed_amp_p: float = 2e-1
+    seed_amp_p: float = 2e-2
 
     outdir: str = "out_drift"
     cmap: str = "inferno"
@@ -160,7 +160,7 @@ def rhs(t, y, E_base):
     else:
         E_eff = E_base
 
-    dn_dt = -Dx(p) + par.Dn * Dxx(n) + SJ * 0 + par.u_d*Dx(p)
+    dn_dt = -Dx(p) + par.Dn * Dxx(n) + SJ * 0 + (par.u_d+33)*Dx(n)
     dn_dt = filter_23(dn_dt)
 
     Pi = Pi0(n_eff) + (p**2)/(par.m*n_eff)
@@ -170,7 +170,7 @@ def rhs(t, y, E_base):
         phi = phi_from_n(n_eff, nbar)
         force_Phi = n_eff * Dx(phi)
 
-    dp_dt = -Gamma(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p) + par.u_d*Dx(n)
+    dp_dt = -Gamma(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p) + (par.u_d+33)*Dx(p)
     dp_dt = filter_23(dp_dt)
 
     return np.concatenate([dn_dt, dp_dt])
@@ -254,41 +254,40 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
     print(f"[sigma] mode m={m_pick}, sigma≈{slope:+.3e}")
     return slope
 
-def run_all_modes_snapshots(tag="snapshots_modes_panels"):
+def run_all_ud_snapshots(tag="snapshots_ud_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    modes = range(1, 11)
+    u_d_values = np.arange(0.1, 0.9, 0.1)
     results = []
 
-    par.u_d = 0.4
-    old_mode = par.seed_mode
+    old_ud = par.u_d
 
     try:
-        for mode in modes:
-            print(f"mode={mode}")
-            par.seed_mode = mode
-            t, n_t, _ = run_once(tag=f"mode{mode}")  
-            results.append((mode, t, n_t))
+        for ud in u_d_values:
+            print(ud)
+            par.u_d = ud
+            t, n_t, _ = run_once(tag=f"ud{ud:.1f}")  
+            results.append((ud, t, n_t))
 
         fig, axes = plt.subplots(
-            len(modes), 1, sharex=True,
+            len(u_d_values), 1, sharex=True,
             figsize=(10, 12),
             constrained_layout=True
         )
         if not isinstance(axes, (list, np.ndarray)):
             axes = [axes]
 
-        for ax, (mode, t, n_t) in zip(axes, results):
+        for ax, (ud, t, n_t) in zip(axes, results):
             for frac in [1.0]:
                 j = int(frac*(len(t)-1))
                 ax.plot(x, n_t[:, j], label=f"t={t[j]:.1f}")
 
             ax.legend(fontsize=8, loc="upper right")
-            ax.set_ylabel(f"mode={mode}")
+            ax.set_ylabel(f"$u_d={ud:.1f}$")
 
         axes[-1].set_xlabel("x")
 
-        plt.suptitle(f"Density snapshots for modes 1-10, u_d=0.38  [{tag}]")
+        plt.suptitle(f"Density snapshots for u_d=0.1..1.0  [{tag}]")
         outpath = f"{par.outdir}/snapshots_panels_{tag}.png"
         plt.savefig(outpath, dpi=160)
         outpath = f"{par.outdir}/snapshots_panels_{tag}.svg"
@@ -299,7 +298,7 @@ def run_all_modes_snapshots(tag="snapshots_modes_panels"):
         print(f"[plot] saved {outpath}")
 
     finally:
-        par.seed_mode = old_mode
+        par.u_d = old_ud
 
 if __name__ == "__main__":
     os.makedirs(par.outdir, exist_ok=True)
@@ -308,4 +307,4 @@ if __name__ == "__main__":
     par.include_poisson = False
     par.source_model = "as_given"
 
-    run_all_modes_snapshots(tag="modes_comparison")
+    run_all_ud_snapshots(tag="ud_comparison")
