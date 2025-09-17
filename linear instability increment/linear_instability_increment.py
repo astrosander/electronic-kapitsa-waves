@@ -7,8 +7,8 @@ eta_n = 0.2
 n = 1.0
 w = 0.5
 gamma0 = 2.5
-kmin = -0.3
-kmax = 0.3
+kmin = -1.0
+kmax = 1.0
 N = 20000
 Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
 fig, ax = plt.subplots()
@@ -16,7 +16,7 @@ fig, ax = plt.subplots()
 
 u_star = 0.37671861
 
-u_values = np.arange(0.4, 0.46, 0.01)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
+u_values = np.arange(0.1, 0.9, 0.1)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
 
 for u in u_values:
     k_out = np.linspace(kmin, kmax, N)
