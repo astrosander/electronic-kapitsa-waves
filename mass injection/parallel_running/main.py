@@ -254,6 +254,52 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
     print(f"[sigma] mode m={m_pick}, sigma≈{slope:+.3e}")
     return slope
 
+def run_all_ud_snapshots(tag="snapshots_ud_panels"):
+    os.makedirs(par.outdir, exist_ok=True)
+
+    u_d_values = np.arange(0.1, 0.9, 0.1)
+    results = []
+
+    old_ud = par.u_d
+
+    try:
+        for ud in u_d_values:
+            print(ud)
+            par.u_d = ud
+            t, n_t, _ = run_once(tag=f"ud{ud:.1f}")  
+            results.append((ud, t, n_t))
+
+        fig, axes = plt.subplots(
+            len(u_d_values), 1, sharex=True,
+            figsize=(10, 12),
+            constrained_layout=True
+        )
+        if not isinstance(axes, (list, np.ndarray)):
+            axes = [axes]
+
+        for ax, (ud, t, n_t) in zip(axes, results):
+            for frac in [1.0]:
+                j = int(frac*(len(t)-1))
+                ax.plot(x, n_t[:, j], label=f"t={t[j]:.1f}")
+
+            ax.legend(fontsize=8, loc="upper right")
+            ax.set_ylabel(f"$u_d={ud:.1f}$")
+
+        axes[-1].set_xlabel("x")
+
+        plt.suptitle(f"Density snapshots for u_d=0.1..1.0  [{tag}]")
+        outpath = f"{par.outdir}/snapshots_panels_{tag}.png"
+        plt.savefig(outpath, dpi=160)
+        outpath = f"{par.outdir}/snapshots_panels_{tag}.svg"
+        plt.savefig(outpath, dpi=160)
+        outpath = f"{par.outdir}/snapshots_panels_{tag}.pdf"
+        plt.savefig(outpath, dpi=160)
+        plt.close()
+        print(f"[plot] saved {outpath}")
+
+    finally:
+        par.u_d = old_ud
+
 if __name__ == "__main__":
     os.makedirs(par.outdir, exist_ok=True)
 
@@ -261,4 +307,4 @@ if __name__ == "__main__":
     par.include_poisson = False
     par.source_model = "as_given"
 
-    run_once(tag="drift_run")
+    run_all_ud_snapshots(tag="ud_comparison")
