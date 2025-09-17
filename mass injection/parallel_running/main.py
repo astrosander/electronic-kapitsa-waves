@@ -257,7 +257,7 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
 def run_all_ud_snapshots(tag="snapshots_ud_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    u_d_values = np.arange(0.1, 0.9, 0.1)
+    u_d_values = np.arange(0.3, 0.7, 0.05)
     results = []
 
     old_ud = par.u_d
