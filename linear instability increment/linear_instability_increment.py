@@ -7,8 +7,8 @@ eta_n = 0.2
 n = 1.0
 w = 0.5
 gamma0 = 2.5
-kmin = -0.5
-kmax = 0.5
+kmin = -0.3
+kmax = 0.3
 N = 20000
 Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
 fig, ax = plt.subplots()
@@ -68,6 +68,7 @@ k_max_right = k_right[np.argmax(im1_right)]
 L = 80.0
 k_line = 6 * np.pi / L
 ax.axvline(k_line, color="red", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
+ax.axhline(0, color="black", linestyle="--", linewidth=1.2)
 print(k_line)
 
 # k_line = 20 * np.pi / L
