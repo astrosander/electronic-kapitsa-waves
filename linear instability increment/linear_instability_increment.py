@@ -15,7 +15,8 @@ fig, ax = plt.subplots(figsize=(10, 8))
 
 u_star = 0.37671861
 
-u_values = np.arange(2.0, 50, 2.0)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
+# Non-linear distribution: more points at smaller u_d, 8 points total from 0.5 to 100.0
+u_values = np.array([2.0, 5.0, 8.0, 10.0, 12.0, 25.0, 50.0, 100.0])
 
 L = 200*3.1415926
 k_line = 2 * np.pi / L
