@@ -2,13 +2,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 U0 = 0.5
-eta_p = 0.2*400
-eta_n = 0.2*400
+eta_p = 0.2*2000
+eta_n = 0.2*2000
 n = 1.0
 w = 0.5
 gamma0 = 2.5
-kmin = -0.2
-kmax = 0.2
+kmin = -0.02
+kmax = 0.02
 N = 20000
 Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
 fig, ax = plt.subplots()
@@ -16,10 +16,10 @@ fig, ax = plt.subplots()
 
 u_star = 0.37671861
 
-u_values = np.arange(1.0, 200.0, 2.0)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
+u_values = np.arange(1.0, 20, 1.0)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
 
-L = 250.0
-k_line = 6 * np.pi / L
+L = 200*3.1415926
+k_line = 2 * np.pi / L
 
 for u in u_values:
     k_out = np.linspace(kmin, kmax, N)

@@ -48,8 +48,8 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.2*400
-    Dp: float = 0.2*400
+    Dn: float = 0.2*2000
+    Dp: float = 0.2*2000
 
     J0: float = 1.0
     sigma_J: float = 2.0**1/2
@@ -60,9 +60,9 @@ class P:
     nbar_amp: float = 0.0
     nbar_sigma: float = 120.0
 
-    L: float = 250.0
+    L: float = 200*3.1415926
     Nx: int = 512
-    t_final: float = 40.0
+    t_final: float = 100.0
     n_save: int = 3600
     rtol: float = 1e-3
     atol: float = 1e-7
@@ -70,7 +70,7 @@ class P:
     dealias_23: bool = True
 
     seed_amp_n: float = 2e-2
-    seed_mode: int = 3
+    seed_mode: int = 1
     seed_amp_p: float = 2e-2
 
     outdir: str = "out_drift"
@@ -270,7 +270,7 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
 def run_all_ud_snapshots(tag="snapshots_ud_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    u_d_values = [200.0]#np.arange(1.0, 150.0, 10.0)#[40.0]#np.arange(0.1, 1.8, 0.2)#np.arange(0.1, 0.9, 0.1)
+    u_d_values = [12.0]#np.arange(1.0, 150.0, 10.0)#[40.0]#np.arange(0.1, 1.8, 0.2)#np.arange(0.1, 0.9, 0.1)
     results = []
 
     old_ud = par.u_d
