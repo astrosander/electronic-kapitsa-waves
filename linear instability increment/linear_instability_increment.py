@@ -2,24 +2,22 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 U0 = 0.5
-eta_p = 0.2
-eta_n = 0.2
+eta_p = 0.2*100
+eta_n = 0.2*100
 n = 1.0
 w = 0.5
 gamma0 = 2.5
-kmin = -0.02
-kmax = 0.3
+kmin = -0.8
+kmax = 0.8
 N = 20000
 Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
 fig, ax = plt.subplots()
 
-L = 314.15936/1.5
 
 u_star = 0.37671861
 
-u_values = np.arange(0.40, 0.41, 0.1)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
+u_values = np.arange(1.0, 150.0, 10.0)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
 
-print(u_values)
 for u in u_values:
     k_out = np.linspace(kmin, kmax, N)
     omega1 = np.zeros(N, dtype=complex)
@@ -44,11 +42,9 @@ for u in u_values:
     color = 'k' if np.isclose(u, u_star) else None
     ax.plot(k_out, np.imag(omega1), label=label, linewidth=lw, color=color)
     
-    for i in range(1, 11):
-        k_intersect = i * 2 * np.pi / L
-        if kmin <= k_intersect <= kmax:
-            omega1_intersect = np.interp(k_intersect, k_out, np.imag(omega1))
-            ax.plot(k_intersect, omega1_intersect, 'ro', markersize=2, alpha=0.8)
+    k_intersect = 0.23561944901923448
+    omega1_intersect = np.interp(k_intersect, k_out, np.imag(omega1))
+    ax.plot(k_intersect, omega1_intersect, 'ro', markersize=3, alpha=0.7)
     
     # ax.plot(k_out, np.imag(omega2), linewidth=lw, color=color)
 
@@ -66,18 +62,12 @@ mask = k_out >= 0
 k_right = k_out[mask]
 im1_right = np.imag(omega1)[mask]
 k_max_right = k_right[np.argmax(im1_right)]
-ax.axvline(k_max_right, color="blue", linestyle="--", linewidth=1.2,
-           label=f"max at k={k_max_right:.3f}")
+# ax.axvline(k_max_right, color="blue", linestyle="--", linewidth=1.2,
+           # label=f"max at k={k_max_right:.2f}")
 
-print(L)
-
-for i in range(1, 11):
-    k_line = i * 2 * np.pi / L
-    ax.axvline(k_line, color="red", linestyle="--", linewidth=0.5, alpha=0.8, label=f"$k = {i}\\pi/{L:.0f}$" if i == 1 else "")
-    print(k_line)
-
-k_line = 2 * np.pi / L
-# ax.axvline(k_line, color="red", linestyle="--", linewidth=1.2, label=f"$k = 2\\pi/{L:.0f}$")
+L = 80.0
+k_line = 6 * np.pi / L
+ax.axvline(k_line, color="red", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
 ax.axhline(0, color="black", linestyle="--", linewidth=1.2)
 print(k_line)
 

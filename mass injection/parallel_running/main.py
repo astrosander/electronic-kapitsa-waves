@@ -48,8 +48,8 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.2
-    Dp: float = 0.2
+    Dn: float = 0.2*100
+    Dp: float = 0.2*100
 
     J0: float = 1.0
     sigma_J: float = 2.0**1/2
@@ -62,7 +62,7 @@ class P:
 
     L: float = 80.0
     Nx: int = 512
-    t_final: float = 25.0
+    t_final: float = 40.0
     n_save: int = 3600
     rtol: float = 1e-3
     atol: float = 1e-7
@@ -140,6 +140,18 @@ def S_injection(n, nbar, Jx, gamma):
 def E_base_from_drift(nbar):
     return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e / 0.8187307530779819 * 40.0
 
+def estimate_frame_speed(n, p, prev_Uc):
+    """Return Uc to use this step."""
+    if par.frame_mode == "lab":
+        return 0.0
+    if par.frame_mode == "co_fixed":
+        return par.Uc
+    # co_auto: use mean velocity as a proxy for pattern speed (smoothed)
+    n_eff = np.maximum(n, par.n_floor)
+    u_mean = float(np.mean(p/(par.m*n_eff)))
+    return (1.0 - par.alpha_Uc)*prev_Uc + par.alpha_Uc*u_mean
+
+
 def rhs(t, y, E_base):
     N = par.Nx
     n = y[:N]
@@ -160,17 +172,17 @@ def rhs(t, y, E_base):
     else:
         E_eff = E_base
 
-    dn_dt = -Dx(p) + par.Dn * Dxx(n) + SJ * 0 + (par.u_d+33)*Dx(n)
+    dn_dt = -Dx(p- (37*0)*n) + par.Dn * Dxx(n) + SJ * 0 #+ (33)*Dx(n)
     dn_dt = filter_23(dn_dt)
 
     Pi = Pi0(n_eff) + (p**2)/(par.m*n_eff)
-    grad_Pi = Dx(Pi)
+    grad_Pi = Dx(Pi - (37*0)*p)
     force_Phi = 0.0
     if par.include_poisson:
         phi = phi_from_n(n_eff, nbar)
         force_Phi = n_eff * Dx(phi)
 
-    dp_dt = -Gamma(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p) + (par.u_d+33)*Dx(p)
+    dp_dt = -Gamma(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p) #+ (33)*Dx(p)
     dp_dt = filter_23(dp_dt)
 
     return np.concatenate([dn_dt, dp_dt])
@@ -220,24 +232,25 @@ def run_once(tag="drift"):
     plt.plot([par.x0, par.x0], [sol.t.min(), sol.t.max()], 'w--', lw=1, alpha=0.7)
     plt.tight_layout(); plt.savefig(f"{par.outdir}/spacetime_n_lab_{tag}.png", dpi=160); plt.close()
 
-    n_co = np.empty_like(n_t)
-    for j, tj in enumerate(sol.t):
-        shift = (par.u_d * tj) % par.L
-        s_idx = int(np.round(shift/dx)) % par.Nx
-        n_co[:, j] = np.roll(n_t[:, j], -s_idx)
-    plt.figure(figsize=(9.6,4.3))
-    plt.imshow(n_co.T, origin="lower", aspect="auto",
-               extent=[x.min(), x.max(), sol.t.min(), sol.t.max()], cmap=par.cmap)
-    plt.xlabel("ξ = x - u_d t"); plt.ylabel("t"); plt.title(f"n(ξ,t)  [co-moving u_d={par.u_d}]  {tag}")
-    plt.colorbar(label="n"); plt.tight_layout()
-    plt.savefig(f"{par.outdir}/spacetime_n_comoving_{tag}.png", dpi=160); plt.close()
+    # n_co = np.empty_like(n_t)
+    # for j, tj in enumerate(sol.t):
+    #     shift = (par.u_d * tj) % par.L
+    #     s_idx = int(np.round(shift/dx)) % par.Nx
+    #     n_co[:, j] = np.roll(n_t[:, j], -s_idx)
+    # plt.figure(figsize=(9.6,4.3))
+    # plt.imshow(n_co.T, origin="lower", aspect="auto",
+    #            extent=[x.min(), x.max(), sol.t.min(), sol.t.max()], cmap=par.cmap)
+    # plt.xlabel("ξ = x - u_d t"); plt.ylabel("t"); plt.title(f"n(ξ,t)  [co-moving u_d={par.u_d}]  {tag}")
+    # plt.colorbar(label="n"); plt.tight_layout()
+    # plt.savefig(f"{par.outdir}/spacetime_n_comoving_{tag}.png", dpi=160); plt.close()
 
     plt.figure(figsize=(9.6,3.4))
     for frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
         j = int(frac*(len(sol.t)-1))
         plt.plot(x, n_t[:,j], label=f"t={sol.t[j]:.1f}")
     plt.legend(); plt.xlabel("x"); plt.ylabel("n"); plt.title(f"Density snapshots  {tag}")
-    plt.tight_layout();plt.savefig(f"{par.outdir}/snapshots_n_{tag}.pdf", dpi=160); plt.savefig(f"{par.outdir}/snapshots_n_{tag}.png", dpi=160); plt.close()
+    plt.tight_layout();#plt.savefig(f"{par.outdir}/snapshots_n_{tag}.pdf", dpi=160); 
+    plt.savefig(f"{par.outdir}/snapshots_n_{tag}.png", dpi=160); plt.close()
 
     return sol.t, n_t, p_t
 
@@ -257,7 +270,7 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
 def run_all_ud_snapshots(tag="snapshots_ud_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    u_d_values = np.arange(0.1, 0.9, 0.1)
+    u_d_values = np.arange(1.0, 150.0, 10.0)#[40.0]#np.arange(0.1, 1.8, 0.2)#np.arange(0.1, 0.9, 0.1)
     results = []
 
     old_ud = par.u_d
@@ -290,10 +303,10 @@ def run_all_ud_snapshots(tag="snapshots_ud_panels"):
         plt.suptitle(f"Density snapshots for u_d=0.1..1.0  [{tag}]")
         outpath = f"{par.outdir}/snapshots_panels_{tag}.png"
         plt.savefig(outpath, dpi=160)
-        outpath = f"{par.outdir}/snapshots_panels_{tag}.svg"
-        plt.savefig(outpath, dpi=160)
-        outpath = f"{par.outdir}/snapshots_panels_{tag}.pdf"
-        plt.savefig(outpath, dpi=160)
+        # outpath = f"{par.outdir}/snapshots_panels_{tag}.svg"
+        # plt.savefig(outpath, dpi=160)
+        # outpath = f"{par.outdir}/snapshots_panels_{tag}.pdf"
+        # plt.savefig(outpath, dpi=160)
         plt.close()
         print(f"[plot] saved {outpath}")
 
@@ -306,5 +319,11 @@ if __name__ == "__main__":
     par.maintain_drift = "feedback"
     par.include_poisson = False
     par.source_model = "as_given"
+
+    par.frame_mode = "co_fixed"  # "lab" | "co_fixed" | "co_auto"
+    par.Uc = 37.0                # co-moving speed if co_fixed
+    par.alpha_Uc = 0.05          # smoothing for co_auto (0..1)
+    par.use_source = False       # toggle S-injection in tests
+
 
     run_all_ud_snapshots(tag="ud_comparison")
