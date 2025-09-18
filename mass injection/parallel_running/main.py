@@ -7,6 +7,7 @@ os.environ["NUMEXPR_NUM_THREADS"] = str(NTHREADS)
 import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
+import json
 
 from scipy.fft import fft, ifft, fftfreq, set_workers
 from scipy.integrate import solve_ivp
@@ -62,7 +63,7 @@ class P:
 
     L: float = 200*3.1415926
     Nx: int = 512
-    t_final: float = 10.0
+    t_final: float = 50.0
     n_save: int = 3600
     rtol: float = 1e-3
     atol: float = 1e-7
@@ -146,7 +147,6 @@ def estimate_frame_speed(n, p, prev_Uc):
         return 0.0
     if par.frame_mode == "co_fixed":
         return par.Uc
-    # co_auto: use mean velocity as a proxy for pattern speed (smoothed)
     n_eff = np.maximum(n, par.n_floor)
     u_mean = float(np.mean(p/(par.m*n_eff)))
     return (1.0 - par.alpha_Uc)*prev_Uc + par.alpha_Uc*u_mean
@@ -244,7 +244,7 @@ def run_once(tag="drift"):
     # plt.colorbar(label="n"); plt.tight_layout()
     # plt.savefig(f"{par.outdir}/spacetime_n_comoving_{tag}.png", dpi=160); plt.close()
 
-    plt.figure(figsize=(9.6,3.4))
+    plt.figure(figsize=(12.0,3.4))
     for frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
         j = int(frac*(len(sol.t)-1))
         plt.plot(x, n_t[:,j], label=f"t={sol.t[j]:.1f}")
@@ -267,20 +267,81 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
     print(f"[sigma] mode m={m_pick}, sigma≈{slope:+.3e}")
     return slope
 
+def save_simulation_data(t, n_t, p_t, u_d_val, tag=""):
+    param_str = f"ud{u_d_val:.1f}_U{par.U:.2f}_G{par.Gamma0:.2f}_w{par.w:.2f}_Dn{par.Dn:.0f}_Dp{par.Dp:.0f}_L{par.L:.0f}_Nx{par.Nx}_tf{par.t_final:.1f}"
+    filename_base = f"sim_data_{param_str}_{tag}" if tag else f"sim_data_{param_str}"
+    
+    data_file = f"{par.outdir}/{filename_base}.npz"
+    np.savez_compressed(data_file, t=t, n_t=n_t, p_t=p_t, x=x, u_d=u_d_val)
+    
+    metadata = {k: getattr(par, k) for k in ['U', 'Gamma0', 'w', 'nbar0', 'Dn', 'Dp', 'L', 'Nx', 't_final', 'n_save', 'rtol', 'atol', 'maintain_drift', 'include_poisson', 'source_model', 'seed_amp_n', 'seed_amp_p', 'seed_mode', 'eps', 'e', 'm', 'J0', 'sigma_J', 'x0', 'use_nbar_gaussian', 'nbar_amp', 'nbar_sigma', 'dealias_23', 'n_floor', 'Kp']}
+    metadata['u_d'] = float(u_d_val)
+    
+    with open(f"{par.outdir}/{filename_base}_params.json", 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    print(f"[save] Saved: {data_file}")
+    return data_file
+
+def load_simulation_data(data_file):
+    data = np.load(data_file)
+    return data['t'], data['n_t'], data['p_t'], data['x'], data['u_d']
+
+def recreate_plots_from_saved_data(data_pattern="sim_data_*.npz", tag="recreated"):
+    import glob
+    data_files = sorted(glob.glob(f"{par.outdir}/{data_pattern}"))
+    if not data_files: return
+    
+    results = []
+    for data_file in data_files:
+        try:
+            t, n_t, p_t, x_data, u_d_val = load_simulation_data(data_file)
+            results.append((u_d_val, t, n_t, p_t))
+        except: continue
+    
+    if not results: return
+    results.sort(key=lambda x: x[0])
+    
+    fig, axes = plt.subplots(len(results), 1, sharex=True, figsize=(10, 12), constrained_layout=True)
+    if not isinstance(axes, (list, np.ndarray)): axes = [axes]
+    
+    for ax, (u_d_val, t, n_t, p_t) in zip(axes, results):
+        ax.plot(x_data, n_t[:, -1], label=f"t={t[-1]:.1f}")
+        ax.legend(fontsize=8)
+        ax.set_ylabel(f"$u_d={u_d_val:.1f}$")
+    
+    axes[-1].set_xlabel("x")
+    plt.suptitle(f"Density snapshots [{tag}]")
+    plt.savefig(f"{par.outdir}/snapshots_panels_{tag}.png", dpi=160)
+    plt.close()
+    
+    for u_d_val, t, n_t, p_t in results:
+        extent = [x_data.min(), x_data.max(), t.min(), t.max()]
+        plt.figure(figsize=(9.6, 4.3))
+        plt.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, cmap=par.cmap)
+        plt.xlabel("x"); plt.ylabel("t"); plt.title(f"n(x,t) u_d={u_d_val:.1f}")
+        plt.colorbar(label="n"); plt.tight_layout()
+        plt.savefig(f"{par.outdir}/spacetime_n_lab_ud{u_d_val:.1f}_{tag}.png", dpi=160)
+        plt.close()
+    
+    return results
+
 def run_all_ud_snapshots(tag="snapshots_ud_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    u_d_values = [100.0]#np.arange(1.0, 150.0, 10.0)#[40.0]#np.arange(0.1, 1.8, 0.2)#np.arange(0.1, 0.9, 0.1)
+    u_d_values = np.array([2.0, 5.0, 8.0, 10.0, 12.0, 25.0, 50.0, 100.0])
     results = []
 
     old_ud = par.u_d
 
     try:
         for ud in u_d_values:
-            print(ud)
+            print(f"[run] Starting simulation for u_d = {ud}")
             par.u_d = ud
-            t, n_t, _ = run_once(tag=f"ud{ud:.1f}")  
+            t, n_t, p_t = run_once(tag=f"ud{ud:.1f}")  
             results.append((ud, t, n_t))
+            
+            save_simulation_data(t, n_t, p_t, ud, tag=f"ud{ud:.1f}")
 
         fig, axes = plt.subplots(
             len(u_d_values), 1, sharex=True,
@@ -303,10 +364,10 @@ def run_all_ud_snapshots(tag="snapshots_ud_panels"):
         plt.suptitle(f"Density snapshots for u_d=0.1..1.0  [{tag}]")
         outpath = f"{par.outdir}/snapshots_panels_{tag}.png"
         plt.savefig(outpath, dpi=160)
-        # outpath = f"{par.outdir}/snapshots_panels_{tag}.svg"
-        # plt.savefig(outpath, dpi=160)
-        # outpath = f"{par.outdir}/snapshots_panels_{tag}.pdf"
-        # plt.savefig(outpath, dpi=160)
+        outpath = f"{par.outdir}/snapshots_panels_{tag}.svg"
+        plt.savefig(outpath, dpi=160)
+        outpath = f"{par.outdir}/snapshots_panels_{tag}.pdf"
+        plt.savefig(outpath, dpi=160)
         plt.close()
         print(f"[plot] saved {outpath}")
 
@@ -320,10 +381,9 @@ if __name__ == "__main__":
     par.include_poisson = False
     par.source_model = "as_given"
 
-    par.frame_mode = "co_fixed"  # "lab" | "co_fixed" | "co_auto"
-    par.Uc = 37.0                # co-moving speed if co_fixed
-    par.alpha_Uc = 0.05          # smoothing for co_auto (0..1)
-    par.use_source = False       # toggle S-injection in tests
-
+    par.frame_mode = "co_fixed"
+    par.Uc = 37.0
+    par.alpha_Uc = 0.05
+    par.use_source = False
 
     run_all_ud_snapshots(tag="ud_comparison")
