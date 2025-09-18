@@ -11,12 +11,11 @@ kmin = -0.02
 kmax = 0.02
 N = 20000
 Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
-fig, ax = plt.subplots()
-
+fig, ax = plt.subplots(figsize=(10, 8))
 
 u_star = 0.37671861
 
-u_values = np.arange(1.0, 20, 1.0)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
+u_values = np.arange(2.0, 50, 2.0)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
 
 L = 200*3.1415926
 k_line = 2 * np.pi / L
@@ -50,6 +49,18 @@ for u in u_values:
     ax.plot(k_intersect, omega1_intersect, 'ro', markersize=3, alpha=0.7)
     
     # ax.plot(k_out, np.imag(omega2), linewidth=lw, color=color)
+    
+    # Find and plot maximum for k > 0
+    mask = k_out > 0
+    if np.any(mask):
+        k_right = k_out[mask]
+        im1_right = np.imag(omega1)[mask]
+        max_idx = np.argmax(im1_right)
+        k_max_right = k_right[max_idx]
+        im1_max_right = im1_right[max_idx]
+        
+        # Plot dark small dot at maximum
+        ax.plot(k_max_right, im1_max_right, 'ko', markersize=2, alpha=0.8)
 
     if np.isclose(u, u_star):
         mid_idx = len(k_out) // 3  # pick a midpoint for annotation
@@ -61,13 +72,6 @@ for u in u_values:
             fontsize=10,
             color='black'
         )
-mask = k_out >= 0
-k_right = k_out[mask]
-im1_right = np.imag(omega1)[mask]
-k_max_right = k_right[np.argmax(im1_right)]
-# ax.axvline(k_max_right, color="blue", linestyle="--", linewidth=1.2,
-           # label=f"max at k={k_max_right:.2f}")
-
 
 ax.axvline(k_line, color="red", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
 ax.axhline(0, color="black", linestyle="--", linewidth=1.2)
