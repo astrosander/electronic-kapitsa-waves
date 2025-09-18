@@ -2,13 +2,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 U0 = 0.5
-eta_p = 0.2*100
-eta_n = 0.2*100
+eta_p = 0.2*400
+eta_n = 0.2*400
 n = 1.0
 w = 0.5
 gamma0 = 2.5
-kmin = -0.8
-kmax = 0.8
+kmin = -0.2
+kmax = 0.2
 N = 20000
 Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
 fig, ax = plt.subplots()
@@ -16,7 +16,10 @@ fig, ax = plt.subplots()
 
 u_star = 0.37671861
 
-u_values = np.arange(1.0, 150.0, 10.0)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
+u_values = np.arange(1.0, 200.0, 2.0)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
+
+L = 250.0
+k_line = 6 * np.pi / L
 
 for u in u_values:
     k_out = np.linspace(kmin, kmax, N)
@@ -42,7 +45,7 @@ for u in u_values:
     color = 'k' if np.isclose(u, u_star) else None
     ax.plot(k_out, np.imag(omega1), label=label, linewidth=lw, color=color)
     
-    k_intersect = 0.23561944901923448
+    k_intersect = k_line#0.23561944901923448
     omega1_intersect = np.interp(k_intersect, k_out, np.imag(omega1))
     ax.plot(k_intersect, omega1_intersect, 'ro', markersize=3, alpha=0.7)
     
@@ -65,8 +68,7 @@ k_max_right = k_right[np.argmax(im1_right)]
 # ax.axvline(k_max_right, color="blue", linestyle="--", linewidth=1.2,
            # label=f"max at k={k_max_right:.2f}")
 
-L = 80.0
-k_line = 6 * np.pi / L
+
 ax.axvline(k_line, color="red", linestyle="--", linewidth=1.2, label=f"$k = 6\\pi/{L:.0f}$")
 ax.axhline(0, color="black", linestyle="--", linewidth=1.2)
 print(k_line)
