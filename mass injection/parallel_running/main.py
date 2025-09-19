@@ -49,8 +49,8 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.2*5
-    Dp: float = 0.2*5
+    Dn: float = 0.2
+    Dp: float = 0.2
 
     J0: float = 1.0
     sigma_J: float = 2.0**1/2
@@ -61,9 +61,9 @@ class P:
     nbar_amp: float = 0.0
     nbar_sigma: float = 120.0
 
-    L: float = 10*3.1415926
+    L: float = 314.15936/1.5
     Nx: int = 512
-    t_final: float = 10.0
+    t_final: float = 1.0
     n_save: int = 3600
     rtol: float = 1e-3
     atol: float = 1e-7
@@ -172,11 +172,11 @@ def rhs(t, y, E_base):
     else:
         E_eff = E_base
 
-    dn_dt = -Dx(p- (47)*n) + par.Dn * Dxx(n) + SJ * 0 #+ (33)*Dx(n)
+    dn_dt = -Dx(p- (7)*n) + par.Dn * Dxx(n) + SJ * 0 #+ (33)*Dx(n)
     dn_dt = filter_23(dn_dt)
 
     Pi = Pi0(n_eff) + (p**2)/(par.m*n_eff)
-    grad_Pi = Dx(Pi - (47)*p)
+    grad_Pi = Dx(Pi - (7)*p)
     force_Phi = 0.0
     if par.include_poisson:
         phi = phi_from_n(n_eff, nbar)
@@ -329,7 +329,7 @@ def recreate_plots_from_saved_data(data_pattern="sim_data_*.npz", tag="recreated
 def run_all_ud_snapshots(tag="snapshots_ud_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    u_d_values = np.linspace(0.1, 1.5, num=8)#np.array([2.0, 5.0, 8.0, 10.0, 12.0, 25.0, 50.0, 100.0])
+    u_d_values = np.linspace(0.40, 0.41, num=8)#np.array([2.0, 5.0, 8.0, 10.0, 12.0, 25.0, 50.0, 100.0])
     # u_d_values = [0.9]#np.linspace(0.1, 1.5, num=8)#[2.0]#np.array([2.0, 5.0, 8.0, 10.0, 12.0, 25.0, 50.0, 100.0])
     results = []
 
@@ -375,6 +375,122 @@ def run_all_ud_snapshots(tag="snapshots_ud_panels"):
     finally:
         par.u_d = old_ud
 
+def run_mode_comparison(u_d_fixed=0.40, tag="mode_comparison"):
+    """Run simulations for fixed u_d and varying seed modes from 1 to 10"""
+    os.makedirs(par.outdir, exist_ok=True)
+
+    modes = list(range(1, 11))  # modes 1 to 10
+    results = []
+
+    old_ud = par.u_d
+    old_seed_mode = par.seed_mode
+
+    try:
+        par.u_d = u_d_fixed
+        
+        for mode in modes:
+            print(f"[run] Starting simulation for mode = {mode}, u_d = {u_d_fixed}")
+            par.seed_mode = mode
+            t, n_t, p_t = run_once(tag=f"mode{mode}_ud{u_d_fixed:.2f}")  
+            results.append((mode, t, n_t, p_t))
+            
+            save_simulation_data(t, n_t, p_t, u_d_fixed, tag=f"mode{mode}")
+
+        # Create panel plot showing final snapshots for all modes
+        fig, axes = plt.subplots(
+            len(modes), 1, sharex=True,
+            figsize=(12, 15),
+            constrained_layout=True
+        )
+        if not isinstance(axes, (list, np.ndarray)):
+            axes = [axes]
+
+        for ax, (mode, t, n_t, p_t) in zip(axes, results):
+            # Plot final time snapshot
+            j = -1  # final time
+            ax.plot(x, n_t[:, j], label=f"t={t[j]:.1f}", linewidth=1.5)
+            
+            # Also plot initial condition for comparison
+            ax.plot(x, n_t[:, 0], '--', alpha=0.5, label=f"t={t[0]:.1f}")
+
+            ax.legend(fontsize=8, loc="upper right")
+            ax.set_ylabel(f"mode {mode}")
+            ax.grid(True, alpha=0.3)
+
+        axes[-1].set_xlabel("x")
+        plt.suptitle(f"Density snapshots for modes 1-10, u_d={u_d_fixed:.2f}  [{tag}]")
+        
+        for ext in ['png', 'svg', 'pdf']:
+            outpath = f"{par.outdir}/snapshots_modes_{tag}.{ext}"
+            plt.savefig(outpath, dpi=160)
+        plt.close()
+        print(f"[plot] saved mode comparison plots")
+
+        # Create spacetime plots for selected modes
+        selected_modes = [1, 3, 5, 7, 10]  # Show a subset for clarity
+        for mode, t, n_t, p_t in results:
+            if mode in selected_modes:
+                extent = [x.min(), x.max(), t.min(), t.max()]
+                plt.figure(figsize=(10, 5))
+                plt.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, cmap=par.cmap)
+                plt.xlabel("x"); plt.ylabel("t")
+                plt.title(f"n(x,t) mode={mode}, u_d={u_d_fixed:.2f}")
+                plt.colorbar(label="n")
+                plt.tight_layout()
+                plt.savefig(f"{par.outdir}/spacetime_n_mode{mode}_ud{u_d_fixed:.2f}_{tag}.png", dpi=160)
+                plt.close()
+
+        # Create growth rate analysis plot
+        plt.figure(figsize=(10, 6))
+        growth_rates = []
+        
+        for mode, t, n_t, p_t in results:
+            # Calculate growth rate from Fourier mode amplitude
+            nhat_t = fft(n_t, axis=0)[mode, :]
+            amp = np.abs(nhat_t)
+            
+            # Fit exponential growth in early time (avoid noise at very early times)
+            i0 = max(2, int(0.1*len(t)))
+            i1 = int(0.5*len(t))
+            
+            if i1 > i0:
+                try:
+                    slope = np.polyfit(t[i0:i1], np.log(amp[i0:i1] + 1e-30), 1)[0]
+                    growth_rates.append(slope)
+                    
+                    # Plot the amplitude evolution
+                    plt.semilogy(t, amp, label=f"mode {mode} (σ≈{slope:.3f})")
+                except:
+                    growth_rates.append(0.0)
+            else:
+                growth_rates.append(0.0)
+        
+        plt.xlabel("t"); plt.ylabel("Amplitude |n̂_m(t)|")
+        plt.title(f"Mode amplitude evolution, u_d={u_d_fixed:.2f}")
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(f"{par.outdir}/mode_amplitudes_{tag}.png", dpi=160, bbox_inches='tight')
+        plt.close()
+
+        # Plot growth rates vs mode number
+        plt.figure(figsize=(8, 5))
+        plt.plot(modes, growth_rates, 'o-', linewidth=2, markersize=6)
+        plt.xlabel("Mode number"); plt.ylabel("Growth rate σ")
+        plt.title(f"Growth rate vs mode number, u_d={u_d_fixed:.2f}")
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.savefig(f"{par.outdir}/growth_rates_vs_mode_{tag}.png", dpi=160)
+        plt.close()
+
+        print(f"[analysis] Growth rates by mode: {dict(zip(modes, growth_rates))}")
+
+    finally:
+        par.u_d = old_ud
+        par.seed_mode = old_seed_mode
+
+    return results
+
 if __name__ == "__main__":
     os.makedirs(par.outdir, exist_ok=True)
 
@@ -382,9 +498,5 @@ if __name__ == "__main__":
     par.include_poisson = False
     par.source_model = "as_given"
 
-    par.frame_mode = "co_fixed"
-    par.Uc = 37.0
-    par.alpha_Uc = 0.05
-    par.use_source = False
-
-    run_all_ud_snapshots(tag="ud_comparison")
+    # Run mode comparison for fixed u_d = 0.40 and modes 1-10
+    run_mode_comparison(u_d_fixed=0.40, tag="mode_comparison")
