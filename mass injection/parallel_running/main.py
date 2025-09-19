@@ -172,11 +172,11 @@ def rhs(t, y, E_base):
     else:
         E_eff = E_base
 
-    dn_dt = -Dx(p- (30)*n) + par.Dn * Dxx(n) + SJ * 0 #+ (33)*Dx(n)
+    dn_dt = -Dx(p- (47)*n) + par.Dn * Dxx(n) + SJ * 0 #+ (33)*Dx(n)
     dn_dt = filter_23(dn_dt)
 
     Pi = Pi0(n_eff) + (p**2)/(par.m*n_eff)
-    grad_Pi = Dx(Pi - (30)*p)
+    grad_Pi = Dx(Pi - (47)*p)
     force_Phi = 0.0
     if par.include_poisson:
         phi = phi_from_n(n_eff, nbar)
