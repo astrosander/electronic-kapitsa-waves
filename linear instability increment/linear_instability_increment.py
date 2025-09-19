@@ -7,11 +7,11 @@ eta_n = 0.2*5
 n = 1.0
 w = 0.5
 gamma0 = 2.5
-kmin = -1.0
-kmax = 1.0
+kmin = -0.5
+kmax = 0.5
 N = 20000
 Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
-fig, ax = plt.subplots(figsize=(10, 8))
+fig, ax = plt.subplots(figsize=(10, 6))
 
 u_star = 0.37671861
 
