@@ -49,8 +49,8 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.2*2000
-    Dp: float = 0.2*2000
+    Dn: float = 0.2*5
+    Dp: float = 0.2*5
 
     J0: float = 1.0
     sigma_J: float = 2.0**1/2
@@ -61,9 +61,9 @@ class P:
     nbar_amp: float = 0.0
     nbar_sigma: float = 120.0
 
-    L: float = 200*3.1415926
+    L: float = 10*3.1415926
     Nx: int = 512
-    t_final: float = 50.0
+    t_final: float = 10.0
     n_save: int = 3600
     rtol: float = 1e-3
     atol: float = 1e-7
@@ -71,7 +71,7 @@ class P:
     dealias_23: bool = True
 
     seed_amp_n: float = 2e-2
-    seed_mode: int = 1
+    seed_mode: int = 3
     seed_amp_p: float = 2e-2
 
     outdir: str = "out_drift"
@@ -172,11 +172,11 @@ def rhs(t, y, E_base):
     else:
         E_eff = E_base
 
-    dn_dt = -Dx(p- (37*0)*n) + par.Dn * Dxx(n) + SJ * 0 #+ (33)*Dx(n)
+    dn_dt = -Dx(p- (30)*n) + par.Dn * Dxx(n) + SJ * 0 #+ (33)*Dx(n)
     dn_dt = filter_23(dn_dt)
 
     Pi = Pi0(n_eff) + (p**2)/(par.m*n_eff)
-    grad_Pi = Dx(Pi - (37*0)*p)
+    grad_Pi = Dx(Pi - (30)*p)
     force_Phi = 0.0
     if par.include_poisson:
         phi = phi_from_n(n_eff, nbar)
@@ -329,7 +329,7 @@ def recreate_plots_from_saved_data(data_pattern="sim_data_*.npz", tag="recreated
 def run_all_ud_snapshots(tag="snapshots_ud_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    u_d_values = np.array([2.0, 5.0, 8.0, 10.0, 12.0, 25.0, 50.0, 100.0])
+    u_d_values = [0.9]#np.linspace(0.1, 1.5, num=8)#[2.0]#np.array([2.0, 5.0, 8.0, 10.0, 12.0, 25.0, 50.0, 100.0])
     results = []
 
     old_ud = par.u_d

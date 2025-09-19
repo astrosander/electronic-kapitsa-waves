@@ -2,13 +2,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 U0 = 0.5
-eta_p = 0.2*2000
-eta_n = 0.2*2000
+eta_p = 0.2*5
+eta_n = 0.2*5
 n = 1.0
 w = 0.5
 gamma0 = 2.5
-kmin = -0.02
-kmax = 0.02
+kmin = -1.0
+kmax = 1.0
 N = 20000
 Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
 fig, ax = plt.subplots(figsize=(10, 8))
@@ -16,9 +16,11 @@ fig, ax = plt.subplots(figsize=(10, 8))
 u_star = 0.37671861
 
 # Non-linear distribution: more points at smaller u_d, 8 points total from 0.5 to 100.0
-u_values = np.array([2.0, 5.0, 8.0, 10.0, 12.0, 25.0, 50.0, 100.0])
+u_values = np.linspace(0.1, 1.5, num=8)#np.array([4.0, 5.0, 6.0, 7.0, 8.0])#, 5.0, 8.0, 10.0, 12.0, 25.0, 50.0, 100.0])
 
-L = 200*3.1415926
+print(u_values)
+
+L = 10*3.1415926
 k_line = 2 * np.pi / L
 
 for u in u_values:
