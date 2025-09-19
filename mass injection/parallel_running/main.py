@@ -63,7 +63,7 @@ class P:
 
     L: float = 314.15936/1.5
     Nx: int = 512
-    t_final: float = 1.0
+    t_final: float = 5.0
     n_save: int = 3600
     rtol: float = 1e-3
     atol: float = 1e-7
