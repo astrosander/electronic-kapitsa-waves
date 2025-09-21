@@ -46,7 +46,7 @@ class P:
 
     seed_amp_n: float = 5e-3
     seed_mode: int = 1
-    seed_amp_p: float = 5e-3
+    seed_amp_p: float = 0e-3
 
     outdir: str = "out_drift"
     cmap: str = "inferno"
