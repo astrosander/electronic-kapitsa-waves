@@ -34,7 +34,7 @@ class P:
     nbar_sigma: float = 120.0
 
     L: float = 10.0
-    Nx: int = 812
+    Nx: int = 512*2
     t_final: float = 5.0
     n_save: int = 360
     # rtol: float = 5e-7
@@ -157,43 +157,11 @@ def initial_fields():
     n0 = nbar.copy()
     p0 = pbar.copy()
     if par.seed_amp_n != 0.0 and par.seed_mode != 0:
-        if par.seed_mode == 1:
-            kx1 = 2*np.pi*3 / par.L
-            kx2 = 2*np.pi*5 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 2:
-            kx1 = 2*np.pi*5 / par.L
-            kx2 = 2*np.pi*8 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 3:
-            kx1 = 2*np.pi*8 / par.L
-            kx2 = 2*np.pi*15 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 4:
-            kx1 = 2*np.pi*7 / par.L
-            kx2 = 2*np.pi*13 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
-
+        kx = 2*np.pi*par.seed_mode / par.L
+        n0 += par.seed_amp_n * np.cos(kx * x)
     if par.seed_amp_p != 0.0 and par.seed_mode != 0:
-        if par.seed_mode == 1:
-            kx1 = 2*np.pi*3 / par.L
-            kx2 = 2*np.pi*5 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 2:
-            kx1 = 2*np.pi*5 / par.L
-            kx2 = 2*np.pi*8 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 3:
-            kx1 = 2*np.pi*8 / par.L
-            kx2 = 2*np.pi*15 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 4:
-            kx1 = 2*np.pi*7 / par.L
-            kx2 = 2*np.pi*13 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-            
-        # kx = 2*np.pi*par.seed_mode / par.L
-        # p0 += par.seed_amp_p * np.cos(kx * x)
+        kx = 2*np.pi*par.seed_mode / par.L
+        p0 += par.seed_amp_p * np.cos(kx * x)
     return n0, p0
 
 def run_once(tag="seed_mode"):
@@ -286,7 +254,7 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
 def run_all_modes_snapshots(tag="snapshots_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    modes = range(1,5)
+    modes = range(6,11)
     results = []
 
     oldA, oldm = par.seed_amp_n, par.seed_mode
@@ -311,16 +279,7 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
                 ax.plot(x, n_t[:, j], label=f"t={t[j]:.1f}")
 
             ax.legend(fontsize=8, loc="upper right")
-            
-            if m == 1:
-                ax.set_ylabel(r"$\delta n \sim \cos(3x) + \cos(5x)$")
-            elif m == 2:
-                ax.set_ylabel(r"$\delta n \sim \cos(5x) + \cos(8x)$")
-            elif m == 3:
-                ax.set_ylabel(r"$\delta n \sim \cos(8x) + \cos(15x)$")
-            elif m == 4:
-                ax.set_ylabel(r"$\delta n \sim \cos(7x) + \cos(13x)$")
-            # ax.set_ylabel(f"m={m}")
+            ax.set_ylabel(f"m={m}")
             # ax.text(
             #     -0.02, 0.5, f"m={m}",
             #     transform=ax.transAxes, rotation=90,
