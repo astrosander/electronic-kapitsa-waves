@@ -21,7 +21,7 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.5#/10#0.03
+    Dn: float = 0.1#/10#0.03
     Dp: float = 0.1
 
     J0: float = 1.0#0.04
@@ -33,9 +33,9 @@ class P:
     nbar_amp: float = 0.0
     nbar_sigma: float = 120.0
 
-    L: float = 10.0
+    L: float = 20.0
     Nx: int = 512*2
-    t_final: float = 5.0
+    t_final: float = 20.0
     n_save: int = 360
     # rtol: float = 5e-7
     # atol: float = 5e-9
@@ -254,7 +254,7 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
 def run_all_modes_snapshots(tag="snapshots_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    modes = range(6,11)
+    modes = range(1,8)
     results = []
 
     oldA, oldm = par.seed_amp_n, par.seed_mode

@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 U0 = 1.0
-eta_p = 0.5
+eta_p = 0.1
 eta_n = 0.1
 n = 0.2
 w = 5.0
@@ -13,7 +13,7 @@ N = 20000
 Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
 fig, ax = plt.subplots()
 
-L = 10.0#314.15936/1.5
+L = 20.0#314.15936/1.5
 
 u_star = 0.37671861
 
