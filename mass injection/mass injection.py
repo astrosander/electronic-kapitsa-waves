@@ -44,9 +44,9 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 20e-3
+    seed_amp_n: float = 10e-3
     seed_mode: int = 1
-    seed_amp_p: float = 20e-3
+    seed_amp_p: float = 10e-3
 
     outdir: str = "out_drift"
     cmap: str = "inferno"
@@ -160,8 +160,7 @@ def initial_fields():
         if par.seed_mode == 1:
             kx1 = 2*np.pi*3 / par.L
             kx2 = 2*np.pi*5 / par.L
-            kx3 = 2*np.pi*8 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x)+np.cos(kx2 * x))
+            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
         if par.seed_mode == 2:
             kx1 = 2*np.pi*5 / par.L
             kx2 = 2*np.pi*8 / par.L
@@ -179,8 +178,7 @@ def initial_fields():
         if par.seed_mode == 1:
             kx1 = 2*np.pi*3 / par.L
             kx2 = 2*np.pi*5 / par.L
-            kx3 = 2*np.pi*8 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x)+np.cos(kx3 * x))
+            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
         if par.seed_mode == 2:
             kx1 = 2*np.pi*5 / par.L
             kx2 = 2*np.pi*8 / par.L
@@ -288,7 +286,7 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
 def run_all_modes_snapshots(tag="snapshots_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    modes = range(1,2)
+    modes = range(1,5)
     results = []
 
     oldA, oldm = par.seed_amp_n, par.seed_mode
@@ -315,7 +313,7 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
             ax.legend(fontsize=8, loc="upper right")
             
             if m == 1:
-                ax.set_ylabel(r"$\delta n \sim \cos(3x) + \cos(5x) + \cos(8x)$")
+                ax.set_ylabel(r"$\delta n \sim \cos(3x) + \cos(5x)$")
             elif m == 2:
                 ax.set_ylabel(r"$\delta n \sim \cos(5x) + \cos(8x)$")
             elif m == 3:
