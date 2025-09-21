@@ -47,8 +47,8 @@ class P:
 
     u_d: float = 0.0
     maintain_drift: str = "field"
-    Kp: float = 0.15
 
+    Kp: float = 0.15
     Dn: float = 0.2
     Dp: float = 0.2
 
@@ -62,7 +62,7 @@ class P:
     nbar_sigma: float = 120.0
 
     L: float = 314.15936/1.5
-    Nx: int = 512
+    Nx: int = 512*5
     t_final: float = 5.0
     n_save: int = 3600
     rtol: float = 1e-3
@@ -193,11 +193,24 @@ def initial_fields():
     n0 = nbar.copy()
     p0 = pbar.copy()
     if par.seed_amp_n != 0.0 and par.seed_mode != 0:
-        kx = 2*np.pi*par.seed_mode / par.L
-        n0 += par.seed_amp_n * np.cos(kx * x)
+        # kx = 2*np.pi*par.seed_mode / par.L
+        # n0 += par.seed_amp_n * np.cos(kx * x)
+
+        kx1 = 2*7 / par.L
+        kx2 = 2*13 / par.L
+        n0 += par.seed_amp_n * np.cos(kx1 * x) + par.seed_amp_n * np.cos(kx2 * x)
+
     if par.seed_amp_p != 0.0 and par.seed_mode != 0:
-        kx = 2*np.pi*par.seed_mode / par.L
-        p0 += par.seed_amp_p * np.cos(kx * x)
+
+        kx1 = 2*7 / par.L
+        kx2 = 2*13 / par.L
+        p0 += par.seed_amp_p * np.cos(kx1 * x) + par.seed_amp_p * np.cos(kx2 * x)
+
+        # n0 += par.seed_amp_n * np.cos(kx1 * x)+par.seed_amp_n * np.cos(kx2 * x)
+
+
+        # kx = 2*np.pi*par.seed_mode / par.L
+        # p0 += par.seed_amp_p * np.cos(kx * x)
     return n0, p0
 
 def run_once(tag="drift"):
