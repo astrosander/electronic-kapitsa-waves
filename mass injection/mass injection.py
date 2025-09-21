@@ -254,7 +254,7 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
 def run_all_modes_snapshots(tag="snapshots_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    modes = [10,15]#range(1, 6)
+    modes = [10,15x]#range(1, 6)
     results = []
 
     oldA, oldm = par.seed_amp_n, par.seed_mode
