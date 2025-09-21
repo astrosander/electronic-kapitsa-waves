@@ -1,23 +1,23 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-U0 = 0.5
-eta_p = 0.2
-eta_n = 0.2
-n = 1.0
-w = 0.5
+U0 = 1.0
+eta_p = 0.5
+eta_n = 0.1
+n = 0.2
+w = 5.0
 gamma0 = 2.5
-kmin = -0.02
-kmax = 0.3
+kmin = -3.5
+kmax = 3.5
 N = 20000
 Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
 fig, ax = plt.subplots()
 
-L = 314.15936/1.5
+L = 10.0#314.15936/1.5
 
 u_star = 0.37671861
 
-u_values = np.arange(0.40, 0.41, 0.1)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
+u_values = [20]#np.arange(0.40, 0.41, 0.1)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
 
 print(u_values)
 for u in u_values:
@@ -71,7 +71,7 @@ ax.axvline(k_max_right, color="blue", linestyle="--", linewidth=1.2,
 
 print(L)
 
-for i in range(1, 11):
+for i in range(1, 6):
     k_line = i * 2 * np.pi / L
     ax.axvline(k_line, color="red", linestyle="--", linewidth=0.5, alpha=0.8, label=f"$k = {i}\\pi/{L:.0f}$" if i == 1 else "")
     print(k_line)
