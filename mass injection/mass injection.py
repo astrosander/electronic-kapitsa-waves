@@ -19,7 +19,7 @@ class P:
     u_d: float = 20.00
     # u_d: float = .0
     maintain_drift: str = "field"
-    Kp: float = 1.0
+    Kp: float = 0.15
 
     Dn: float = 0.5#/10#0.03
     Dp: float = 0.1
@@ -34,8 +34,8 @@ class P:
     nbar_sigma: float = 120.0
 
     L: float = 10.0
-    Nx: int = 512*4
-    t_final: float = 5.0
+    Nx: int = 812
+    t_final: float = 1.0
     n_save: int = 360
     # rtol: float = 5e-7
     # atol: float = 5e-9
@@ -69,28 +69,6 @@ def filter_23(f):
     fh[kc:-kc] = 0.0
     return (ifft(fh)).real
 
-def observed_lambda_from_fft(n_t, x, t, mode="late", frac=0.1):
-    if mode == "early":
-        j_start = 0
-        j_end = max(2, int(frac * len(t)))
-    else:  # late
-        j_start = int((1-frac) * len(t))
-        j_end = len(t)
-    
-    dn = n_t[:, j_start:j_end] - np.mean(n_t[:, j_start:j_end], axis=0, keepdims=True)
-
-    nhat = fft(dn, axis=0)
-    power = np.mean(np.abs(nhat)**2, axis=1)
-
-    m = np.arange(par.Nx)
-    mpos = m[1:par.Nx//2 + 1]
-    i = np.argmax(power[1:par.Nx//2 + 1])
-    m_obs = int(mpos[i])
-
-    k_obs = 2*np.pi*m_obs / par.L
-    lambda_obs = par.L / m_obs
-    return m_obs, float(k_obs), float(lambda_obs)
-
 def Gamma(n):
     return par.Gamma0 * np.exp(-np.maximum(n, par.n_floor)/par.w)
 
@@ -105,6 +83,16 @@ def phi_from_n(n, nbar):
     return (ifft(phi_hat)).real
 
 def periodic_delta(x, x0, L): return (x - x0 + 0.5*L) % L - 0.5*L
+
+def _power_spectrum_1d(n_slice, L):
+    """Return one-sided k>0 spectrum of a single spatial slice."""
+    N = n_slice.size
+    dn = n_slice - np.mean(n_slice)          # remove k=0 (mean)
+    nhat = fft(dn)
+    P = (nhat * np.conj(nhat)).real / (N*N)  # power (normalized)
+    m = np.arange(N//2 + 1)                  # nonnegative modes
+    kpos = 2*np.pi*m / L
+    return kpos[1:], P[1:N//2+1]             # drop k=0
 
 def nbar_profile():
     if par.use_nbar_gaussian and par.nbar_amp != 0.0:
@@ -135,7 +123,7 @@ def S_injection(n, nbar, Jx, gamma):
 
 def E_base_from_drift(nbar):
     # print(par.m * par.u_d * np.mean(Gamma(nbar)) /0.8187307530779819*40.0)
-    return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e 
+    return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e /0.8187307530779819*40.0
 
 def rhs(t, y, E_base):
     N = par.Nx
@@ -179,59 +167,81 @@ def initial_fields():
     n0 = nbar.copy()
     p0 = pbar.copy()
     if par.seed_amp_n != 0.0 and par.seed_mode != 0:
-        kx = 2*np.pi*par.seed_mode / par.L
-        n0 += par.seed_amp_n * np.cos(kx * x)
-
-        # if par.seed_mode == 1:
-        #     kx1 = 2*np.pi*3 / par.L
-        #     kx2 = 2*np.pi*5 / par.L
-        #     n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        # if par.seed_mode == 2:
-        #     kx1 = 2*np.pi*5 / par.L
-        #     kx2 = 2*np.pi*8 / par.L
-        #     n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        # if par.seed_mode == 3:
-        #     kx1 = 2*np.pi*8 / par.L
-        #     kx2 = 2*np.pi*15 / par.L
-        #     n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        # if par.seed_mode == 4:
-        #     kx1 = 2*np.pi*7 / par.L
-        #     kx2 = 2*np.pi*13 / par.L
-        #     n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        if par.seed_mode == 1:
+            kx1 = 2*np.pi*3 / par.L
+            kx2 = 2*np.pi*5 / par.L
+            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        if par.seed_mode == 2:
+            kx1 = 2*np.pi*5 / par.L
+            kx2 = 2*np.pi*8 / par.L
+            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        if par.seed_mode == 3:
+            kx1 = 2*np.pi*8 / par.L
+            kx2 = 2*np.pi*15 / par.L
+            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        if par.seed_mode == 4:
+            kx1 = 2*np.pi*7 / par.L
+            kx2 = 2*np.pi*13 / par.L
+            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
 
     if par.seed_amp_p != 0.0 and par.seed_mode != 0:
-        kx = 2*np.pi*par.seed_mode / par.L
-        p0 += par.seed_amp_p * np.cos(kx * x)
-
-        # if par.seed_mode == 1:
-        #     kx1 = 2*np.pi*3 / par.L
-        #     kx2 = 2*np.pi*5 / par.L
-        #     p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        # if par.seed_mode == 2:
-        #     kx1 = 2*np.pi*5 / par.L
-        #     kx2 = 2*np.pi*8 / par.L
-        #     p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        # if par.seed_mode == 3:
-        #     kx1 = 2*np.pi*8 / par.L
-        #     kx2 = 2*np.pi*15 / par.L
-        #     p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        # if par.seed_mode == 4:
-        #     kx1 = 2*np.pi*7 / par.L
-        #     kx2 = 2*np.pi*13 / par.L
-        #     p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        if par.seed_mode == 1:
+            kx1 = 2*np.pi*3 / par.L
+            kx2 = 2*np.pi*5 / par.L
+            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        if par.seed_mode == 2:
+            kx1 = 2*np.pi*5 / par.L
+            kx2 = 2*np.pi*8 / par.L
+            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        if par.seed_mode == 3:
+            kx1 = 2*np.pi*8 / par.L
+            kx2 = 2*np.pi*15 / par.L
+            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        if par.seed_mode == 4:
+            kx1 = 2*np.pi*7 / par.L
+            kx2 = 2*np.pi*13 / par.L
+            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
             
         # kx = 2*np.pi*par.seed_mode / par.L
         # p0 += par.seed_amp_p * np.cos(kx * x)
     return n0, p0
 
+def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
+    """Overlay t=0 and t=t_end spectra; optional vertical k_marks."""
+    k0, P0 = _power_spectrum_1d(n_t[:, 0],   L)
+    k1, P1 = _power_spectrum_1d(n_t[:, -1],  L)
+
+    i0 = np.argmax(P0); i1 = np.argmax(P1)
+    k0_peak, k1_peak = k0[i0], k1[i1]
+
+    plt.figure(figsize=(8.6, 4.2))
+    plt.semilogy(k0, P0, label="t = 0")
+    plt.semilogy(k1, P1, label=f"t = {t[-1]:.2f}")
+    plt.semilogy([k0_peak], [P0[i0]], "o", ms=6, label=f"peak0 k={k0_peak:.3f}")
+    plt.semilogy([k1_peak], [P1[i1]], "s", ms=6, label=f"peak1 k={k1_peak:.3f}")
+
+    for km in k_marks:                        # e.g. theoretical k0
+        plt.axvline(km, color="k", ls="--", lw=1, alpha=0.6)
+
+    plt.xlabel("wavenumber k")
+    plt.ylabel("power |n̂(k)|²")
+    plt.title("Fourier spectrum of n(x,t): initial vs final")
+    plt.grid(True, which="both", alpha=0.3)
+    plt.legend(frameon=False, ncol=2)
+    os.makedirs(par.outdir, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(f"{par.outdir}/fft_compare_{tag}.png", dpi=160)
+    plt.savefig(f"{par.outdir}/fft_compare_{tag}.pdf", dpi=160)
+    plt.close()
+
 def run_once(tag="seed_mode"):
     os.makedirs(par.outdir, exist_ok=True)
 
     n0, p0 = initial_fields()
-    E_base = E_base_from_drift(nbar_profile())# if par.maintain_drift in ("field","feedback") else 0.0
-    print(E_base)
+    E_base = E_base_from_drift(nbar_profile()) if par.maintain_drift in ("field","feedback") else 0.0
+
     # print(E_base)
-    # E_base = 15.0#10.0
+    E_base = 15.0#10.0
 
     y0 = np.concatenate([n0, p0])
     t_eval = np.linspace(0.0, par.t_final, par.n_save)
@@ -247,11 +257,6 @@ def run_once(tag="seed_mode"):
     n_eff_t = np.maximum(n_t, par.n_floor)
     v_t = p_t/(par.m*n_eff_t)
     print(f"[run]  <u>(t=0)={np.mean(v_t[:,0]):.4f},  <u>(t_end)={np.mean(v_t[:,-1]):.4f},  target u_d={par.u_d:.4f}")
-
-    mE, kE, lamE = observed_lambda_from_fft(n_t, x, sol.t, "early")
-    mL, kL, lamL = observed_lambda_from_fft(n_t, x, sol.t, "late")
-    print(f"[obs/early]  m={mE}, k={kE:.4f}, λ={lamE:.4f}")
-    print(f"[obs/late ]  m={mL}, k={kL:.4f}, λ={lamL:.4f}")
 
     # print(n_t.T)
 
@@ -289,12 +294,10 @@ def run_once(tag="seed_mode"):
     plt.text(0.5, 0.08, f"Dp={par.Dp}, Dn={par.Dn}, m={par.seed_mode}", color="red",
          fontsize=12, ha="right", va="top", transform=plt.gca().transAxes)
 
-    xphase = np.linspace(x.min(), x.max(), 400)
-    ref = (n_t[:, -1].max() - n_t[:, -1].min()) * 0.05
-    plt.plot(xphase, np.mean(n_t[:, -1]) + ref*np.cos(kL*(xphase-xphase[0])),
-             lw=1.0, alpha=0.7, ls='--', label=f"obs λ≈{lamL:.3f}")
-
     plt.tight_layout(); plt.savefig(f"{par.outdir}/snapshots_n_{tag}.png", dpi=160); plt.close()
+
+    # Plot initial vs final Fourier spectra
+    plot_fft_initial_last(n_t, sol.t, par.L, tag=tag, k_marks=())
 
     return sol.t, n_t, p_t
 
@@ -350,15 +353,15 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
 
             ax.legend(fontsize=8, loc="upper right")
             
-            # if m == 1:
-            #     ax.set_ylabel(r"$\delta n \sim \cos(3x) + \cos(5x)$")
-            # elif m == 2:
-            #     ax.set_ylabel(r"$\delta n \sim \cos(5x) + \cos(8x)$")
-            # elif m == 3:
-            #     ax.set_ylabel(r"$\delta n \sim \cos(8x) + \cos(15x)$")
-            # elif m == 4:
-            #     ax.set_ylabel(r"$\delta n \sim \cos(7x) + \cos(13x)$")
-            ax.set_ylabel(f"m={m}")
+            if m == 1:
+                ax.set_ylabel(r"$\delta n \sim \cos(3x) + \cos(5x)$")
+            elif m == 2:
+                ax.set_ylabel(r"$\delta n \sim \cos(5x) + \cos(8x)$")
+            elif m == 3:
+                ax.set_ylabel(r"$\delta n \sim \cos(8x) + \cos(15x)$")
+            elif m == 4:
+                ax.set_ylabel(r"$\delta n \sim \cos(7x) + \cos(13x)$")
+            # ax.set_ylabel(f"m={m}")
             # ax.text(
             #     -0.02, 0.5, f"m={m}",
             #     transform=ax.transAxes, rotation=90,
@@ -382,10 +385,4 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
 
 
 if __name__ == "__main__":
-    # run_all_modes_snapshots(tag="seed_modes_1to5")
-
-    t, n_t, _ = run_once(tag="compare")
-    mE, kE, lamE = observed_lambda_from_fft(n_t, x, t, "early")
-    mL, kL, lamL = observed_lambda_from_fft(n_t, x, t, "late")
-    print(f"[obs/early]  m={mE}, k={kE:.4f}, λ={lamE:.4f}")
-    print(f"[obs/late ]  m={mL}, k={kL:.4f}, λ={lamL:.4f}")
+    run_all_modes_snapshots(tag="seed_modes_1to5")
