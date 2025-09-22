@@ -135,7 +135,7 @@ def S_injection(n, nbar, Jx, gamma):
 
 def E_base_from_drift(nbar):
     # print(par.m * par.u_d * np.mean(Gamma(nbar)) /0.8187307530779819*40.0)
-    return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e /0.8187307530779819*40.0
+    return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e 
 
 def rhs(t, y, E_base):
     N = par.Nx
@@ -228,10 +228,10 @@ def run_once(tag="seed_mode"):
     os.makedirs(par.outdir, exist_ok=True)
 
     n0, p0 = initial_fields()
-    # E_base = E_base_from_drift(nbar_profile())# if par.maintain_drift in ("field","feedback") else 0.0
-
+    E_base = E_base_from_drift(nbar_profile())# if par.maintain_drift in ("field","feedback") else 0.0
+    print(E_base)
     # print(E_base)
-    E_base = 15.0#10.0
+    # E_base = 15.0#10.0
 
     y0 = np.concatenate([n0, p0])
     t_eval = np.linspace(0.0, par.t_final, par.n_save)
