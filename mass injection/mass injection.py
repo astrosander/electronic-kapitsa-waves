@@ -234,6 +234,54 @@ def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
     plt.savefig(f"{par.outdir}/fft_compare_{tag}.pdf", dpi=160)
     plt.close()
 
+def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False):
+    """
+    results: list of tuples (m, t, n_t) from run_all_modes_snapshots
+    Plots the power spectrum of n(x, t_final) for each run on the SAME axes.
+    """
+    # Beautiful color palette
+    colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#96CEB4', '#FFEAA7', '#DDA0DD', '#98D8C8', '#F7DC6F']
+    markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p']
+    
+    plt.figure(figsize=(10.0, 5.0))
+    plt.style.use('default')  # Ensure clean styling
+    
+    for i, (m, t, n_t) in enumerate(results):
+        k, P = _power_spectrum_1d(n_t[:, -1], L)
+        if normalize and np.max(P) > 0:
+            P = P / np.max(P)
+        
+        # Use beautiful colors and markers
+        color = colors[i % len(colors)]
+        marker = markers[i % len(markers)]
+        
+        # Plot the spectrum with beautiful styling
+        plt.semilogy(k, P, lw=2.0, color=color, alpha=0.8, label=f"mode m={m}")
+        
+        # Mark the peak for each run with matching color
+        ip = np.argmax(P)
+        plt.semilogy([k[ip]], [P[ip]], marker=marker, ms=7, color=color, 
+                    markeredgecolor='white', markeredgewidth=1.5, alpha=0.9)
+
+    plt.xlabel("wavenumber k", fontsize=12, fontweight='bold')
+    plt.ylabel("power |n̂(k)|²" + (" (normalized)" if normalize else ""), fontsize=12, fontweight='bold')
+    plt.title("Final spectra at t = t_final (overlaid)", fontsize=14, fontweight='bold', pad=20)
+    plt.grid(True, which="both", alpha=0.2, linestyle='-', linewidth=0.5)
+    plt.legend(frameon=True, fancybox=True, shadow=True, ncol=2, fontsize=10, 
+              facecolor='white', edgecolor='gray', framealpha=0.9)
+    
+    # Beautiful styling touches
+    plt.gca().spines['top'].set_visible(False)
+    plt.gca().spines['right'].set_visible(False)
+    plt.gca().spines['left'].set_linewidth(1.5)
+    plt.gca().spines['bottom'].set_linewidth(1.5)
+    
+    os.makedirs(par.outdir, exist_ok=True)
+    plt.tight_layout()
+    plt.savefig(f"{par.outdir}/fft_final_overlay_{tag}.png", dpi=160, bbox_inches='tight')
+    plt.savefig(f"{par.outdir}/fft_final_overlay_{tag}.pdf", dpi=160, bbox_inches='tight')
+    plt.close()
+
 def run_once(tag="seed_mode"):
     os.makedirs(par.outdir, exist_ok=True)
 
@@ -379,6 +427,9 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
         plt.savefig(outpath, dpi=160)
         plt.close()
         print(f"[plot] saved {outpath}")
+
+        # NEW: overlay final spectra from all runs on one plot
+        plot_all_final_spectra(results, par.L, tag=tag, normalize=False)
 
     finally:
         par.seed_amp_n, par.seed_mode = oldA, oldm
