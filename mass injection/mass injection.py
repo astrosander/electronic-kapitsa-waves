@@ -19,7 +19,7 @@ class P:
     u_d: float = 20.00
     # u_d: float = .0
     maintain_drift: str = "field"
-    Kp: float = 0.15
+    Kp: float = 1.0
 
     Dn: float = 0.5#/10#0.03
     Dp: float = 0.1
@@ -34,7 +34,7 @@ class P:
     nbar_sigma: float = 120.0
 
     L: float = 10.0
-    Nx: int = 812
+    Nx: int = 512*4
     t_final: float = 5.0
     n_save: int = 360
     # rtol: float = 5e-7
@@ -44,9 +44,9 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 5e-3
+    seed_amp_n: float = 20e-3
     seed_mode: int = 1
-    seed_amp_p: float = 10e-3
+    seed_amp_p: float = 20e-3
 
     outdir: str = "out_drift"
     cmap: str = "inferno"
@@ -68,6 +68,28 @@ def filter_23(f):
     kc = par.Nx//3
     fh[kc:-kc] = 0.0
     return (ifft(fh)).real
+
+def observed_lambda_from_fft(n_t, x, t, mode="late", frac=0.1):
+    if mode == "early":
+        j_start = 0
+        j_end = max(2, int(frac * len(t)))
+    else:  # late
+        j_start = int((1-frac) * len(t))
+        j_end = len(t)
+    
+    dn = n_t[:, j_start:j_end] - np.mean(n_t[:, j_start:j_end], axis=0, keepdims=True)
+
+    nhat = fft(dn, axis=0)
+    power = np.mean(np.abs(nhat)**2, axis=1)
+
+    m = np.arange(par.Nx)
+    mpos = m[1:par.Nx//2 + 1]
+    i = np.argmax(power[1:par.Nx//2 + 1])
+    m_obs = int(mpos[i])
+
+    k_obs = 2*np.pi*m_obs / par.L
+    lambda_obs = par.L / m_obs
+    return m_obs, float(k_obs), float(lambda_obs)
 
 def Gamma(n):
     return par.Gamma0 * np.exp(-np.maximum(n, par.n_floor)/par.w)
@@ -157,40 +179,46 @@ def initial_fields():
     n0 = nbar.copy()
     p0 = pbar.copy()
     if par.seed_amp_n != 0.0 and par.seed_mode != 0:
-        if par.seed_mode == 1:
-            kx1 = 2*np.pi*3 / par.L
-            kx2 = 2*np.pi*5 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 2:
-            kx1 = 2*np.pi*5 / par.L
-            kx2 = 2*np.pi*8 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 3:
-            kx1 = 2*np.pi*8 / par.L
-            kx2 = 2*np.pi*15 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 4:
-            kx1 = 2*np.pi*7 / par.L
-            kx2 = 2*np.pi*13 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        kx = 2*np.pi*par.seed_mode / par.L
+        n0 += par.seed_amp_n * np.cos(kx * x)
+
+        # if par.seed_mode == 1:
+        #     kx1 = 2*np.pi*3 / par.L
+        #     kx2 = 2*np.pi*5 / par.L
+        #     n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        # if par.seed_mode == 2:
+        #     kx1 = 2*np.pi*5 / par.L
+        #     kx2 = 2*np.pi*8 / par.L
+        #     n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        # if par.seed_mode == 3:
+        #     kx1 = 2*np.pi*8 / par.L
+        #     kx2 = 2*np.pi*15 / par.L
+        #     n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        # if par.seed_mode == 4:
+        #     kx1 = 2*np.pi*7 / par.L
+        #     kx2 = 2*np.pi*13 / par.L
+        #     n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
 
     if par.seed_amp_p != 0.0 and par.seed_mode != 0:
-        if par.seed_mode == 1:
-            kx1 = 2*np.pi*3 / par.L
-            kx2 = 2*np.pi*5 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 2:
-            kx1 = 2*np.pi*5 / par.L
-            kx2 = 2*np.pi*8 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 3:
-            kx1 = 2*np.pi*8 / par.L
-            kx2 = 2*np.pi*15 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 4:
-            kx1 = 2*np.pi*7 / par.L
-            kx2 = 2*np.pi*13 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        kx = 2*np.pi*par.seed_mode / par.L
+        p0 += par.seed_amp_p * np.cos(kx * x)
+
+        # if par.seed_mode == 1:
+        #     kx1 = 2*np.pi*3 / par.L
+        #     kx2 = 2*np.pi*5 / par.L
+        #     p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        # if par.seed_mode == 2:
+        #     kx1 = 2*np.pi*5 / par.L
+        #     kx2 = 2*np.pi*8 / par.L
+        #     p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        # if par.seed_mode == 3:
+        #     kx1 = 2*np.pi*8 / par.L
+        #     kx2 = 2*np.pi*15 / par.L
+        #     p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        # if par.seed_mode == 4:
+        #     kx1 = 2*np.pi*7 / par.L
+        #     kx2 = 2*np.pi*13 / par.L
+        #     p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
             
         # kx = 2*np.pi*par.seed_mode / par.L
         # p0 += par.seed_amp_p * np.cos(kx * x)
@@ -200,7 +228,7 @@ def run_once(tag="seed_mode"):
     os.makedirs(par.outdir, exist_ok=True)
 
     n0, p0 = initial_fields()
-    E_base = E_base_from_drift(nbar_profile()) if par.maintain_drift in ("field","feedback") else 0.0
+    # E_base = E_base_from_drift(nbar_profile())# if par.maintain_drift in ("field","feedback") else 0.0
 
     # print(E_base)
     E_base = 15.0#10.0
@@ -219,6 +247,11 @@ def run_once(tag="seed_mode"):
     n_eff_t = np.maximum(n_t, par.n_floor)
     v_t = p_t/(par.m*n_eff_t)
     print(f"[run]  <u>(t=0)={np.mean(v_t[:,0]):.4f},  <u>(t_end)={np.mean(v_t[:,-1]):.4f},  target u_d={par.u_d:.4f}")
+
+    mE, kE, lamE = observed_lambda_from_fft(n_t, x, sol.t, "early")
+    mL, kL, lamL = observed_lambda_from_fft(n_t, x, sol.t, "late")
+    print(f"[obs/early]  m={mE}, k={kE:.4f}, λ={lamE:.4f}")
+    print(f"[obs/late ]  m={mL}, k={kL:.4f}, λ={lamL:.4f}")
 
     # print(n_t.T)
 
@@ -255,6 +288,11 @@ def run_once(tag="seed_mode"):
     plt.legend(); plt.xlabel("x"); plt.ylabel("n"); plt.title(f"Density snapshots  {tag}")
     plt.text(0.5, 0.08, f"Dp={par.Dp}, Dn={par.Dn}, m={par.seed_mode}", color="red",
          fontsize=12, ha="right", va="top", transform=plt.gca().transAxes)
+
+    xphase = np.linspace(x.min(), x.max(), 400)
+    ref = (n_t[:, -1].max() - n_t[:, -1].min()) * 0.05
+    plt.plot(xphase, np.mean(n_t[:, -1]) + ref*np.cos(kL*(xphase-xphase[0])),
+             lw=1.0, alpha=0.7, ls='--', label=f"obs λ≈{lamL:.3f}")
 
     plt.tight_layout(); plt.savefig(f"{par.outdir}/snapshots_n_{tag}.png", dpi=160); plt.close()
 
@@ -312,15 +350,15 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
 
             ax.legend(fontsize=8, loc="upper right")
             
-            if m == 1:
-                ax.set_ylabel(r"$\delta n \sim \cos(3x) + \cos(5x)$")
-            elif m == 2:
-                ax.set_ylabel(r"$\delta n \sim \cos(5x) + \cos(8x)$")
-            elif m == 3:
-                ax.set_ylabel(r"$\delta n \sim \cos(8x) + \cos(15x)$")
-            elif m == 4:
-                ax.set_ylabel(r"$\delta n \sim \cos(7x) + \cos(13x)$")
-            # ax.set_ylabel(f"m={m}")
+            # if m == 1:
+            #     ax.set_ylabel(r"$\delta n \sim \cos(3x) + \cos(5x)$")
+            # elif m == 2:
+            #     ax.set_ylabel(r"$\delta n \sim \cos(5x) + \cos(8x)$")
+            # elif m == 3:
+            #     ax.set_ylabel(r"$\delta n \sim \cos(8x) + \cos(15x)$")
+            # elif m == 4:
+            #     ax.set_ylabel(r"$\delta n \sim \cos(7x) + \cos(13x)$")
+            ax.set_ylabel(f"m={m}")
             # ax.text(
             #     -0.02, 0.5, f"m={m}",
             #     transform=ax.transAxes, rotation=90,
@@ -344,4 +382,10 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
 
 
 if __name__ == "__main__":
-    run_all_modes_snapshots(tag="seed_modes_1to5")
+    # run_all_modes_snapshots(tag="seed_modes_1to5")
+
+    t, n_t, _ = run_once(tag="compare")
+    mE, kE, lamE = observed_lambda_from_fft(n_t, x, t, "early")
+    mL, kL, lamL = observed_lambda_from_fft(n_t, x, t, "late")
+    print(f"[obs/early]  m={mE}, k={kE:.4f}, λ={lamE:.4f}")
+    print(f"[obs/late ]  m={mL}, k={kL:.4f}, λ={lamL:.4f}")
