@@ -248,7 +248,8 @@ def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False):
     plt.style.use('default')  # ensure neutral style
     
     for i, (m, t, n_t) in enumerate(results):
-        k, P = _power_spectrum_1d(n_t[:, -1], L)
+        # k, P = _power_spectrum_1d(n_t[:, -1], L)
+        k, P = _power_spectrum_1d(n_t[:, 0], L) 
         if normalize and np.max(P) > 0:
             P = P / np.max(P)
         
@@ -284,7 +285,7 @@ def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False):
     
     os.makedirs(par.outdir, exist_ok=True)
     plt.tight_layout()
-    plt.title(f"Final spectra at t = {par.t_final:.2f}")
+    plt.title(f"Initial spectra at t = 0")
     plt.savefig(f"{par.outdir}/fft_final_overlay_{tag}.png", dpi=300, bbox_inches='tight')
     plt.savefig(f"{par.outdir}/fft_final_overlay_{tag}.pdf", dpi=300, bbox_inches='tight')
     plt.close()
