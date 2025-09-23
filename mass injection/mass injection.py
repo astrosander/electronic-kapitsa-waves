@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from numpy.fft import fft, ifft, fftfreq
 from scipy.integrate import solve_ivp
 import os
+import glob
+from dataclasses import asdict
 
 @dataclass
 class P:
@@ -206,6 +208,25 @@ def initial_fields():
         # p0 += par.seed_amp_p * np.cos(kx * x)
     return n0, p0
 
+def save_final_spectra(m, t, n_t, L, tag=""):
+    k0, P0 = _power_spectrum_1d(n_t[:, 0],  L)
+    kf, Pf = _power_spectrum_1d(n_t[:, -1], L)
+
+    meta = asdict(par).copy()
+    meta['outdir'] = str(par.outdir)
+
+    os.makedirs(par.outdir, exist_ok=True)
+    out = os.path.join(par.outdir, f"spec_m{int(m):02d}_{tag}.npz")
+    np.savez_compressed(out,
+                        m=int(m),
+                        t_final=float(t[-1]),
+                        L=float(L),
+                        Nx=int(par.Nx),
+                        k0=k0, P0=P0,
+                        k=kf, P=Pf,
+                        meta=meta)
+    print(f"[save] spectra → {out}")
+
 def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
     """Overlay t=0 and t=t_end spectra; optional vertical k_marks."""
     k0, P0 = _power_spectrum_1d(n_t[:, 0],   L)
@@ -354,6 +375,8 @@ def run_once(tag="seed_mode"):
 
     # Plot initial vs final Fourier spectra
     plot_fft_initial_last(n_t, sol.t, par.L, tag=tag, k_marks=())
+    
+    save_final_spectra(par.seed_mode, sol.t, n_t, par.L, tag=tag)
 
     return sol.t, n_t, p_t
 
@@ -393,6 +416,7 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
             par.seed_mode = m
             t, n_t, _ = run_once(tag=f"m{m}")  
             results.append((m, t, n_t))
+            save_final_spectra(m, t, n_t, par.L, tag=f"m{m}")
 
         fig, axes = plt.subplots(
             len(modes), 1, sharex=True,
