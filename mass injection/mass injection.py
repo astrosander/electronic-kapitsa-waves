@@ -215,10 +215,10 @@ def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
     k0_peak, k1_peak = k0[i0], k1[i1]
 
     plt.figure(figsize=(8.6, 4.2))
-    plt.semilogy(k0, P0, label="t = 0")
-    plt.semilogy(k1, P1, label=f"t = {t[-1]:.2f}")
-    plt.semilogy([k0_peak], [P0[i0]], "o", ms=6, label=f"peak0 k={k0_peak:.3f}")
-    plt.semilogy([k1_peak], [P1[i1]], "s", ms=6, label=f"peak1 k={k1_peak:.3f}")
+    plt.plot(k0, P0, label="t = 0")
+    plt.plot(k1, P1, label=f"t = {t[-1]:.2f}")
+    plt.plot([k0_peak], [P0[i0]], "o", ms=6, label=f"peak0 k={k0_peak:.3f}")
+    plt.plot([k1_peak], [P1[i1]], "s", ms=6, label=f"peak1 k={k1_peak:.3f}")
 
     for km in k_marks:                        # e.g. theoretical k0
         plt.axvline(km, color="k", ls="--", lw=1, alpha=0.6)
@@ -256,20 +256,21 @@ def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False):
         marker = markers[i % len(markers)]
         
         if m == 1:
-            plt.semilogy(k, P, lw=1.2, color=color, label=f"$\cos(3x) + \cos(5x)$")
+            plt.plot(k, P, lw=1.2, color=color, label=f"$\cos(3x) + \cos(5x)$")
         elif m == 2:
-            plt.semilogy(k, P, lw=1.2, color=color, label=f"$\cos(5x) + \cos(8x)$")
+            plt.plot(k, P, lw=1.2, color=color, label=f"$\cos(5x) + \cos(8x)$")
         elif m == 3:
-            plt.semilogy(k, P, lw=1.2, color=color, label=f"$\cos(8x) + \cos(15x)$")
+            plt.plot(k, P, lw=1.2, color=color, label=f"$\cos(8x) + \cos(15x)$")
         elif m == 4:
-            plt.semilogy(k, P, lw=1.2, color=color, label=f"$\cos(7x) + \cos(13x)$")
+            plt.plot(k, P, lw=1.2, color=color, label=f"$\cos(7x) + \cos(13x)$")
         else:
-            plt.semilogy(k, P, lw=1.2, color=color, label=f"$\cos(ax) + \cos(bx)$")
+            plt.plot(k, P, lw=1.2, color=color, label=f"$\cos(ax) + \cos(bx)$")
         
         ip = np.argmax(P)
-        plt.semilogy([k[ip]], [P[ip]], marker=marker, ms=6, color=color,
+        plt.plot([k[ip]], [P[ip]], marker=marker, ms=6, color=color,
                      markeredgecolor='white', markeredgewidth=1.0)
     
+    plt.xlim(0, 20)
     plt.xlabel("$k$", fontsize=12)
     plt.ylabel("$|\\hat{n}(k)|^2$" + (" (norm.)" if normalize else ""), fontsize=12)
     plt.grid(True, which="both", alpha=0.3, linestyle='--')
