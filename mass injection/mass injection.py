@@ -34,7 +34,7 @@ class P:
     nbar_sigma: float = 120.0
 
     L: float = 10.0
-    Nx: int = 812
+    Nx: int = 812#812
     t_final: float = 1.0
     n_save: int = 360
     # rtol: float = 5e-7
@@ -234,63 +234,58 @@ def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
     plt.savefig(f"{par.outdir}/fft_compare_{tag}.pdf", dpi=160)
     plt.close()
 
-def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False, k_max=None):
+def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False):
     """
     results: list of tuples (m, t, n_t) from run_all_modes_snapshots
     Plots the power spectrum of n(x, t_final) for each run on the SAME axes.
-    k_max: optional upper limit for k range
     """
-    # Traditional scientific colors
-    colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray']
+    # Colorblind-friendly palette
+    colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3',
+              '#FF7F00', '#A65628', '#F781BF', '#999999']
     markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p']
     
-    plt.figure(figsize=(9.0, 5.0))
+    plt.figure(figsize=(7.0, 4.0))
+    plt.style.use('default')  # ensure neutral style
     
     for i, (m, t, n_t) in enumerate(results):
         k, P = _power_spectrum_1d(n_t[:, -1], L)
         if normalize and np.max(P) > 0:
             P = P / np.max(P)
         
-        # Apply k range limit if specified
-        if k_max is not None:
-            mask = k <= k_max
-            k = k[mask]
-            P = P[mask]
-        
-        # Use traditional colors and markers
         color = colors[i % len(colors)]
         marker = markers[i % len(markers)]
         
-        # Plot the spectrum with clean styling
-        plt.semilogy(k, P, lw=1.5, color=color, label=f"mode m={m}")
+        if m == 1:
+            plt.semilogy(k, P, lw=1.2, color=color, label=f"$\cos(3x) + \cos(5x)$")
+        elif m == 2:
+            plt.semilogy(k, P, lw=1.2, color=color, label=f"$\cos(5x) + \cos(8x)$")
+        elif m == 3:
+            plt.semilogy(k, P, lw=1.2, color=color, label=f"$\cos(8x) + \cos(15x)$")
+        elif m == 4:
+            plt.semilogy(k, P, lw=1.2, color=color, label=f"$\cos(7x) + \cos(13x)$")
+        else:
+            plt.semilogy(k, P, lw=1.2, color=color, label=f"$\cos(ax) + \cos(bx)$")
         
-        # Find top 2 peaks for each run
-        from scipy.signal import find_peaks
-        peaks, properties = find_peaks(P, height=np.max(P)*0.1, distance=len(P)//20)
-        
-        if len(peaks) > 0:
-            # Sort peaks by height and take top 2
-            peak_heights = P[peaks]
-            sorted_indices = np.argsort(peak_heights)[::-1]
-            top_peaks = peaks[sorted_indices[:2]]
-            
-            for j, peak_idx in enumerate(top_peaks):
-                marker_style = marker if j == 0 else 'x'
-                marker_size = 6 if j == 0 else 8
-                plt.semilogy([k[peak_idx]], [P[peak_idx]], marker=marker_style, 
-                            ms=marker_size, color=color, markeredgecolor='black', 
-                            markeredgewidth=0.5)
+        ip = np.argmax(P)
+        plt.semilogy([k[ip]], [P[ip]], marker=marker, ms=6, color=color,
+                     markeredgecolor='white', markeredgewidth=1.0)
+    
+    plt.xlabel("$k$", fontsize=12)
+    plt.ylabel("$|\\hat{n}(k)|^2$" + (" (norm.)" if normalize else ""), fontsize=12)
+    plt.grid(True, which="both", alpha=0.3, linestyle='--')
+    plt.legend(frameon=False, ncol=2, fontsize=9)
+    
+    # keep axes clean
+    ax = plt.gca()
 
-    plt.xlabel("k")
-    plt.ylabel("|n̂(k)|²" + (" (normalized)" if normalize else ""))
-    plt.title("Final spectra at t = t_final")
-    plt.grid(True, which="both", alpha=0.3)
-    plt.legend(frameon=True, ncol=2)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     
     os.makedirs(par.outdir, exist_ok=True)
     plt.tight_layout()
-    plt.savefig(f"{par.outdir}/fft_final_overlay_{tag}.png", dpi=160)
-    plt.savefig(f"{par.outdir}/fft_final_overlay_{tag}.pdf", dpi=160)
+    plt.title(f"Final spectra at t = {par.t_final:.2f}")
+    plt.savefig(f"{par.outdir}/fft_final_overlay_{tag}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{par.outdir}/fft_final_overlay_{tag}.pdf", dpi=300, bbox_inches='tight')
     plt.close()
 
 def run_once(tag="seed_mode"):
@@ -440,7 +435,7 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
         print(f"[plot] saved {outpath}")
 
         # NEW: overlay final spectra from all runs on one plot
-        plot_all_final_spectra(results, par.L, tag=tag, normalize=False, k_max=10.0)
+        plot_all_final_spectra(results, par.L, tag=tag, normalize=False)
 
     finally:
         par.seed_amp_n, par.seed_mode = oldA, oldm
