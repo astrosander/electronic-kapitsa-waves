@@ -54,7 +54,7 @@ def plot_overlay_final(data, normalize=False, title="Final spectra", outdir=".",
     plt.tight_layout()
     plt.savefig(png, dpi=300, bbox_inches='tight')
     plt.savefig(pdf, dpi=300, bbox_inches='tight')
-    # plt.show()
+    plt.show()
     plt.close()
     print(f"[plot] saved {png} and {pdf}")
 
@@ -94,15 +94,15 @@ def plot_overlay_initial(data, normalize=False, title="Initial spectra", outdir=
     plt.tight_layout()
     plt.savefig(png, dpi=300, bbox_inches='tight')
     plt.savefig(pdf, dpi=300, bbox_inches='tight')
-    plt.show()
+    # plt.show()
     plt.close()
 
     print(f"[plot] saved {png} and {pdf}")
 
 def main():
-    data_dir = "out_drift"
+    data_dir = "out_drift1"
     pattern = "spec_*.npz"
-    normalize = False
+    normalize = False   
     tag = "saved"
     
     pattern_path = os.path.join(data_dir, pattern)
