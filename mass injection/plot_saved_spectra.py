@@ -150,6 +150,112 @@ def plot_overlay_initial(data, normalize=False, title="Initial spectra", outdir=
 
     print(f"[plot] saved {png} and {pdf}")
 
+def plot_overlay_final_single(data, normalize=False, title="Final spectra", outdir=".", tag="final_overlay"):
+    if not data:
+        print("[plot] nothing to plot")
+        return
+
+    colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3',
+              '#FF7F00', '#A65628', '#F781BF', '#999999']
+
+    plt.figure(figsize=(7.0, 4.0))
+    for i, d in enumerate(sorted(data, key=lambda z: z['m'])):
+        k, P = d['k'], d['P']
+        if normalize and np.max(P) > 0:
+            P = P / np.max(P)
+
+        color = colors[i % len(colors)]
+        if d['m'] == 1:
+            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(3x) + \\cos(5x)$")
+        elif d['m'] == 2:
+            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(5x) + \\cos(8x)$")
+        elif d['m'] == 3:
+            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(8x) + \\cos(13x)$")
+        elif d['m'] == 4:
+            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(13x) + \\cos(21x)$")
+        elif d['m'] == 5:
+            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(21x) + \\cos(34x)$")
+        elif d['m'] == 6:
+            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(34x) + \\cos(55x)$")
+        else:
+            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(ax) + \\cos(bx)$")
+        plt.xlim(0,50)
+        ip = np.argmax(P)
+        plt.plot([k[ip]], [P[ip]], marker='o', ms=5, color=color,
+                     markeredgecolor='white', markeredgewidth=1.0)
+
+    plt.xlabel("$k$", fontsize=12)
+    plt.ylabel("|n̂(k)|²" + (" (norm.)" if normalize else ""), fontsize=12)
+    plt.title(title, fontsize=12)
+    plt.grid(True, which="both", alpha=0.3, linestyle='--')
+    plt.legend(frameon=False, ncol=2, fontsize=9)
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    os.makedirs(outdir, exist_ok=True)
+    png = os.path.join(outdir, f"fft_final_overlay_{tag}.png")
+    pdf = os.path.join(outdir, f"fft_final_overlay_{tag}.pdf")
+    plt.tight_layout()
+    plt.savefig(png, dpi=300, bbox_inches='tight')
+    plt.savefig(pdf, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"[plot] saved {png} and {pdf}")
+
+def plot_overlay_initial_single(data, normalize=False, title="Initial spectra", outdir=".", tag="initial_overlay"):
+    if not data:
+        print("[plot] nothing to plot")
+        return
+
+    colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3',
+              '#FF7F00', '#A65628', '#F781BF', '#999999']
+
+    plt.figure(figsize=(7.0, 4.0))
+    for i, d in enumerate(sorted(data, key=lambda z: z['m'])):
+        k0, P0 = d['k0'], d['P0']
+        if normalize and np.max(P0) > 0:
+            P0 = P0 / np.max(P0)
+
+        color = colors[i % len(colors)]
+        if d['m'] == 1:
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(3x) + \\cos(5x)$")
+        elif d['m'] == 2:
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(5x) + \\cos(8x)$")
+        elif d['m'] == 3:
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(8x) + \\cos(13x)$")
+        elif d['m'] == 4:
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(13x) + \\cos(21x)$")
+        elif d['m'] == 5:
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(21x) + \\cos(34x)$")
+        elif d['m'] == 6:
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(34x) + \\cos(55x)$")
+        else:
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(ax) + \\cos(bx)$")
+
+        ip = np.argmax(P0)
+        plt.plot([k0[ip]], [P0[ip]], marker='s', ms=5, color=color,
+                     markeredgecolor='white', markeredgewidth=1.0)
+
+    plt.xlabel("$k$", fontsize=12)
+    plt.ylabel("$|\\hat{n}(k)|^2$" + (" (norm.)" if normalize else ""), fontsize=12)
+    plt.title(title, fontsize=12)
+    plt.grid(True, which="both", alpha=0.3, linestyle='--')
+    plt.legend(frameon=False, ncol=2, fontsize=9)
+    ax = plt.gca()
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+
+    os.makedirs(outdir, exist_ok=True)
+    png = os.path.join(outdir, f"fft_initial_overlay_{tag}.png")
+    pdf = os.path.join(outdir, f"fft_initial_overlay_{tag}.pdf")
+    plt.xlim(0,50)
+    plt.tight_layout()
+    plt.savefig(png, dpi=300, bbox_inches='tight')
+    plt.savefig(pdf, dpi=300, bbox_inches='tight')
+    plt.close()
+
+    print(f"[plot] saved {png} and {pdf}")
+
 def main():
     data_dir = "out_drift"
     pattern = "spec_*.npz"
@@ -161,6 +267,8 @@ def main():
 
     plot_overlay_initial(data, normalize=normalize, title="Initial spectra (t=0)", outdir=data_dir, tag=tag)
     plot_overlay_final(data, normalize=normalize, title="Final spectra (t=t_final)", outdir=data_dir, tag=tag)
+    plot_overlay_initial_single(data, normalize=normalize, title="Initial spectra (t=0)", outdir=data_dir, tag=tag)
+    plot_overlay_final_single(data, normalize=normalize, title="Final spectra (t=t_final)", outdir=data_dir, tag=tag)
 
 if __name__ == "__main__":
     main()
