@@ -57,7 +57,7 @@ class P:
     nbar_sigma: float = 120.0
 
     L: float = 10.0
-    Nx: int = 2048#812
+    Nx: int = 812
     t_final: float = 1.0
     n_save: int = 360
     # rtol: float = 5e-7
@@ -197,11 +197,19 @@ def initial_fields():
             n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
         if par.seed_mode == 3:
             kx1 = 2*np.pi*8 / par.L
-            kx2 = 2*np.pi*15 / par.L
+            kx2 = 2*np.pi*13 / par.L
             n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
         if par.seed_mode == 4:
-            kx1 = 2*np.pi*7 / par.L
-            kx2 = 2*np.pi*13 / par.L
+            kx1 = 2*np.pi*13 / par.L
+            kx2 = 2*np.pi*21 / par.L
+            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        if par.seed_mode == 5:
+            kx1 = 2*np.pi*21 / par.L
+            kx2 = 2*np.pi*34 / par.L
+            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        if par.seed_mode == 6:
+            kx1 = 2*np.pi*34 / par.L
+            kx2 = 2*np.pi*55 / par.L
             n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
 
     if par.seed_amp_p != 0.0 and par.seed_mode != 0:
@@ -215,13 +223,20 @@ def initial_fields():
             p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
         if par.seed_mode == 3:
             kx1 = 2*np.pi*8 / par.L
-            kx2 = 2*np.pi*15 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 4:
-            kx1 = 2*np.pi*7 / par.L
             kx2 = 2*np.pi*13 / par.L
             p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-            
+        if par.seed_mode == 4:
+            kx1 = 2*np.pi*13 / par.L
+            kx2 = 2*np.pi*21 / par.L
+            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        if par.seed_mode == 5:
+            kx1 = 2*np.pi*21 / par.L
+            kx2 = 2*np.pi*34 / par.L
+            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        if par.seed_mode == 6:
+            kx1 = 2*np.pi*34 / par.L
+            kx2 = 2*np.pi*55 / par.L
+            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
         # kx = 2*np.pi*par.seed_mode / par.L
         # p0 += par.seed_amp_p * np.cos(kx * x)
     return n0, p0
@@ -262,9 +277,9 @@ def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
     for km in k_marks:
         plt.axvline(km, color="k", ls="--", lw=1, alpha=0.6)
 
-    plt.xlabel("wavenumber k")
-    plt.ylabel("power |n̂(k)|²")
-    plt.title("Fourier spectrum of n(x,t): initial vs final")
+    plt.xlabel("$k$")
+    plt.ylabel("power $|\\hat{n}(k)|^2$")
+    plt.title("Fourier spectrum of $n(x,t)$: initial vs final")
     plt.grid(True, which="both", alpha=0.3)
     plt.legend(frameon=False, ncol=2)
     os.makedirs(par.outdir, exist_ok=True)
@@ -413,7 +428,7 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
 def run_all_modes_snapshots(tag="snapshots_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    modes = range(1,5)
+    modes = range(6,7)
     results = []
 
     oldA, oldm = par.seed_amp_n, par.seed_mode

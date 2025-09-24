@@ -18,7 +18,7 @@ def load_spectra(pattern):
             print(f"[warn] skip {f}: {e}")
     return data
 
-def plot_overlay_final(data, normalize=False, title="Final spectra", outdir=".", tag="final_overlay"):
+def plot_overlay_final(data, normalize=False, title="Final spectra", outdir=".", tag="final_panels"):
     if not data:
         print("[plot] nothing to plot")
         return
@@ -26,42 +26,65 @@ def plot_overlay_final(data, normalize=False, title="Final spectra", outdir=".",
     colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3',
               '#FF7F00', '#A65628', '#F781BF', '#999999']
 
-    plt.figure(figsize=(7.0, 4.0))
-    for i, d in enumerate(sorted(data, key=lambda z: z['m'])):
+    # Sort data by m value
+    sorted_data = sorted(data, key=lambda z: z['m'])
+    n_panels = len(sorted_data)
+    
+    # Create figure with subplots in a single row
+    fig, axes = plt.subplots(1, n_panels, figsize=(15.0, 3.5), sharey=True)
+    
+    # Handle case where there's only one panel
+    if n_panels == 1:
+        axes = [axes]
+    
+    for i, d in enumerate(sorted_data):
+        ax = axes[i]
         k, P = d['k'], d['P']
         if normalize and np.max(P) > 0:
             P = P / np.max(P)
 
         color = colors[i % len(colors)]
+        
+        # Get label for each m value
         if d['m'] == 1:
-            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(3x) + \\cos(5x)$")
+            label = f"$\\cos(3x) + \\cos(5x)$"
         elif d['m'] == 2:
-            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(5x) + \\cos(8x)$")
+            label = f"$\\cos(5x) + \\cos(8x)$"
         elif d['m'] == 3:
-            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(8x) + \\cos(15x)$")
+            label = f"$\\cos(8x) + \\cos(13x)$"
         elif d['m'] == 4:
-            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(7x) + \\cos(13x)$")
+            label = f"$\\cos(13x) + \\cos(21x)$"
+        elif d['m'] == 5:
+            label = f"$\\cos(21x) + \\cos(34x)$"
+        elif d['m'] == 6:
+            label = f"$\\cos(34x) + \\cos(55x)$"
         else:
-            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(ax) + \\cos(bx)$")
-        plt.xlim(0,50)
+            label = f"$\\cos(ax) + \\cos(bx)$"
+        
+        ax.plot(k, P, lw=1.8, color=color)
+        ax.set_xlim(0, 50)
+        
+        # Mark peak
         ip = np.argmax(P)
-        plt.plot([k[ip]], [P[ip]], marker='o', ms=5, color=color,
-                     markeredgecolor='white', markeredgewidth=1.0)
-
-
-
-    plt.xlabel("wavenumber k", fontsize=12)
-    plt.ylabel("|n̂(k)|²" + (" (norm.)" if normalize else ""), fontsize=12)
-    plt.title(title, fontsize=12)
-    plt.grid(True, which="both", alpha=0.3, linestyle='--')
-    plt.legend(frameon=False, ncol=2, fontsize=9)
-    ax = plt.gca()
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+        ax.plot([k[ip]], [P[ip]], marker='o', ms=5, color=color,
+                markeredgecolor='white', markeredgewidth=1.0)
+        
+        # Format individual panel
+        ax.set_xlabel("$k$", fontsize=10)
+        ax.set_title(label, fontsize=10)
+        ax.grid(True, which="both", alpha=0.3, linestyle='--')
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+    
+    # Set y-label only on the leftmost panel
+    axes[0].set_ylabel("|n̂(k)|²" + (" (norm.)" if normalize else ""), fontsize=10)
+    
+    # Set main title
+    fig.suptitle(title, fontsize=12, y=0.98)
 
     os.makedirs(outdir, exist_ok=True)
-    png = os.path.join(outdir, f"fft_final_overlay_{tag}.png")
-    pdf = os.path.join(outdir, f"fft_final_overlay_{tag}.pdf")
+    png = os.path.join(outdir, f"fft_final_panels_{tag}.png")
+    pdf = os.path.join(outdir, f"fft_final_panels_{tag}.pdf")
     plt.tight_layout()
     plt.savefig(png, dpi=300, bbox_inches='tight')
     plt.savefig(pdf, dpi=300, bbox_inches='tight')
@@ -89,9 +112,13 @@ def plot_overlay_initial(data, normalize=False, title="Initial spectra", outdir=
         elif d['m'] == 2:
             plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(5x) + \\cos(8x)$")
         elif d['m'] == 3:
-            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(8x) + \\cos(15x)$")
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(8x) + \\cos(13x)$")
         elif d['m'] == 4:
-            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(7x) + \\cos(13x)$")
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(13x) + \\cos(21x)$")
+        elif d['m'] == 5:
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(21x) + \\cos(34x)$")
+        elif d['m'] == 6:
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(34x) + \\cos(55x)$")
         else:
             plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(ax) + \\cos(bx)$")
 
@@ -99,8 +126,8 @@ def plot_overlay_initial(data, normalize=False, title="Initial spectra", outdir=
         plt.plot([k0[ip]], [P0[ip]], marker='s', ms=5, color=color,
                      markeredgecolor='white', markeredgewidth=1.0)
 
-    plt.xlabel("wavenumber k", fontsize=12)
-    plt.ylabel("|n̂(k)|²" + (" (norm.)" if normalize else ""), fontsize=12)
+    plt.xlabel("$k$", fontsize=12)
+    plt.ylabel("$|\\hat{n}(k)|^2$" + (" (norm.)" if normalize else ""), fontsize=12)
     plt.title(title, fontsize=12)
     plt.grid(True, which="both", alpha=0.3, linestyle='--')
     plt.legend(frameon=False, ncol=2, fontsize=9)
@@ -121,7 +148,7 @@ def plot_overlay_initial(data, normalize=False, title="Initial spectra", outdir=
     print(f"[plot] saved {png} and {pdf}")
 
 def main():
-    data_dir = "out_drift1"
+    data_dir = "out_drift"
     pattern = "spec_*.npz"
     normalize = False   
     tag = "saved"
