@@ -96,7 +96,7 @@ def plot_overlay_initial(data, normalize=False, title="Initial spectra", outdir=
     plt.tight_layout()
     plt.savefig(png, dpi=300, bbox_inches='tight')
     plt.savefig(pdf, dpi=300, bbox_inches='tight')
-    # plt.show()
+    plt.show()
     plt.close()
 
     print(f"[plot] saved {png} and {pdf}")

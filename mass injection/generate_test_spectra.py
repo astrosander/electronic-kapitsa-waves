@@ -44,9 +44,9 @@ def main():
 
     # Define a few simple cases (m is just a label for the file & legend order)
     cases = [
-        dict(m=1, modes=[7],      coeffs=[1.0],  phase=[0.0]),
-        dict(m=2, modes=[13],      coeffs=[1.0],  phase=[0.0]),
-        dict(m=3, modes=[0],      coeffs=[1.0],  phase=[0.0]),
+        dict(m=1, modes=[1],      coeffs=[1.0],  phase=[0.0]),
+        dict(m=2, modes=[1,2,3],      coeffs=[1.0],  phase=[0.0]),
+        dict(m=3, modes=[1,2,3],      coeffs=[1.0],  phase=[0.0]),
         dict(m=4, modes=[0],    coeffs=[1.0], phase=[0.0]),
         dict(m=5, modes=[0],    coeffs=[1.0], phase=[0.0]),
         dict(m=6, modes=[0], coeffs=[1.0], phase=[0.0]),
