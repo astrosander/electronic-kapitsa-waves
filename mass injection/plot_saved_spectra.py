@@ -33,7 +33,16 @@ def plot_overlay_final(data, normalize=False, title="Final spectra", outdir=".",
             P = P / np.max(P)
 
         color = colors[i % len(colors)]
-        plt.plot(k, P, lw=1.8, color=color, label=f"m={d['m']}")
+        if d['m'] == 1:
+            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(3x) + \\cos(5x)$")
+        elif d['m'] == 2:
+            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(5x) + \\cos(8x)$")
+        elif d['m'] == 3:
+            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(8x) + \\cos(15x)$")
+        elif d['m'] == 4:
+            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(7x) + \\cos(13x)$")
+        else:
+            plt.plot(k, P, lw=1.8, color=color, label=f"$\\cos(ax) + \\cos(bx)$")
         plt.xlim(0,50)
         ip = np.argmax(P)
         plt.plot([k[ip]], [P[ip]], marker='o', ms=5, color=color,
@@ -75,7 +84,16 @@ def plot_overlay_initial(data, normalize=False, title="Initial spectra", outdir=
             P0 = P0 / np.max(P0)
 
         color = colors[i % len(colors)]
-        plt.plot(k0, P0, lw=1.8, color=color, label=f"m={d['m']}")
+        if d['m'] == 1:
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(3x) + \\cos(5x)$")
+        elif d['m'] == 2:
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(5x) + \\cos(8x)$")
+        elif d['m'] == 3:
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(8x) + \\cos(15x)$")
+        elif d['m'] == 4:
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(7x) + \\cos(13x)$")
+        else:
+            plt.plot(k0, P0, lw=1.8, color=color, label=f"$\\cos(ax) + \\cos(bx)$")
 
         ip = np.argmax(P0)
         plt.plot([k0[ip]], [P0[ip]], marker='s', ms=5, color=color,
