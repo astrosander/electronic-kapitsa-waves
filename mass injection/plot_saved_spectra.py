@@ -33,11 +33,13 @@ def plot_overlay_final(data, normalize=False, title="Final spectra", outdir=".",
             P = P / np.max(P)
 
         color = colors[i % len(colors)]
-        plt.semilogy(k, P, lw=1.8, color=color, label=f"m={d['m']}")
-
+        plt.plot(k, P, lw=1.8, color=color, label=f"m={d['m']}")
+        plt.xlim(0,50)
         ip = np.argmax(P)
-        plt.semilogy([k[ip]], [P[ip]], marker='o', ms=5, color=color,
+        plt.plot([k[ip]], [P[ip]], marker='o', ms=5, color=color,
                      markeredgecolor='white', markeredgewidth=1.0)
+
+
 
     plt.xlabel("wavenumber k", fontsize=12)
     plt.ylabel("|n̂(k)|²" + (" (norm.)" if normalize else ""), fontsize=12)

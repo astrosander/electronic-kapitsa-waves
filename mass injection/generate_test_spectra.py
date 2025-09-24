@@ -34,7 +34,7 @@ def main():
     ap = argparse.ArgumentParser(description="Generate test spec_m*.npz for plot_saved_spectra.py")
     ap.add_argument("--outdir", default="out_drift1", help="where to save NPZ")
     ap.add_argument("--L", type=float, default=10.0, help="domain length")
-    ap.add_argument("--Nx", type=int, default=812, help="grid points")
+    ap.add_argument("--Nx", type=int, default=8120, help="grid points")
     ap.add_argument("--tfinal", type=float, default=1.0, help="fake t_final to store")
     ap.add_argument("--tag", default="synthetic", help="tag in filenames")
     args = ap.parse_args()
