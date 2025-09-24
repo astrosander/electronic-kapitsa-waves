@@ -311,6 +311,29 @@ def plot_combined_panels(data, normalize=False, title="Combined spectra", outdir
         ax.plot([k[ip]], [P[ip]], marker='o', ms=5, color=color,
                 markeredgecolor='white', markeredgewidth=1.0)
         
+        L = 2*np.pi
+        if d['m'] == 1:
+            k_theory1 = 2*np.pi*3/L
+            k_theory2 = 2*np.pi*5/L
+        elif d['m'] == 2:
+            k_theory1 = 2*np.pi*5/L
+            k_theory2 = 2*np.pi*8/L
+        elif d['m'] == 3:
+            k_theory1 = 2*np.pi*8/L
+            k_theory2 = 2*np.pi*13/L
+        elif d['m'] == 4:
+            k_theory1 = 2*np.pi*13/L
+            k_theory2 = 2*np.pi*21/L
+        elif d['m'] == 5:
+            k_theory1 = 2*np.pi*21/L
+            k_theory2 = 2*np.pi*34/L
+        elif d['m'] == 6:
+            k_theory1 = 2*np.pi*34/L
+            k_theory2 = 2*np.pi*55/L
+        
+        ax.axvline(k_theory1, color=color, linestyle=':', alpha=0.5, linewidth=1)
+        ax.axvline(k_theory2, color=color, linestyle=':', alpha=0.5, linewidth=1)
+        
         ax.set_xlabel("$k$", fontsize=10)
         ax.set_title(label, fontsize=10)
         ax.grid(True, which="both", alpha=0.3, linestyle='--')
@@ -366,17 +389,40 @@ def plot_combined_overlay(data, normalize=False, title="Combined spectra", outdi
         else:
             label = f"$\\cos(ax) + \\cos(bx)$"
         
-        plt.plot(k0, P0, lw=1.0, color=color, linestyle='--', alpha=0.7, 
-                label=f"{label} (t=0)")
+        # plt.plot(k0, P0, lw=1.0, color=color, linestyle='--', alpha=0.7, 
+        #         label=f"{label} (t=0)")
         plt.plot(k, P + i*0.1/100, lw=1.0, color=color, linestyle='-', 
                 label=f"{label} (t=t_final)")
         
         ip0 = np.argmax(P0)
         ip = np.argmax(P)
-        plt.plot([k0[ip0]], [P0[ip0]], marker='s', ms=4, color=color,
-                markeredgecolor='white', markeredgewidth=1.0, alpha=0.7)
+        # plt.plot([k0[ip0]], [P0[ip0]], marker='s', ms=4, color=color,
+        #         markeredgecolor='white', markeredgewidth=1.0, alpha=0.7)
         plt.plot([k[ip]], [P[ip] + i*0.1/100], marker='o', ms=5, color=color,
                 markeredgecolor='white', markeredgewidth=1.0)
+        
+        L = 2*np.pi
+        if d['m'] == 1:
+            k_theory1 = 2*np.pi*3/L
+            k_theory2 = 2*np.pi*5/L
+        elif d['m'] == 2:
+            k_theory1 = 2*np.pi*5/L
+            k_theory2 = 2*np.pi*8/L
+        elif d['m'] == 3:
+            k_theory1 = 2*np.pi*8/L
+            k_theory2 = 2*np.pi*13/L
+        elif d['m'] == 4:
+            k_theory1 = 2*np.pi*13/L
+            k_theory2 = 2*np.pi*21/L
+        elif d['m'] == 5:
+            k_theory1 = 2*np.pi*21/L
+            k_theory2 = 2*np.pi*34/L
+        elif d['m'] == 6:
+            k_theory1 = 2*np.pi*34/L
+            k_theory2 = 2*np.pi*55/L
+        
+        plt.axvline(k_theory1, color="black", linestyle=':', alpha=0.5, linewidth=1)
+        plt.axvline(k_theory2, color="black", linestyle=':', alpha=0.5, linewidth=1)
 
     plt.xlim(0,50)
     plt.xlabel("$k$", fontsize=12)
@@ -390,6 +436,7 @@ def plot_combined_overlay(data, normalize=False, title="Combined spectra", outdi
 
     os.makedirs(outdir, exist_ok=True)
     png = os.path.join(outdir, f"fft_combined_overlay_{tag}.png")
+    png = os.path.join(outdir, f"fft_combined_overlay_{tag}.svg")
     pdf = os.path.join(outdir, f"fft_combined_overlay_{tag}.pdf")
     plt.tight_layout()
     plt.savefig(png, dpi=300, bbox_inches='tight')
