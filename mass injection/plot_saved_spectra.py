@@ -56,7 +56,7 @@ def plot_overlay_final(data, normalize=False, title="Final spectra", outdir=".",
     plt.tight_layout()
     plt.savefig(png, dpi=300, bbox_inches='tight')
     plt.savefig(pdf, dpi=300, bbox_inches='tight')
-    plt.show()
+    # plt.show()
     plt.close()
     print(f"[plot] saved {png} and {pdf}")
 
@@ -75,10 +75,10 @@ def plot_overlay_initial(data, normalize=False, title="Initial spectra", outdir=
             P0 = P0 / np.max(P0)
 
         color = colors[i % len(colors)]
-        plt.semilogy(k0, P0, lw=1.8, color=color, label=f"m={d['m']}")
+        plt.plot(k0, P0, lw=1.8, color=color, label=f"m={d['m']}")
 
         ip = np.argmax(P0)
-        plt.semilogy([k0[ip]], [P0[ip]], marker='s', ms=5, color=color,
+        plt.plot([k0[ip]], [P0[ip]], marker='s', ms=5, color=color,
                      markeredgecolor='white', markeredgewidth=1.0)
 
     plt.xlabel("wavenumber k", fontsize=12)
@@ -93,6 +93,7 @@ def plot_overlay_initial(data, normalize=False, title="Initial spectra", outdir=
     os.makedirs(outdir, exist_ok=True)
     png = os.path.join(outdir, f"fft_initial_overlay_{tag}.png")
     pdf = os.path.join(outdir, f"fft_initial_overlay_{tag}.pdf")
+    plt.xlim(0,50)
     plt.tight_layout()
     plt.savefig(png, dpi=300, bbox_inches='tight')
     plt.savefig(pdf, dpi=300, bbox_inches='tight')
