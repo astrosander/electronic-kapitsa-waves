@@ -58,7 +58,7 @@ class P:
 
     L: float = 10.0
     Nx: int = 812
-    t_final: float = 1.0
+    t_final: float = 5.0
     n_save: int = 360
     # rtol: float = 5e-7
     # atol: float = 5e-9
@@ -428,7 +428,7 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
 def run_all_modes_snapshots(tag="snapshots_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    modes = range(6,7)
+    modes = range(1,7)
     results = []
 
     oldA, oldm = par.seed_amp_n, par.seed_mode
