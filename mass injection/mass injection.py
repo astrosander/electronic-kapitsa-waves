@@ -40,7 +40,7 @@ class P:
     include_poisson: bool = False
     eps: float = 20.0
 
-    u_d: float = 20.00
+    u_d: float = 0.00
     # u_d: float = .0
     maintain_drift: str = "field"
     Kp: float = 0.15
@@ -476,9 +476,9 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
             axes = [axes]
 
         for ax, (m, t, n_t) in zip(axes, results):
-            for frac in [0.0, 1.0]:
-                j = int(frac*(len(t)-1))
-                ax.plot(x, n_t[:, j], label=f"t={t[j]:.1f}")
+            # Plot only t=t_final
+            j = len(t) - 1  # final time index
+            ax.plot(x, n_t[:, j], label=f"t={t[j]:.1f}")
 
             ax.legend(fontsize=8, loc="upper right")
             
@@ -499,7 +499,7 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
 
         axes[-1].set_xlabel("x")
 
-        plt.suptitle(f"Density snapshots for modes m=1..5  [{tag}]")
+        plt.suptitle(f"Density snapshots at t={t[-1]:.1f} for modes m=1..5  [{tag}]")
         outpath = f"{par.outdir}/snapshots_panels_{tag}.png"
         plt.savefig(outpath, dpi=160)
         outpath = f"{par.outdir}/snapshots_panels_{tag}.svg"
@@ -515,5 +515,116 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
         par.seed_amp_n, par.seed_mode = oldA, oldm
 
 
+def run_drift_velocity_sweep(drift_velocities=None, tag="drift_sweep"):
+    """Run simulations for multiple drift velocities and plot them together on one panel."""
+    if drift_velocities is None:
+        drift_velocities = [0.0, 5.0, 10.0, 15.0, 20.0]
+    
+    old_u_d = par.u_d
+    old_outdir = par.outdir
+    
+    results = []  # Store results for combined plotting
+    
+    try:
+        for u_d in drift_velocities:
+            par.u_d = u_d
+            par.outdir = f"{old_outdir}_ud{u_d:g}"
+            
+            print(f"\n[drift_sweep] Running with u_d = {u_d}")
+            
+            # Run single simulation (no mode sweep needed since seed_amp = 0)
+            t, n_t, p_t = run_once(tag=f"{tag}_ud{u_d:g}")
+            results.append((u_d, t, n_t))
+            
+        # Plot all drift velocities together
+        plot_drift_velocity_comparison(results, tag=tag)
+        
+        # Also plot as vertical panels
+        plot_drift_velocity_panels(results, tag=tag)
+            
+    finally:
+        par.u_d = old_u_d
+        par.outdir = old_outdir
+
+
+def plot_drift_velocity_comparison(results, tag="drift_comparison"):
+    """Plot density profiles for different drift velocities on a single panel."""
+    # Colorblind-friendly palette
+    colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#FF7F00']
+    
+    plt.figure(figsize=(10, 6))
+    
+    for i, (u_d, t, n_t) in enumerate(results):
+        # Plot final time density profile
+        j = len(t) - 1  # final time index
+        color = colors[i % len(colors)]
+        plt.plot(x, n_t[:, j], lw=2, color=color, label=f"$u_d = {u_d}$")
+    
+    plt.xlabel("x", fontsize=12)
+    plt.ylabel("$n(x, t_{{\\rm final}})$", fontsize=12)
+    plt.title(f"Density profiles at final time for different drift velocities", fontsize=14)
+    plt.grid(True, alpha=0.3)
+    
+    # Mark the source location
+    plt.axvline(par.x0, color='k', linestyle='--', alpha=0.5)
+    plt.text(par.x0 + 0.1, plt.ylim()[1] * 0.9, f'x₀={par.x0}', fontsize=10, alpha=0.7)
+    
+    plt.legend(frameon=False, fontsize=11)
+    
+    plt.tight_layout()
+    
+    # Save to original output directory
+    os.makedirs("out_drift", exist_ok=True)
+    plt.savefig(f"out_drift/drift_velocity_comparison_{tag}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"out_drift/drift_velocity_comparison_{tag}.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"[plot] saved out_drift/drift_velocity_comparison_{tag}.png")
+
+
+def plot_drift_velocity_panels(results, tag="drift_panels"):
+    """Plot density profiles for different drift velocities as vertical panels (1x5)."""
+    n_plots = len(results)
+    
+    fig, axes = plt.subplots(
+        n_plots, 1, sharex=True,
+        figsize=(10, 2.5 * n_plots),
+        constrained_layout=True
+    )
+    
+    # Handle case where only one plot
+    if not isinstance(axes, (list, np.ndarray)):
+        axes = [axes]
+    
+    for ax, (u_d, t, n_t) in zip(axes, results):
+        # Plot final time density profile
+        j = len(t) - 1  # final time index
+        ax.plot(x, n_t[:, j], lw=2, color='#377EB8', label=f"t={t[j]:.1f}")
+        
+        # Mark the source location
+        ax.axvline(par.x0, color='k', linestyle='--', alpha=0.5)
+        
+        ax.set_ylabel(f"n(x), $u_d = {u_d}$", fontsize=11)
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=9, loc="upper right")
+        
+        # Add text annotation for source position
+        ax.text(0.02, 0.95, f'x₀={par.x0}', transform=ax.transAxes, 
+                fontsize=9, alpha=0.7, verticalalignment='top')
+    
+    axes[-1].set_xlabel("x", fontsize=12)
+    plt.suptitle(f"Density profiles at final time for different drift velocities", fontsize=14)
+    
+    # Save to original output directory
+    os.makedirs("out_drift", exist_ok=True)
+    plt.savefig(f"out_drift/drift_velocity_panels_{tag}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"out_drift/drift_velocity_panels_{tag}.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"[plot] saved out_drift/drift_velocity_panels_{tag}.png")
+
+
 if __name__ == "__main__":
-    run_all_modes_snapshots(tag="seed_modes_1to5")
+    # Run for multiple drift velocities
+    run_drift_velocity_sweep(drift_velocities=[0.0, 5.0, 10.0, 15.0, 20.0], 
+                            tag="seed_modes_1to5")
