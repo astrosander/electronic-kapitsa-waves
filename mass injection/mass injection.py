@@ -68,9 +68,9 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 20e-3
+    seed_amp_n: float = 0e-3
     seed_mode: int = 1
-    seed_amp_p: float = 20e-3
+    seed_amp_p: float = 0e-3
 
     outdir: str = "out_drift"
     cmap: str = "inferno"
