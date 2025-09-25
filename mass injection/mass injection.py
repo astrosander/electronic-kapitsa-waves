@@ -160,7 +160,7 @@ def S_injection(n, nbar, Jx, gamma):
         raise ValueError("source_model must be 'as_given' or 'balanced'")
 
 def E_base_from_drift(nbar):
-    return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e /0.8187307530779819*40.0
+    return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e# /0.8187307530779819*40.0
 
 def rhs(t, y, E_base):
     N = par.Nx
@@ -375,8 +375,8 @@ def run_once(tag="seed_mode"):
 
     n0, p0 = initial_fields()
     E_base = E_base_from_drift(nbar_profile()) if par.maintain_drift in ("field","feedback") else 0.0
-
-    E_base = 15.0
+    print(E_base)
+    # E_base = 15.0
 
     y0 = np.concatenate([n0, p0])
     t_eval = np.linspace(0.0, par.t_final, par.n_save)
@@ -626,5 +626,5 @@ def plot_drift_velocity_panels(results, tag="drift_panels"):
 
 if __name__ == "__main__":
     # Run for multiple drift velocities
-    run_drift_velocity_sweep(drift_velocities=[0.0, 5.0, 10.0, 15.0, 20.0], 
+    run_drift_velocity_sweep(drift_velocities=[0.0, 0.1, 0.2, 0.5, 1.0], 
                             tag="seed_modes_1to5")
