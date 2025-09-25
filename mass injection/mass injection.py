@@ -33,22 +33,22 @@ print(f"[Threading] Using {NTHREADS} threads for FFTs and linear algebra")
 class P:
     m: float = 1.0
     e: float = 1.0
-    U: float = 1.0
+    U: float = 1.0#0.06
     nbar0: float = 0.2
-    Gamma0: float = 2.50
+    Gamma0: float = 2.50#0.08
     w: float = 5.0
     include_poisson: bool = False
     eps: float = 20.0
 
-    u_d: float = 0.00
+    u_d: float = 2.0
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.5
+    Dn: float = 0.5#/10#0.03
     Dp: float = 0.1
 
-    J0: float = 1.0
-    sigma_J: float = 2.0**1/2
+    J0: float = 1.0#0.04
+    sigma_J: float = 2.0**1/2#6.0
     x0: float = 5.0
     source_model: str = "as_given"
 
@@ -57,9 +57,11 @@ class P:
     nbar_sigma: float = 120.0
 
     L: float = 10.0
-    Nx: int = 812
+    Nx: int = 812#812
     t_final: float = 50.0
     n_save: int = 360
+    # rtol: float = 5e-7
+    # atol: float = 5e-9
     rtol = 1e-3
     atol = 1e-7
     n_floor: float = 1e-7
@@ -72,10 +74,11 @@ class P:
     outdir: str = "out_drift"
     cmap: str = "inferno"
 
+    # ---- NEW: static perturbation U0 * nbar(x) = lambda0 * exp( - (x-x0)^2 / (2*sigma^2) ) ----
     use_static_perturbation: bool = True
-    lambda0: float = 0.1
-    sigma_static: float = 1.0
-    set_static_equilibrium: bool = False
+    lambda0: float = 0.25          # amplitude of U0 * nbar(x)
+    sigma_static: float = 1.0     # sigma for the Gaussian in x
+    set_static_equilibrium: bool = False  # if True: n0 = (U0/U) * nbar(x) at t=0
 
 par = P()
 
@@ -111,6 +114,7 @@ def phi_from_n(n, nbar):
 def periodic_delta(x, x0, L): return (x - x0 + 0.5*L) % L - 0.5*L
 
 def _power_spectrum_1d(n_slice, L):
+    """Return one-sided k>0 spectrum of a single spatial slice."""
     N = n_slice.size
     dn = n_slice - np.mean(n_slice)
     nhat = fft(dn, workers=NTHREADS)
@@ -137,6 +141,10 @@ def gamma_from_J(Jx):
     return np.trapz(Jx, x)/par.L
 
 def U0nbar_profile():
+    """
+    Model from the text: U0 * nbar(x) = lambda0 * exp( - (x-x0)^2 / (2*sigma_static^2) ).
+    If use_static_perturbation is False, returns a uniform zero field.
+    """
     if not par.use_static_perturbation or par.lambda0 == 0.0:
         return np.zeros_like(x)
     d = periodic_delta(x, par.x0, par.L)
@@ -184,9 +192,10 @@ def rhs(t, y, E_base):
         phi = phi_from_n(n_eff, nbar)
         force_Phi = n_eff * Dx(phi)
 
+    # ---- NEW: screening force n * ∂x[ U0 nbar(x) ] ----
     grad_U0nbar = Dx(U0nbar_profile())
 
-    dp_dt = -Gamma(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p) + n_eff * grad_U0nbar
+    dp_dt = -Gamma(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p) + n_eff * grad_U0nbar     # <— Eq. (14) term
     dp_dt = filter_23(dp_dt)
 
     return np.concatenate([dn_dt, dp_dt])
@@ -195,12 +204,14 @@ def initial_fields():
     nbar = nbar_profile()
     pbar = pbar_profile(nbar)
 
+    # default initial fields
     n0 = nbar.copy()
     p0 = pbar.copy()
 
+    # ---- NEW: set n0 from Eq. (13) when requested (best used with no drift) ----
     if par.set_static_equilibrium:
-        n0 = (U0nbar_profile() / max(par.U, 1e-15))
-        p0[:] = 0.0
+        n0 = (U0nbar_profile() / max(par.U, 1e-15))  # n(x) = [U0 nbar(x)] / U
+        p0[:] = 0.0                                  # fluid at rest
     if par.seed_amp_n != 0.0 and par.seed_mode != 0:
         if par.seed_mode == 1:
             kx1 = 2*np.pi*3 / par.L
@@ -252,28 +263,46 @@ def initial_fields():
             kx1 = 2*np.pi*34 / par.L
             kx2 = 2*np.pi*55 / par.L
             p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+        # kx = 2*np.pi*par.seed_mode / par.L
+        # p0 += par.seed_amp_p * np.cos(kx * x)
     return n0, p0
 
-def save_final_spectra(m, t, n_t, L, tag=""):
+def save_final_spectra(m, t, n_t, L, tag="", n_avg_time=None):
     k0, P0 = _power_spectrum_1d(n_t[:, 0],  L)
     kf, Pf = _power_spectrum_1d(n_t[:, -1], L)
+    
+    # Add time-averaged spectrum if provided
+    if n_avg_time is not None:
+        k_avg, P_avg = _power_spectrum_1d(n_avg_time, L)
+    else:
+        k_avg, P_avg = None, None
 
     meta = asdict(par).copy()
     meta['outdir'] = str(par.outdir)
 
     os.makedirs(par.outdir, exist_ok=True)
     out = os.path.join(par.outdir, f"spec_m{int(m):02d}_{tag}.npz")
-    np.savez_compressed(out,
-                        m=int(m),
-                        t_final=float(t[-1]),
-                        L=float(L),
-                        Nx=int(par.Nx),
-                        k0=k0, P0=P0,
-                        k=kf, P=Pf,
-                        meta=meta)
+    
+    save_data = {
+        'm': int(m),
+        't_final': float(t[-1]),
+        'L': float(L),
+        'Nx': int(par.Nx),
+        'k0': k0, 'P0': P0,
+        'k': kf, 'P': Pf,
+        'meta': meta
+    }
+    
+    # Add time-averaged data if available
+    if k_avg is not None and P_avg is not None:
+        save_data['k_avg'] = k_avg
+        save_data['P_avg'] = P_avg
+    
+    np.savez_compressed(out, **save_data)
     print(f"[save] spectra → {out}")
 
-def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
+def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=(), n_avg_time=None):
+    """Overlay t=0 and t=t_end spectra; optional vertical k_marks."""
     k0, P0 = _power_spectrum_1d(n_t[:, 0],   L)
     k1, P1 = _power_spectrum_1d(n_t[:, -1],  L)
 
@@ -283,6 +312,15 @@ def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
     plt.figure(figsize=(8.6, 4.2))
     plt.plot(k0, P0, label="t = 0")
     plt.plot(k1, P1, label=f"t = {t[-1]:.2f}")
+    
+    # Add time-averaged spectrum if provided
+    if n_avg_time is not None:
+        k_avg, P_avg = _power_spectrum_1d(n_avg_time, L)
+        i_avg = np.argmax(P_avg)
+        k_avg_peak = k_avg[i_avg]
+        plt.plot(k_avg, P_avg, 'k--', lw=2, label="<n>(t=[10,50])")
+        plt.plot([k_avg_peak], [P_avg[i_avg]], "d", ms=6, color='k', label=f"peak_avg k={k_avg_peak:.3f}")
+    
     plt.plot([k0_peak], [P0[i0]], "o", ms=6, label=f"peak0 k={k0_peak:.3f}")
     plt.plot([k1_peak], [P1[i1]], "s", ms=6, label=f"peak1 k={k1_peak:.3f}")
 
@@ -291,9 +329,9 @@ def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
 
     plt.xlabel("$k$")
     plt.ylabel("power $|\\hat{n}(k)|^2$")
-    plt.title("Fourier spectrum of $n(x,t)$: initial vs final")
+    plt.title("Fourier spectrum of $n(x,t)$: initial vs final vs time-averaged")
     plt.grid(True, which="both", alpha=0.3)
-    plt.legend(frameon=False, ncol=2)
+    plt.legend(frameon=False, ncol=2, fontsize=9)
     os.makedirs(par.outdir, exist_ok=True)
     plt.tight_layout()
     plt.savefig(f"{par.outdir}/fft_compare_{tag}.png", dpi=160)
@@ -301,6 +339,11 @@ def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
     plt.close()
 
 def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False):
+    """
+    results: list of tuples (m, t, n_t) from run_all_modes_snapshots
+    Plots the power spectrum of n(x, t_final) for each run on the SAME axes.
+    """
+    # Colorblind-friendly palette
     colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3',
               '#FF7F00', '#A65628', '#F781BF', '#999999']
     markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p']
@@ -309,6 +352,7 @@ def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False):
     plt.style.use('default')
     
     for i, (m, t, n_t) in enumerate(results):
+        # k, P = _power_spectrum_1d(n_t[:, -1], L)
         k, P = _power_spectrum_1d(n_t[:, 0], L) 
         if normalize and np.max(P) > 0:
             P = P / np.max(P)
@@ -354,8 +398,7 @@ def run_once(tag="seed_mode"):
 
     n0, p0 = initial_fields()
     E_base = E_base_from_drift(nbar_profile()) if par.maintain_drift in ("field","feedback") else 0.0
-    print(E_base)
-    # E_base = 15.0
+    print(f"[run] E_base = {E_base:.4f}")
 
     y0 = np.concatenate([n0, p0])
     t_eval = np.linspace(0.0, par.t_final, par.n_save)
@@ -378,7 +421,21 @@ def run_once(tag="seed_mode"):
 
     n_eff_t = np.maximum(n_t, par.n_floor)
     v_t = p_t/(par.m*n_eff_t)
+    
+    # Time averaging over t=[10,50]
+    t_start_avg = 10.0
+    t_end_avg = 50.0
+    
+    # Find time indices for averaging window
+    i_start = np.argmin(np.abs(sol.t - t_start_avg))
+    i_end = np.argmin(np.abs(sol.t - t_end_avg))
+    
+    # Compute time-averaged quantities
+    u_avg_time = np.mean(v_t[:, i_start:i_end+1])  # Average velocity over time window
+    n_avg_time = np.mean(n_t[:, i_start:i_end+1], axis=1)  # Time-averaged density profile
+    
     print(f"[run]  <u>(t=0)={np.mean(v_t[:,0]):.4f},  <u>(t_end)={np.mean(v_t[:,-1]):.4f},  target u_d={par.u_d:.4f}")
+    print(f"[run]  <u>_avg(t=[{t_start_avg},{t_end_avg}])={u_avg_time:.4f}, time window: t[{i_start}:{i_end}] = [{sol.t[i_start]:.1f},{sol.t[i_end]:.1f}]")
 
     extent=[x.min(), x.max(), sol.t.min(), sol.t.max()]
     plt.figure(figsize=(9.6,4.3))
@@ -404,15 +461,17 @@ def run_once(tag="seed_mode"):
     for frac in [0.0, 1.0]:
         j = int(frac*(len(sol.t)-1))
         plt.plot(x, n_t[:,j], label=f"t={sol.t[j]:.1f}")
+    # Add time-averaged profile
+    plt.plot(x, n_avg_time, 'k--', lw=2, label=f"<n>(t=[{t_start_avg},{t_end_avg}])")
     plt.legend(); plt.xlabel("x"); plt.ylabel("n"); plt.title(f"Density snapshots  {tag}")
     plt.text(0.5, 0.08, f"Dp={par.Dp}, Dn={par.Dn}, m={par.seed_mode}", color="red",
          fontsize=12, ha="right", va="top", transform=plt.gca().transAxes)
 
     plt.tight_layout(); plt.savefig(f"{par.outdir}/snapshots_n_{tag}.png", dpi=160); plt.close()
 
-    plot_fft_initial_last(n_t, sol.t, par.L, tag=tag, k_marks=())
+    plot_fft_initial_last(n_t, sol.t, par.L, tag=tag, k_marks=(), n_avg_time=n_avg_time)
     
-    save_final_spectra(par.seed_mode, sol.t, n_t, par.L, tag=tag)
+    save_final_spectra(par.seed_mode, sol.t, n_t, par.L, tag=tag, n_avg_time=n_avg_time)
 
     return sol.t, n_t, p_t
 
@@ -455,9 +514,9 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
             axes = [axes]
 
         for ax, (m, t, n_t) in zip(axes, results):
-            # Plot only t=t_final
-            j = len(t) - 1  # final time index
-            ax.plot(x, n_t[:, j], label=f"t={t[j]:.1f}")
+            for frac in [0.0, 1.0]:
+                j = int(frac*(len(t)-1))
+                ax.plot(x, n_t[:, j], label=f"t={t[j]:.1f}")
 
             ax.legend(fontsize=8, loc="upper right")
             
@@ -469,10 +528,16 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
                 ax.set_ylabel(r"$\delta n \sim \cos(8x) + \cos(15x)$")
             elif m == 4:
                 ax.set_ylabel(r"$\delta n \sim \cos(7x) + \cos(13x)$")
+            # ax.set_ylabel(f"m={m}")
+            # ax.text(
+            #     -0.02, 0.5, f"m={m}",
+            #     transform=ax.transAxes, rotation=90,
+            #     va="center", ha="right", color="red", fontsize=11
+            # )
 
         axes[-1].set_xlabel("x")
 
-        plt.suptitle(f"Density snapshots at t={t[-1]:.1f} for modes m=1..5  [{tag}]")
+        plt.suptitle(f"Density snapshots for modes m=1..5  [{tag}]")
         outpath = f"{par.outdir}/snapshots_panels_{tag}.png"
         plt.savefig(outpath, dpi=160)
         outpath = f"{par.outdir}/snapshots_panels_{tag}.svg"
@@ -488,302 +553,6 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
         par.seed_amp_n, par.seed_mode = oldA, oldm
 
 
-def run_drift_velocity_sweep(drift_velocities=None, tag="drift_sweep"):
-    if drift_velocities is None:
-        drift_velocities = [0.0, 5.0, 10.0, 15.0, 20.0]
-    
-    old_u_d = par.u_d
-    old_outdir = par.outdir
-    
-    results = []
-    
-    try:
-        for u_d in drift_velocities:
-            par.u_d = u_d
-            par.outdir = f"{old_outdir}_ud{u_d:g}"
-            
-            print(f"\n[drift_sweep] Running with u_d = {u_d}")
-            
-            t, n_t, p_t = run_once(tag=f"{tag}_ud{u_d:g}")
-            results.append((u_d, t, n_t))
-            
-        plot_drift_velocity_comparison(results, tag=tag)
-        plot_drift_velocity_panels(results, tag=tag)
-        plot_spacetime_panels(results, tag=tag)
-            
-    finally:
-        par.u_d = old_u_d
-        par.outdir = old_outdir
-
-
-def plot_drift_velocity_comparison(results, tag="drift_comparison"):
-    colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#FF7F00']
-    
-    plt.figure(figsize=(10, 6))
-    
-    for i, (u_d, t, n_t) in enumerate(results):
-        j = len(t) - 1
-        color = colors[i % len(colors)]
-        plt.plot(x, n_t[:, j], lw=2, color=color, label=f"$u_d = {u_d}$")
-    
-    plt.xlabel("x", fontsize=12)
-    plt.ylabel("$n(x, t_{{\\rm final}})$", fontsize=12)
-    plt.title(f"Density profiles at final time for different drift velocities", fontsize=14)
-    plt.grid(True, alpha=0.3)
-    
-    plt.axvline(par.x0, color='k', linestyle='--', alpha=0.5)
-    plt.text(par.x0 + 0.1, plt.ylim()[1] * 0.9, f'x₀={par.x0}', fontsize=10, alpha=0.7)
-    
-    plt.legend(frameon=False, fontsize=11)
-    
-    plt.tight_layout()
-    
-    os.makedirs("out_drift", exist_ok=True)
-    plt.savefig(f"out_drift/drift_velocity_comparison_{tag}.png", dpi=300, bbox_inches='tight')
-    plt.savefig(f"out_drift/drift_velocity_comparison_{tag}.pdf", dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print(f"[plot] saved out_drift/drift_velocity_comparison_{tag}.png")
-
-
-def plot_drift_velocity_panels(results, tag="drift_panels"):
-    n_plots = len(results)
-    
-    fig, axes = plt.subplots(
-        n_plots, 1, sharex=True,
-        figsize=(10, 2.5 * n_plots),
-        constrained_layout=True
-    )
-    
-    # Handle case where only one plot
-    if not isinstance(axes, (list, np.ndarray)):
-        axes = [axes]
-    
-    for ax, (u_d, t, n_t) in zip(axes, results):
-        j = len(t) - 1
-        ax.plot(x, n_t[:, j], lw=2, color='#377EB8', label=f"t={t[j]:.1f}")
-        
-        ax.axvline(par.x0, color='k', linestyle='--', alpha=0.5)
-        
-        ax.set_ylabel(f"n(x), $u_d = {u_d}$", fontsize=11)
-        ax.grid(True, alpha=0.3)
-        ax.legend(fontsize=9, loc="upper right")
-        
-        ax.text(0.02, 0.95, f'x₀={par.x0}', transform=ax.transAxes, 
-                fontsize=9, alpha=0.7, verticalalignment='top')
-    
-    axes[-1].set_xlabel("x", fontsize=12)
-    plt.suptitle(f"Density profiles at final time for different drift velocities", fontsize=14)
-    
-    os.makedirs("out_drift", exist_ok=True)
-    plt.savefig(f"out_drift/drift_velocity_panels_{tag}.png", dpi=300, bbox_inches='tight')
-    plt.savefig(f"out_drift/drift_velocity_panels_{tag}.pdf", dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print(f"[plot] saved out_drift/drift_velocity_panels_{tag}.png")
-
-
-def plot_spacetime_panels(results, tag="spacetime_panels"):
-    n_plots = len(results)
-    
-    fig, axes = plt.subplots(
-        n_plots, 1, sharex=True,
-        figsize=(12, 3.0 * n_plots),
-        constrained_layout=True
-    )
-    
-    # Handle case where only one plot
-    if not isinstance(axes, (list, np.ndarray)):
-        axes = [axes]
-    
-    for ax, (u_d, t, n_t) in zip(axes, results):
-        extent = [x.min(), x.max(), t.min(), t.max()]
-        im = ax.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, cmap=par.cmap)
-        
-        ax.plot([par.x0, par.x0], [t.min(), t.max()], 'w--', lw=1, alpha=0.7)
-        
-        ax.set_ylabel(f"t, $u_d = {u_d}$", fontsize=11)
-        
-        cbar = plt.colorbar(im, ax=ax, aspect=30, pad=0.02)
-        cbar.set_label("n", fontsize=10)
-        
-        ax.text(0.02, 0.95, f'$u_d = {u_d}$, x₀={par.x0}', transform=ax.transAxes, 
-                fontsize=11, alpha=0.9, verticalalignment='top', 
-                bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8))
-    
-    axes[-1].set_xlabel("x", fontsize=12)
-    plt.suptitle(f"Spacetime evolution n(x,t) for different drift velocities", fontsize=14)
-    
-    os.makedirs("out_drift", exist_ok=True)
-    plt.savefig(f"out_drift/spacetime_panels_{tag}.png", dpi=300, bbox_inches='tight')
-    plt.savefig(f"out_drift/spacetime_panels_{tag}.pdf", dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    print(f"[plot] saved out_drift/spacetime_panels_{tag}.png")
-
-
-def run_lambda_drift_parameter_sweep(drift_velocities=None, lambda0_values=None, tag="lambda_drift_sweep"):
-    """
-    Run parameter sweep over both drift velocities and lambda0 values.
-    Creates a grid of spacetime plots with different combinations.
-    """
-    if drift_velocities is None:
-        drift_velocities = [0.0, 1.0, 2.0, 3.0, 5.0]
-    if lambda0_values is None:
-        lambda0_values = [0.1, 0.3, 0.5, 0.8, 1.0, 1.5]
-    
-    old_u_d = par.u_d
-    old_lambda0 = par.lambda0
-    old_outdir = par.outdir
-    
-    # Store all results for grid plotting
-    all_results = []
-    
-    try:
-        for lambda0 in lambda0_values:
-            par.lambda0 = lambda0
-            lambda_results = []
-            
-            for u_d in drift_velocities:
-                par.u_d = u_d
-                par.outdir = f"{old_outdir}_lambda{lambda0:g}_ud{u_d:g}"
-                
-                print(f"\n[parameter_sweep] Running with lambda0 = {lambda0}, u_d = {u_d}")
-                
-                t, n_t, p_t = run_once(tag=f"lambda{lambda0:g}_ud{u_d:g}")
-                lambda_results.append((u_d, t, n_t))
-            
-            all_results.append((lambda0, lambda_results))
-        
-        # Create grid of spacetime plots
-        plot_spacetime_parameter_grid(all_results, drift_velocities, lambda0_values, tag=tag)
-            
-    finally:
-        par.u_d = old_u_d
-        par.lambda0 = old_lambda0
-        par.outdir = old_outdir
-
-
-def plot_spacetime_parameter_grid(all_results, drift_velocities, lambda0_values, tag="parameter_grid"):
-    """
-    Create a grid of spacetime plots where:
-    - Rows correspond to different lambda0 values
-    - Columns correspond to different drift velocities
-    """
-    n_rows = len(lambda0_values)
-    n_cols = len(drift_velocities)
-    
-    fig, axes = plt.subplots(
-        n_rows, n_cols, 
-        figsize=(3 * n_cols, 2.2 * n_rows),
-        gridspec_kw={'hspace': 0.1, 'wspace': 0.1}
-    )
-    
-    # Handle cases with single row or column
-    if n_rows == 1 and n_cols == 1:
-        axes = [[axes]]
-    elif n_rows == 1:
-        axes = [axes]
-    elif n_cols == 1:
-        axes = [[ax] for ax in axes]
-    
-    # Find global vmin/vmax for consistent color scaling
-    vmin, vmax = float('inf'), float('-inf')
-    for lambda0, lambda_results in all_results:
-        for u_d, t, n_t in lambda_results:
-            vmin = min(vmin, n_t.min())
-            vmax = max(vmax, n_t.max())
-    
-    for row_idx, (lambda0, lambda_results) in enumerate(all_results):
-        for col_idx, (u_d, t, n_t) in enumerate(lambda_results):
-            ax = axes[row_idx][col_idx]
-            
-            extent = [x.min(), x.max(), t.min(), t.max()]
-            im = ax.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, 
-                          cmap=par.cmap, vmin=vmin, vmax=vmax)
-            
-            # Add vertical line at x0
-            ax.plot([par.x0, par.x0], [t.min(), t.max()], 'w--', lw=1, alpha=0.7)
-            
-            # Labels (no titles, smaller fonts, tighter spacing)
-            if col_idx == 0:
-                ax.set_ylabel(f"$\\lambda_0={lambda0}$", fontsize=10, rotation=0, 
-                             ha='right', va='center', labelpad=5)
-            if row_idx == n_rows - 1:
-                ax.set_xlabel(f"$u_d={u_d}$", fontsize=10, labelpad=2)
-            
-            # Remove parameter info text to save space
-    
-    # Add a single colorbar for the entire grid
-    cbar = fig.colorbar(im, ax=axes, aspect=50, pad=0.02, shrink=0.8)
-    cbar.set_label("n", fontsize=12)
-    
-    # Remove suptitle to save space
-    
-    os.makedirs("out_drift", exist_ok=True)
-    plt.savefig(f"out_drift/spacetime_parameter_grid_{tag}.png", dpi=300, bbox_inches='tight', pad_inches=0.1)
-    plt.savefig(f"out_drift/spacetime_parameter_grid_{tag}.pdf", dpi=300, bbox_inches='tight', pad_inches=0.1)
-    plt.close()
-    
-    print(f"[plot] saved out_drift/spacetime_parameter_grid_{tag}.png")
-
-
-def main():
-    """
-    Main function - choose which simulation to run
-    """
-    # Choose which simulation to run:
-    run_mode = "parameter_sweep"  # Options: "original", "parameter_sweep", "test"
-    
-    if run_mode == "original":
-        # Original drift velocity sweep
-        run_drift_velocity_sweep(drift_velocities=[0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0], 
-                                tag="seed_modes_1to5")
-    
-    elif run_mode == "parameter_sweep":
-        # New parameter sweep over both lambda0 and drift velocities  
-        # lambda0 values all less than 0.3
-        drift_velocities = [0.0, 1.0, 2.0, 3.0, 5.0]
-        lambda0_values = [0.05, 0.1, 0.15, 0.2, 0.25]
-        
-
-        run_lambda_drift_parameter_sweep(
-            drift_velocities=drift_velocities,
-            lambda0_values=lambda0_values,
-            tag="seed_modes_1to5"
-        )
-    
-    elif run_mode == "test":
-        # Quick test with reduced parameters
-        print("[TEST] Running quick parameter sweep test...")
-        
-        # Backup original parameters
-        original_t_final = par.t_final
-        original_n_save = par.n_save
-        original_Nx = par.Nx
-        
-        # Set faster parameters for testing
-        par.t_final = 10.0
-        par.n_save = 60
-        par.Nx = 128
-        
-        try:
-            # Small test grid: 3x3
-            drift_velocities = [0.0, 2.0, 5.0]
-            lambda0_values = [0.1, 0.5, 1.0]
-            
-            run_lambda_drift_parameter_sweep(
-                drift_velocities=drift_velocities,
-                lambda0_values=lambda0_values,
-                tag="test_grid"
-            )
-            
-        finally:
-            # Restore original parameters
-            par.t_final = original_t_final
-            par.n_save = original_n_save
-            par.Nx = original_Nx
-
-
 if __name__ == "__main__":
-    main()
+    print(f"[main] Running single simulation with u_d={par.u_d}, lambda0={par.lambda0}")
+    run_once(tag=f"single_ud{par.u_d}_lambda{par.lambda0}")
