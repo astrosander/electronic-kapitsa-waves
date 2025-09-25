@@ -1,4 +1,5 @@
 import os
+
 NTHREADS = int(os.environ.get("NTHREADS", "4"))
 os.environ["OMP_NUM_THREADS"] = str(NTHREADS)
 os.environ["OPENBLAS_NUM_THREADS"] = str(NTHREADS)
@@ -57,8 +58,8 @@ class P:
     nbar_sigma: float = 120.0
 
     L: float = 10.0
-    Nx: int = 812
-    t_final: float = 100.0
+    Nx: int = 812#812
+    t_final: float = 1.0
     n_save: int = 360
     # rtol: float = 5e-7
     # atol: float = 5e-9
@@ -73,6 +74,12 @@ class P:
 
     outdir: str = "out_drift"
     cmap: str = "inferno"
+
+    # ---- NEW: static perturbation U0 * nbar(x) = lambda0 * exp( - (x-x0)^2 / (2*sigma^2) ) ----
+    use_static_perturbation: bool = True
+    lambda0: float = 1.0          # amplitude of U0 * nbar(x)
+    sigma_static: float = 1.0     # sigma for the Gaussian in x
+    set_static_equilibrium: bool = False  # if True: n0 = (U0/U) * nbar(x) at t=0
 
 par = P()
 
@@ -134,6 +141,16 @@ def J_profile():
 def gamma_from_J(Jx): 
     return np.trapz(Jx, x)/par.L
 
+def U0nbar_profile():
+    """
+    Model from the text: U0 * nbar(x) = lambda0 * exp( - (x-x0)^2 / (2*sigma_static^2) ).
+    If use_static_perturbation is False, returns a uniform zero field.
+    """
+    if not par.use_static_perturbation or par.lambda0 == 0.0:
+        return np.zeros_like(x)
+    d = periodic_delta(x, par.x0, par.L)
+    return par.lambda0 * np.exp(-0.5*(d/par.sigma_static)**2)
+
 def S_injection(n, nbar, Jx, gamma):
     if par.source_model == "as_given":
         return Jx * nbar - gamma * (n - nbar)
@@ -176,7 +193,10 @@ def rhs(t, y, E_base):
         phi = phi_from_n(n_eff, nbar)
         force_Phi = n_eff * Dx(phi)
 
-    dp_dt = -Gamma(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p)
+    # ---- NEW: screening force n * ∂x[ U0 nbar(x) ] ----
+    grad_U0nbar = Dx(U0nbar_profile())
+
+    dp_dt = -Gamma(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p) + n_eff * grad_U0nbar     # <— Eq. (14) term
     dp_dt = filter_23(dp_dt)
 
     return np.concatenate([dn_dt, dp_dt])
@@ -184,8 +204,15 @@ def rhs(t, y, E_base):
 def initial_fields():
     nbar = nbar_profile()
     pbar = pbar_profile(nbar)
+
+    # default initial fields
     n0 = nbar.copy()
     p0 = pbar.copy()
+
+    # ---- NEW: set n0 from Eq. (13) when requested (best used with no drift) ----
+    if par.set_static_equilibrium:
+        n0 = (U0nbar_profile() / max(par.U, 1e-15))  # n(x) = [U0 nbar(x)] / U
+        p0[:] = 0.0                                  # fluid at rest
     if par.seed_amp_n != 0.0 and par.seed_mode != 0:
         if par.seed_mode == 1:
             kx1 = 2*np.pi*3 / par.L
