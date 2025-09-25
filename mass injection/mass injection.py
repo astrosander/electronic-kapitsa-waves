@@ -33,23 +33,22 @@ print(f"[Threading] Using {NTHREADS} threads for FFTs and linear algebra")
 class P:
     m: float = 1.0
     e: float = 1.0
-    U: float = 1.0#0.06
+    U: float = 1.0
     nbar0: float = 0.2
-    Gamma0: float = 2.50#0.08
+    Gamma0: float = 2.50
     w: float = 5.0
     include_poisson: bool = False
     eps: float = 20.0
 
     u_d: float = 0.00
-    # u_d: float = .0
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.5#/10#0.03
+    Dn: float = 0.5
     Dp: float = 0.1
 
-    J0: float = 1.0#0.04
-    sigma_J: float = 2.0**1/2#6.0
+    J0: float = 1.0
+    sigma_J: float = 2.0**1/2
     x0: float = 5.0
     source_model: str = "as_given"
 
@@ -58,11 +57,9 @@ class P:
     nbar_sigma: float = 120.0
 
     L: float = 10.0
-    Nx: int = 812#812
+    Nx: int = 812
     t_final: float = 10.0
     n_save: int = 360
-    # rtol: float = 5e-7
-    # atol: float = 5e-9
     rtol = 1e-3
     atol = 1e-7
     n_floor: float = 1e-7
@@ -75,11 +72,10 @@ class P:
     outdir: str = "out_drift"
     cmap: str = "inferno"
 
-    # ---- NEW: static perturbation U0 * nbar(x) = lambda0 * exp( - (x-x0)^2 / (2*sigma^2) ) ----
     use_static_perturbation: bool = True
-    lambda0: float = 1.0          # amplitude of U0 * nbar(x)
-    sigma_static: float = 1.0     # sigma for the Gaussian in x
-    set_static_equilibrium: bool = False  # if True: n0 = (U0/U) * nbar(x) at t=0
+    lambda0: float = 1.0
+    sigma_static: float = 1.0
+    set_static_equilibrium: bool = False
 
 par = P()
 
@@ -115,7 +111,6 @@ def phi_from_n(n, nbar):
 def periodic_delta(x, x0, L): return (x - x0 + 0.5*L) % L - 0.5*L
 
 def _power_spectrum_1d(n_slice, L):
-    """Return one-sided k>0 spectrum of a single spatial slice."""
     N = n_slice.size
     dn = n_slice - np.mean(n_slice)
     nhat = fft(dn, workers=NTHREADS)
@@ -142,10 +137,6 @@ def gamma_from_J(Jx):
     return np.trapz(Jx, x)/par.L
 
 def U0nbar_profile():
-    """
-    Model from the text: U0 * nbar(x) = lambda0 * exp( - (x-x0)^2 / (2*sigma_static^2) ).
-    If use_static_perturbation is False, returns a uniform zero field.
-    """
     if not par.use_static_perturbation or par.lambda0 == 0.0:
         return np.zeros_like(x)
     d = periodic_delta(x, par.x0, par.L)
@@ -160,7 +151,7 @@ def S_injection(n, nbar, Jx, gamma):
         raise ValueError("source_model must be 'as_given' or 'balanced'")
 
 def E_base_from_drift(nbar):
-    return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e# /0.8187307530779819*40.0
+    return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e
 
 def rhs(t, y, E_base):
     N = par.Nx
@@ -193,10 +184,9 @@ def rhs(t, y, E_base):
         phi = phi_from_n(n_eff, nbar)
         force_Phi = n_eff * Dx(phi)
 
-    # ---- NEW: screening force n * ∂x[ U0 nbar(x) ] ----
     grad_U0nbar = Dx(U0nbar_profile())
 
-    dp_dt = -Gamma(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p) + n_eff * grad_U0nbar     # <— Eq. (14) term
+    dp_dt = -Gamma(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p) + n_eff * grad_U0nbar
     dp_dt = filter_23(dp_dt)
 
     return np.concatenate([dn_dt, dp_dt])
@@ -205,14 +195,12 @@ def initial_fields():
     nbar = nbar_profile()
     pbar = pbar_profile(nbar)
 
-    # default initial fields
     n0 = nbar.copy()
     p0 = pbar.copy()
 
-    # ---- NEW: set n0 from Eq. (13) when requested (best used with no drift) ----
     if par.set_static_equilibrium:
-        n0 = (U0nbar_profile() / max(par.U, 1e-15))  # n(x) = [U0 nbar(x)] / U
-        p0[:] = 0.0                                  # fluid at rest
+        n0 = (U0nbar_profile() / max(par.U, 1e-15))
+        p0[:] = 0.0
     if par.seed_amp_n != 0.0 and par.seed_mode != 0:
         if par.seed_mode == 1:
             kx1 = 2*np.pi*3 / par.L
@@ -264,8 +252,6 @@ def initial_fields():
             kx1 = 2*np.pi*34 / par.L
             kx2 = 2*np.pi*55 / par.L
             p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        # kx = 2*np.pi*par.seed_mode / par.L
-        # p0 += par.seed_amp_p * np.cos(kx * x)
     return n0, p0
 
 def save_final_spectra(m, t, n_t, L, tag=""):
@@ -288,7 +274,6 @@ def save_final_spectra(m, t, n_t, L, tag=""):
     print(f"[save] spectra → {out}")
 
 def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
-    """Overlay t=0 and t=t_end spectra; optional vertical k_marks."""
     k0, P0 = _power_spectrum_1d(n_t[:, 0],   L)
     k1, P1 = _power_spectrum_1d(n_t[:, -1],  L)
 
@@ -316,11 +301,6 @@ def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
     plt.close()
 
 def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False):
-    """
-    results: list of tuples (m, t, n_t) from run_all_modes_snapshots
-    Plots the power spectrum of n(x, t_final) for each run on the SAME axes.
-    """
-    # Colorblind-friendly palette
     colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3',
               '#FF7F00', '#A65628', '#F781BF', '#999999']
     markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p']
@@ -329,7 +309,6 @@ def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False):
     plt.style.use('default')
     
     for i, (m, t, n_t) in enumerate(results):
-        # k, P = _power_spectrum_1d(n_t[:, -1], L)
         k, P = _power_spectrum_1d(n_t[:, 0], L) 
         if normalize and np.max(P) > 0:
             P = P / np.max(P)
@@ -490,12 +469,6 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
                 ax.set_ylabel(r"$\delta n \sim \cos(8x) + \cos(15x)$")
             elif m == 4:
                 ax.set_ylabel(r"$\delta n \sim \cos(7x) + \cos(13x)$")
-            # ax.set_ylabel(f"m={m}")
-            # ax.text(
-            #     -0.02, 0.5, f"m={m}",
-            #     transform=ax.transAxes, rotation=90,
-            #     va="center", ha="right", color="red", fontsize=11
-            # )
 
         axes[-1].set_xlabel("x")
 
@@ -516,14 +489,13 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
 
 
 def run_drift_velocity_sweep(drift_velocities=None, tag="drift_sweep"):
-    """Run simulations for multiple drift velocities and plot them together on one panel."""
     if drift_velocities is None:
         drift_velocities = [0.0, 5.0, 10.0, 15.0, 20.0]
     
     old_u_d = par.u_d
     old_outdir = par.outdir
     
-    results = []  # Store results for combined plotting
+    results = []
     
     try:
         for u_d in drift_velocities:
@@ -532,15 +504,12 @@ def run_drift_velocity_sweep(drift_velocities=None, tag="drift_sweep"):
             
             print(f"\n[drift_sweep] Running with u_d = {u_d}")
             
-            # Run single simulation (no mode sweep needed since seed_amp = 0)
             t, n_t, p_t = run_once(tag=f"{tag}_ud{u_d:g}")
             results.append((u_d, t, n_t))
             
-        # Plot all drift velocities together
         plot_drift_velocity_comparison(results, tag=tag)
-        
-        # Also plot as vertical panels
         plot_drift_velocity_panels(results, tag=tag)
+        plot_spacetime_panels(results, tag=tag)
             
     finally:
         par.u_d = old_u_d
@@ -548,15 +517,12 @@ def run_drift_velocity_sweep(drift_velocities=None, tag="drift_sweep"):
 
 
 def plot_drift_velocity_comparison(results, tag="drift_comparison"):
-    """Plot density profiles for different drift velocities on a single panel."""
-    # Colorblind-friendly palette
     colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#FF7F00']
     
     plt.figure(figsize=(10, 6))
     
     for i, (u_d, t, n_t) in enumerate(results):
-        # Plot final time density profile
-        j = len(t) - 1  # final time index
+        j = len(t) - 1
         color = colors[i % len(colors)]
         plt.plot(x, n_t[:, j], lw=2, color=color, label=f"$u_d = {u_d}$")
     
@@ -565,7 +531,6 @@ def plot_drift_velocity_comparison(results, tag="drift_comparison"):
     plt.title(f"Density profiles at final time for different drift velocities", fontsize=14)
     plt.grid(True, alpha=0.3)
     
-    # Mark the source location
     plt.axvline(par.x0, color='k', linestyle='--', alpha=0.5)
     plt.text(par.x0 + 0.1, plt.ylim()[1] * 0.9, f'x₀={par.x0}', fontsize=10, alpha=0.7)
     
@@ -573,7 +538,6 @@ def plot_drift_velocity_comparison(results, tag="drift_comparison"):
     
     plt.tight_layout()
     
-    # Save to original output directory
     os.makedirs("out_drift", exist_ok=True)
     plt.savefig(f"out_drift/drift_velocity_comparison_{tag}.png", dpi=300, bbox_inches='tight')
     plt.savefig(f"out_drift/drift_velocity_comparison_{tag}.pdf", dpi=300, bbox_inches='tight')
@@ -583,7 +547,6 @@ def plot_drift_velocity_comparison(results, tag="drift_comparison"):
 
 
 def plot_drift_velocity_panels(results, tag="drift_panels"):
-    """Plot density profiles for different drift velocities as vertical panels (1x5)."""
     n_plots = len(results)
     
     fig, axes = plt.subplots(
@@ -597,31 +560,66 @@ def plot_drift_velocity_panels(results, tag="drift_panels"):
         axes = [axes]
     
     for ax, (u_d, t, n_t) in zip(axes, results):
-        # Plot final time density profile
-        j = len(t) - 1  # final time index
+        j = len(t) - 1
         ax.plot(x, n_t[:, j], lw=2, color='#377EB8', label=f"t={t[j]:.1f}")
         
-        # Mark the source location
         ax.axvline(par.x0, color='k', linestyle='--', alpha=0.5)
         
         ax.set_ylabel(f"n(x), $u_d = {u_d}$", fontsize=11)
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=9, loc="upper right")
         
-        # Add text annotation for source position
         ax.text(0.02, 0.95, f'x₀={par.x0}', transform=ax.transAxes, 
                 fontsize=9, alpha=0.7, verticalalignment='top')
     
     axes[-1].set_xlabel("x", fontsize=12)
     plt.suptitle(f"Density profiles at final time for different drift velocities", fontsize=14)
     
-    # Save to original output directory
     os.makedirs("out_drift", exist_ok=True)
     plt.savefig(f"out_drift/drift_velocity_panels_{tag}.png", dpi=300, bbox_inches='tight')
     plt.savefig(f"out_drift/drift_velocity_panels_{tag}.pdf", dpi=300, bbox_inches='tight')
     plt.close()
     
     print(f"[plot] saved out_drift/drift_velocity_panels_{tag}.png")
+
+
+def plot_spacetime_panels(results, tag="spacetime_panels"):
+    n_plots = len(results)
+    
+    fig, axes = plt.subplots(
+        n_plots, 1, sharex=True,
+        figsize=(12, 3.0 * n_plots),
+        constrained_layout=True
+    )
+    
+    # Handle case where only one plot
+    if not isinstance(axes, (list, np.ndarray)):
+        axes = [axes]
+    
+    for ax, (u_d, t, n_t) in zip(axes, results):
+        extent = [x.min(), x.max(), t.min(), t.max()]
+        im = ax.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, cmap=par.cmap)
+        
+        ax.plot([par.x0, par.x0], [t.min(), t.max()], 'w--', lw=1, alpha=0.7)
+        
+        ax.set_ylabel(f"t, $u_d = {u_d}$", fontsize=11)
+        
+        cbar = plt.colorbar(im, ax=ax, aspect=30, pad=0.02)
+        cbar.set_label("n", fontsize=10)
+        
+        ax.text(0.02, 0.95, f'$u_d = {u_d}$, x₀={par.x0}', transform=ax.transAxes, 
+                fontsize=11, alpha=0.9, verticalalignment='top', 
+                bbox=dict(boxstyle="round,pad=0.3", facecolor='white', alpha=0.8))
+    
+    axes[-1].set_xlabel("x", fontsize=12)
+    plt.suptitle(f"Spacetime evolution n(x,t) for different drift velocities", fontsize=14)
+    
+    os.makedirs("out_drift", exist_ok=True)
+    plt.savefig(f"out_drift/spacetime_panels_{tag}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"out_drift/spacetime_panels_{tag}.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"[plot] saved out_drift/spacetime_panels_{tag}.png")
 
 
 if __name__ == "__main__":
