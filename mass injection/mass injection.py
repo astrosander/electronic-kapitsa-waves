@@ -58,7 +58,7 @@ class P:
 
     L: float = 10.0
     Nx: int = 812
-    t_final: float = 10.0
+    t_final: float = 50.0
     n_save: int = 360
     rtol = 1e-3
     atol = 1e-7
@@ -73,7 +73,7 @@ class P:
     cmap: str = "inferno"
 
     use_static_perturbation: bool = True
-    lambda0: float = 1.0
+    lambda0: float = 0.1
     sigma_static: float = 1.0
     set_static_equilibrium: bool = False
 
@@ -623,5 +623,5 @@ def plot_spacetime_panels(results, tag="spacetime_panels"):
 
 
 if __name__ == "__main__":
-    run_drift_velocity_sweep(drift_velocities=[1.5, 1.875, 2.25, 2.625, 3.0], 
+    run_drift_velocity_sweep(drift_velocities=[0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0], 
                             tag="seed_modes_1to5")
