@@ -622,6 +622,168 @@ def plot_spacetime_panels(results, tag="spacetime_panels"):
     print(f"[plot] saved out_drift/spacetime_panels_{tag}.png")
 
 
+def run_lambda_drift_parameter_sweep(drift_velocities=None, lambda0_values=None, tag="lambda_drift_sweep"):
+    """
+    Run parameter sweep over both drift velocities and lambda0 values.
+    Creates a grid of spacetime plots with different combinations.
+    """
+    if drift_velocities is None:
+        drift_velocities = [0.0, 1.0, 2.0, 3.0, 5.0]
+    if lambda0_values is None:
+        lambda0_values = [0.1, 0.3, 0.5, 0.8, 1.0, 1.5]
+    
+    old_u_d = par.u_d
+    old_lambda0 = par.lambda0
+    old_outdir = par.outdir
+    
+    # Store all results for grid plotting
+    all_results = []
+    
+    try:
+        for lambda0 in lambda0_values:
+            par.lambda0 = lambda0
+            lambda_results = []
+            
+            for u_d in drift_velocities:
+                par.u_d = u_d
+                par.outdir = f"{old_outdir}_lambda{lambda0:g}_ud{u_d:g}"
+                
+                print(f"\n[parameter_sweep] Running with lambda0 = {lambda0}, u_d = {u_d}")
+                
+                t, n_t, p_t = run_once(tag=f"lambda{lambda0:g}_ud{u_d:g}")
+                lambda_results.append((u_d, t, n_t))
+            
+            all_results.append((lambda0, lambda_results))
+        
+        # Create grid of spacetime plots
+        plot_spacetime_parameter_grid(all_results, drift_velocities, lambda0_values, tag=tag)
+            
+    finally:
+        par.u_d = old_u_d
+        par.lambda0 = old_lambda0
+        par.outdir = old_outdir
+
+
+def plot_spacetime_parameter_grid(all_results, drift_velocities, lambda0_values, tag="parameter_grid"):
+    """
+    Create a grid of spacetime plots where:
+    - Rows correspond to different lambda0 values
+    - Columns correspond to different drift velocities
+    """
+    n_rows = len(lambda0_values)
+    n_cols = len(drift_velocities)
+    
+    fig, axes = plt.subplots(
+        n_rows, n_cols, 
+        figsize=(3 * n_cols, 2.2 * n_rows),
+        gridspec_kw={'hspace': 0.1, 'wspace': 0.1}
+    )
+    
+    # Handle cases with single row or column
+    if n_rows == 1 and n_cols == 1:
+        axes = [[axes]]
+    elif n_rows == 1:
+        axes = [axes]
+    elif n_cols == 1:
+        axes = [[ax] for ax in axes]
+    
+    # Find global vmin/vmax for consistent color scaling
+    vmin, vmax = float('inf'), float('-inf')
+    for lambda0, lambda_results in all_results:
+        for u_d, t, n_t in lambda_results:
+            vmin = min(vmin, n_t.min())
+            vmax = max(vmax, n_t.max())
+    
+    for row_idx, (lambda0, lambda_results) in enumerate(all_results):
+        for col_idx, (u_d, t, n_t) in enumerate(lambda_results):
+            ax = axes[row_idx][col_idx]
+            
+            extent = [x.min(), x.max(), t.min(), t.max()]
+            im = ax.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, 
+                          cmap=par.cmap, vmin=vmin, vmax=vmax)
+            
+            # Add vertical line at x0
+            ax.plot([par.x0, par.x0], [t.min(), t.max()], 'w--', lw=1, alpha=0.7)
+            
+            # Labels (no titles, smaller fonts, tighter spacing)
+            if col_idx == 0:
+                ax.set_ylabel(f"$\\lambda_0={lambda0}$", fontsize=10, rotation=0, 
+                             ha='right', va='center', labelpad=5)
+            if row_idx == n_rows - 1:
+                ax.set_xlabel(f"$u_d={u_d}$", fontsize=10, labelpad=2)
+            
+            # Remove parameter info text to save space
+    
+    # Add a single colorbar for the entire grid
+    cbar = fig.colorbar(im, ax=axes, aspect=50, pad=0.02, shrink=0.8)
+    cbar.set_label("n", fontsize=12)
+    
+    # Remove suptitle to save space
+    
+    os.makedirs("out_drift", exist_ok=True)
+    plt.savefig(f"out_drift/spacetime_parameter_grid_{tag}.png", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.savefig(f"out_drift/spacetime_parameter_grid_{tag}.pdf", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+    
+    print(f"[plot] saved out_drift/spacetime_parameter_grid_{tag}.png")
+
+
+def main():
+    """
+    Main function - choose which simulation to run
+    """
+    # Choose which simulation to run:
+    run_mode = "parameter_sweep"  # Options: "original", "parameter_sweep", "test"
+    
+    if run_mode == "original":
+        # Original drift velocity sweep
+        run_drift_velocity_sweep(drift_velocities=[0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0], 
+                                tag="seed_modes_1to5")
+    
+    elif run_mode == "parameter_sweep":
+        # New parameter sweep over both lambda0 and drift velocities  
+        # lambda0 values all less than 0.3
+        drift_velocities = [0.0, 1.0, 2.0, 3.0, 5.0]
+        lambda0_values = [0.05, 0.1, 0.15, 0.2, 0.25]
+        
+
+        run_lambda_drift_parameter_sweep(
+            drift_velocities=drift_velocities,
+            lambda0_values=lambda0_values,
+            tag="seed_modes_1to5"
+        )
+    
+    elif run_mode == "test":
+        # Quick test with reduced parameters
+        print("[TEST] Running quick parameter sweep test...")
+        
+        # Backup original parameters
+        original_t_final = par.t_final
+        original_n_save = par.n_save
+        original_Nx = par.Nx
+        
+        # Set faster parameters for testing
+        par.t_final = 10.0
+        par.n_save = 60
+        par.Nx = 128
+        
+        try:
+            # Small test grid: 3x3
+            drift_velocities = [0.0, 2.0, 5.0]
+            lambda0_values = [0.1, 0.5, 1.0]
+            
+            run_lambda_drift_parameter_sweep(
+                drift_velocities=drift_velocities,
+                lambda0_values=lambda0_values,
+                tag="test_grid"
+            )
+            
+        finally:
+            # Restore original parameters
+            par.t_final = original_t_final
+            par.n_save = original_n_save
+            par.Nx = original_Nx
+
+
 if __name__ == "__main__":
-    run_drift_velocity_sweep(drift_velocities=[0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0], 
-                            tag="seed_modes_1to5")
+    main()
