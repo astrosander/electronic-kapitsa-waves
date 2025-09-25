@@ -625,6 +625,5 @@ def plot_drift_velocity_panels(results, tag="drift_panels"):
 
 
 if __name__ == "__main__":
-    # Run for multiple drift velocities
-    run_drift_velocity_sweep(drift_velocities=[0.0, 1.5, 3.0, 4.5, 6.04], 
+    run_drift_velocity_sweep(drift_velocities=[1.5, 1.875, 2.25, 2.625, 3.0], 
                             tag="seed_modes_1to5")
