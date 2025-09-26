@@ -40,7 +40,7 @@ class P:
     include_poisson: bool = False
     eps: float = 20.0
 
-    u_d: float = 2.0
+    u_d: float = 20.0
     maintain_drift: str = "field"
     Kp: float = 0.15
 
@@ -58,7 +58,7 @@ class P:
 
     L: float = 10.0
     Nx: int = 812#812
-    t_final: float = 50.0
+    t_final: float = 20.0
     n_save: int = 360
     # rtol: float = 5e-7
     # atol: float = 5e-9
@@ -409,7 +409,9 @@ def run_once(tag="seed_mode"):
     os.makedirs(par.outdir, exist_ok=True)
 
     n0, p0 = initial_fields()
-    E_base = E_base_from_drift(nbar_profile()) if par.maintain_drift in ("field","feedback") else 0.0
+    #E_base = E_base_from_drift(nbar_profile()) if par.maintain_drift in ("field","feedback") else 0.0
+    
+    E_base=15.0
     print(f"[run] E_base = {E_base:.4f}")
 
     y0 = np.concatenate([n0, p0])
@@ -1239,7 +1241,7 @@ def plot_temporal_evolution_panel(nu_values, lambda1_fixed=0.1, tag="temporal_pa
     
     # Create panel plot (n_panels rows x 1 column)
     n_panels = len(nu_values)
-    fig, axes = plt.subplots(n_panels, 1, figsize=(8, 3*n_panels), gridspec_kw={'hspace': 0.25})
+    fig, axes = plt.subplots(n_panels, 1, figsize=(8, 2.5*n_panels), gridspec_kw={'hspace': 0.25})
     
     if n_panels == 1:
         axes = [axes]
@@ -1263,14 +1265,18 @@ def plot_temporal_evolution_panel(nu_values, lambda1_fixed=0.1, tag="temporal_pa
         # Plot density evolution
         ax.plot(t, n_center, 'b-', lw=2, label=f"$n(x_0,t)$")
         
-        # Add the driving modulation for comparison
-        lambda_t = par.lambda0 + lambda1_fixed * np.cos(nu * t)
-        # Scale and shift for visibility
-        lambda_scaled = par.nbar0 + 0.1*(lambda_t - par.lambda0)
-        ax.plot(t, lambda_scaled, 'r--', lw=1.5, alpha=0.7, label="$\\lambda(t)$ (scaled)")
+        # Add the driving modulation for comparison (only if λ₁ > 0)
+        if lambda1_fixed > 0:
+            lambda_t = par.lambda0 + lambda1_fixed * np.cos(nu * t)
+            # Scale and shift for visibility
+            lambda_scaled = par.nbar0 + 0.1*(lambda_t - par.lambda0)
+            ax.plot(t, lambda_scaled, 'r--', lw=1.5, alpha=0.7, label="$\\lambda(t)$ (scaled)")
+        # else:
+            # For λ₁=0 case, show the constant λ₀ level
+            # ax.axhline(par.lambda0, color='r', linestyle='--', lw=1.5, alpha=0.7, label=f"$\\lambda_0 = {par.lambda0}$ (constant)")
         
         # Set consistent y-limits
-        ax.set_ylim(y_min * 0.95, y_max * 1.05)
+        # ax.set_ylim(y_min * 0.95, y_max * 1.05)
         
         if i == n_panels - 1:  # Only label x-axis on bottom panel
             ax.set_xlabel("$t$", fontsize=11)
@@ -1287,8 +1293,8 @@ def plot_temporal_evolution_panel(nu_values, lambda1_fixed=0.1, tag="temporal_pa
         ax.text(0.02, 0.95, f"$T = {period:.2f}$", transform=ax.transAxes, 
                 fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor='lightblue', alpha=0.8))
     
-    plt.suptitle(f"Temporal Evolution at $x_0$ for Different Driving Frequencies ($\\lambda_1 = {lambda1_fixed}$)", fontsize=13, y=0.995)
-    plt.tight_layout(rect=[0, 0, 1, 0.97])  # Leave space for suptitle
+    # plt.suptitle(f"Temporal Evolution at $x_0$ for Different Driving Frequencies ($\\lambda_1 = {lambda1_fixed}$)", fontsize=13, y=0.995)
+    # plt.tight_layout(rect=[0, 0, 1, 0.97])  # Leave space for suptitle
     
     os.makedirs("out_drift", exist_ok=True)
     plt.savefig(f"out_drift/temporal_evolution_panel_{tag}.png", dpi=300, bbox_inches='tight', pad_inches=0.1)
