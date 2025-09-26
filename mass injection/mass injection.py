@@ -1263,7 +1263,7 @@ def plot_temporal_evolution_panel(nu_values, lambda1_fixed=0.1, tag="temporal_pa
         n_center = n_t[i_center, :]
         
         # Plot density evolution
-        ax.plot(t, n_center, 'b-', lw=2, label=f"$n(x_0,t)$")
+        ax.plot(t, n_center, 'b-', lw=1.5, label=f"$n(x_0,t)$")
         
         # Add the driving modulation for comparison (only if λ₁ > 0)
         if lambda1_fixed > 0:

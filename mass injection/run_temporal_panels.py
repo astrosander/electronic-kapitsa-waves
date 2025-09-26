@@ -19,7 +19,7 @@ def main():
     print("=" * 60)
     
     # Set simulation parameters for faster runs
-    par.t_final = 10.0  # Shorter simulation time for panel
+    par.t_final = 20.0  # Shorter simulation time for panel
     par.n_save = 512    # Fewer time points for efficiency
     
     print(f"System parameters:")
