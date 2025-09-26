@@ -77,7 +77,7 @@ class P:
     # ---- NEW: time-dependent perturbation U0 * nbar(x) = [lambda0 + lambda1*cos(nu*t)] * exp( - (x-x0)^2 / (2*sigma^2) ) ----
     use_static_perturbation: bool = True
     lambda0: float = 0.25          # base amplitude of U0 * nbar(x)
-    lambda1: float = 0.0           # modulation amplitude for time-dependent part
+    lambda1: float = 0.05           # modulation amplitude for time-dependent part
     nu: float = 1.0                # driving frequency for time modulation
     sigma_static: float = 1.0     # sigma for the Gaussian in x
     set_static_equilibrium: bool = False  # if True: n0 = (U0/U) * nbar(x) at t=0
@@ -1263,14 +1263,14 @@ def plot_temporal_evolution_panel(nu_values, lambda1_fixed=0.1, tag="temporal_pa
         n_center = n_t[i_center, :]
         
         # Plot density evolution
-        ax.plot(t, n_center, 'b-', lw=1.5, label=f"$n(x_0,t)$")
+        ax.plot(t, n_center, 'b-', lw=1.0, label=f"$n(x_0,t)$")
         
         # Add the driving modulation for comparison (only if λ₁ > 0)
         if lambda1_fixed > 0:
             lambda_t = par.lambda0 + lambda1_fixed * np.cos(nu * t)
             # Scale and shift for visibility
             lambda_scaled = par.nbar0 + 0.1*(lambda_t - par.lambda0)
-            ax.plot(t, lambda_scaled, 'r--', lw=1.5, alpha=0.7, label="$\\lambda(t)$ (scaled)")
+            ax.plot(t, lambda_scaled, 'r--', lw=1.0, alpha=0.7, label="$\\lambda(t)$ (scaled)")
         # else:
             # For λ₁=0 case, show the constant λ₀ level
             # ax.axhline(par.lambda0, color='r', linestyle='--', lw=1.5, alpha=0.7, label=f"$\\lambda_0 = {par.lambda0}$ (constant)")
