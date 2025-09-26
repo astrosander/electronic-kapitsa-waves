@@ -722,8 +722,10 @@ def plot_lambda_panel(results, lambda0_values, u_d_fixed, tag="lambda_panel"):
         ax.set_title(f"$\\lambda_0 = {lambda0}$", fontsize=12)
         ax.grid(True, alpha=0.3)
         
-        # Add min/max info in bottom-left corner
-        minmax_text = f"Final: [{n_min_final:.3f}, {n_max_final:.3f}]\nAvg: [{n_min_avg:.3f}, {n_max_avg:.3f}]"
+        # Add min/max info in bottom-left corner (showing range = max - min)
+        range_final = n_max_final - n_min_final
+        range_avg = n_max_avg - n_min_avg
+        minmax_text = f"Final: Δn={range_final:.4f}\nAvg: Δn={range_avg:.4f}"
         ax.text(0.02, 0.05, minmax_text, transform=ax.transAxes, fontsize=9, 
                 verticalalignment='bottom', bbox=dict(boxstyle="round,pad=0.3", 
                 facecolor='lightblue', alpha=0.8))
@@ -732,8 +734,8 @@ def plot_lambda_panel(results, lambda0_values, u_d_fixed, tag="lambda_panel"):
             ax.legend(fontsize=9, loc='upper right')
         
         # Print to console
-        print(f"[panel] λ₀={lambda0}: n_final min={n_min_final:.6f}, max={n_max_final:.6f}")
-        print(f"[panel] λ₀={lambda0}: n_avg min={n_min_avg:.6f}, max={n_max_avg:.6f}")
+        print(f"[panel] λ₀={lambda0}: n_final Δn={range_final:.6f} (min={n_min_final:.6f}, max={n_max_final:.6f})")
+        print(f"[panel] λ₀={lambda0}: n_avg Δn={range_avg:.6f} (min={n_min_avg:.6f}, max={n_max_avg:.6f})")
     
     plt.suptitle(f"Final density profiles for different $\\lambda_0$ values (u_d={u_d_fixed})", fontsize=14)
     plt.tight_layout()
@@ -856,8 +858,10 @@ def plot_ud_panel(results, u_d_values, lambda0_fixed, tag="ud_panel"):
     
     print(f"[plot] saved out_drift/spacetime_ud_panel_{tag}.png")
     
-    # 2. Final density profiles comparison (1x6 panel)
-    fig, axes = plt.subplots(1, n_plots, figsize=(3.5*n_plots, 4), gridspec_kw={'wspace': 0.3})
+    # 2. Final density profiles comparison (5x1 panel - horizontal layout)
+    # Use only first 5 u_d values for cleaner layout
+    n_plots_display = min(5, n_plots)
+    fig, axes = plt.subplots(1, n_plots_display, figsize=(3.5*n_plots_display, 4), gridspec_kw={'wspace': 0.2})
     
     if n_plots == 1:
         axes = [axes]
@@ -911,8 +915,10 @@ def plot_ud_panel(results, u_d_values, lambda0_fixed, tag="ud_panel"):
         ax.set_title(f"$u_d = {u_d}$", fontsize=12)
         ax.grid(True, alpha=0.3)
         
-        # Add min/max info in bottom-left corner
-        minmax_text = f"Final: [{n_min_final:.3f}, {n_max_final:.3f}]\nAvg: [{n_min_avg:.3f}, {n_max_avg:.3f}]"
+        # Add min/max info in bottom-left corner (showing range = max - min)
+        range_final = n_max_final - n_min_final
+        range_avg = n_max_avg - n_min_avg
+        minmax_text = f"Final: $\\Delta n={range_final:.4f}$\nAvg: $\\Delta n={range_avg:.4f}$"
         ax.text(0.02, 0.05, minmax_text, transform=ax.transAxes, fontsize=9, 
                 verticalalignment='bottom', bbox=dict(boxstyle="round,pad=0.3", 
                 facecolor='lightblue', alpha=0.8))
@@ -921,8 +927,8 @@ def plot_ud_panel(results, u_d_values, lambda0_fixed, tag="ud_panel"):
             ax.legend(fontsize=9, loc='upper right')
         
         # Print to console
-        print(f"[panel] u_d={u_d}: n_final min={n_min_final:.6f}, max={n_max_final:.6f}")
-        print(f"[panel] u_d={u_d}: n_avg min={n_min_avg:.6f}, max={n_max_avg:.6f}")
+        print(f"[panel] u_d={u_d}: n_final $\\Delta n={range_final:.6f}$ (min={n_min_final:.6f}, max={n_max_final:.6f})")
+        print(f"[panel] u_d={u_d}: n_avg $\\Delta n={range_avg:.6f}$ (min={n_min_avg:.6f}, max={n_max_avg:.6f})")
     
     plt.suptitle(f"Final density profiles for different $u_d$ values (λ₀={lambda0_fixed})", fontsize=14)
     plt.tight_layout()
@@ -956,10 +962,103 @@ def plot_ud_panel(results, u_d_values, lambda0_fixed, tag="ud_panel"):
     
     print(f"[plot] saved out_drift/fft_spectra_ud_panel_{tag}.png")
 
+def create_snapshots_panel_from_images(lambda0_val, u_d_values, tag="snapshots_panel"):
+    """
+    Create a vertical panel plot from existing snapshot images with delta calculations
+    """
+    import glob
+    from PIL import Image
+    import matplotlib.image as mpimg
+    
+    n_plots = len(u_d_values)
+    fig, axes = plt.subplots(n_plots, 1, figsize=(10, 3*n_plots), gridspec_kw={'hspace': 0.1})
+    
+    if n_plots == 1:
+        axes = [axes]
+    
+    for i, u_d in enumerate(u_d_values):
+        ax = axes[i]
+        
+        # Look for the snapshot image
+        image_pattern = f"out_drift_lambda{lambda0_val}_ud{u_d}/snapshots_n_lambda{lambda0_val}_ud{u_d}.png"
+        
+        # Look for the corresponding .npz file to get delta values
+        npz_pattern = f"out_drift_lambda{lambda0_val}_ud{u_d}/spec_m01_lambda{lambda0_val}_ud{u_d}.npz"
+        
+        delta_text = ""
+        try:
+            # Try to load spectral data to get additional info
+            if os.path.exists(npz_pattern):
+                print(f"[snapshots_panel] Found npz: {npz_pattern}")
+                # We don't have the actual n_t data in the npz file, so we'll calculate from results if available
+                delta_text = " ($\\Delta n$ from data)"
+            else:
+                print(f"[snapshots_panel] No npz found: {npz_pattern}")
+        except Exception as e:
+            print(f"[snapshots_panel] Error loading npz: {e}")
+        
+        try:
+            # Load and display the image
+            img = mpimg.imread(image_pattern)
+            ax.imshow(img)
+            
+            # Add delta info if we have it from the recent simulation
+            title_text = f"$u_d = {u_d}$, $\\lambda_0 = {lambda0_val}$"
+            
+            # Try to get delta from recent simulation results if available
+            delta_info = ""
+            if hasattr(create_snapshots_panel_from_images, 'recent_results'):
+                for u_d_res, t_res, n_t_res in create_snapshots_panel_from_images.recent_results:
+                    if abs(u_d_res - u_d) < 1e-6:  # Match u_d
+                        # Calculate time-averaged delta instead of final delta
+                        t_start_avg = 10.0
+                        t_end_avg = 20.0  # Use t_final from parameters
+                        i_start = np.argmin(np.abs(t_res - t_start_avg))
+                        i_end = np.argmin(np.abs(t_res - t_end_avg))
+                        n_avg_time = np.mean(n_t_res[:, i_start:i_end+1], axis=1)
+                        n_min_avg = n_avg_time.min()
+                        n_max_avg = n_avg_time.max()
+                        delta_n_avg = n_max_avg - n_min_avg
+                        delta_info = f", $\\Delta n_{{avg}} = {delta_n_avg:.4f}$"
+                        break
+            
+            ax.set_title(title_text + delta_info, fontsize=12)
+            ax.axis('off')  # Remove axes for clean image display
+            
+            print(f"[snapshots_panel] Loaded: {image_pattern}")
+            
+        except (FileNotFoundError, OSError) as e:
+            # If image not found, create placeholder
+            ax.text(0.5, 0.5, f"Image not found:\nu_d={u_d}, λ₀={lambda0_val}", 
+                   ha='center', va='center', transform=ax.transAxes, fontsize=12,
+                   bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgray', alpha=0.7))
+            ax.set_title(f"u_d = {u_d}, λ₀ = {lambda0_val} (missing)", fontsize=12)
+            ax.axis('off')
+            
+            print(f"[snapshots_panel] Missing: {image_pattern}")
+    
+    plt.suptitle(f"Density Snapshots Panel - λ₀={lambda0_val} for different u_d values", fontsize=14)
+    plt.tight_layout()
+    
+    os.makedirs("out_drift", exist_ok=True)
+    output_path = f"out_drift/snapshots_panel_lambda{lambda0_val}_{tag}.png"
+    plt.savefig(output_path, dpi=300, bbox_inches='tight')
+    plt.savefig(f"out_drift/snapshots_panel_lambda{lambda0_val}_{tag}.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"[plot] saved {output_path}")
+
 if __name__ == "__main__":
-    # u_d panel for different drift velocities with fixed lambda0=1
+    # u_d panel for different drift velocities with fixed lambda0=0.2
     u_d_values = [0, 1, 2, 3, 4, 5]
     lambda0_fixed = 0.2
     
     print(f"[main] Running u_d panel with values {u_d_values}, fixed lambda0={lambda0_fixed}")
-    run_ud_panel(u_d_values, lambda0_fixed, tag="lambda1p0")
+    results = run_ud_panel(u_d_values, lambda0_fixed, tag="lambda0p2")
+    
+    # After running simulations, create the snapshots panel from generated images
+    print(f"\n[main] Creating snapshots panel from existing images with delta calculations")
+    
+    # Store results in the function for delta calculations
+    create_snapshots_panel_from_images.recent_results = results
+    create_snapshots_panel_from_images(lambda0_fixed, u_d_values, tag="vertical")
