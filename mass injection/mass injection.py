@@ -458,16 +458,40 @@ def run_once(tag="seed_mode"):
     plt.savefig(f"{par.outdir}/spacetime_n_comoving_{tag}.png", dpi=160); plt.close()
 
     plt.figure(figsize=(9.6,3.4))
+    
+    # Calculate min/max values for display
+    n_min_global = n_t.min()
+    n_max_global = n_t.max()
+    n_min_avg = n_avg_time.min()
+    n_max_avg = n_avg_time.max()
+    
     for frac in [0.0, 1.0]:
         j = int(frac*(len(sol.t)-1))
-        plt.plot(x, n_t[:,j], label=f"t={sol.t[j]:.1f}")
+        n_snapshot = n_t[:,j]
+        n_min_snap = n_snapshot.min()
+        n_max_snap = n_snapshot.max()
+        plt.plot(x, n_snapshot, label=f"t={sol.t[j]:.1f} [min={n_min_snap:.3f}, max={n_max_snap:.3f}]")
+    
     # Add time-averaged profile
-    plt.plot(x, n_avg_time, 'k--', lw=2, label=f"<n>(t=[{t_start_avg},{t_end_avg}])")
-    plt.legend(); plt.xlabel("x"); plt.ylabel("n"); plt.title(f"Density snapshots  {tag}")
+    plt.plot(x, n_avg_time, 'k--', lw=2, label=f"<n>(t=[{t_start_avg},{t_end_avg}]) [min={n_min_avg:.3f}, max={n_max_avg:.3f}]")
+    
+    plt.legend(fontsize=9); plt.xlabel("x"); plt.ylabel("n"); plt.title(f"Density snapshots  {tag}")
+    
+    # Add global min/max info
+    plt.text(0.02, 0.95, f"Global: min={n_min_global:.3f}, max={n_max_global:.3f}", 
+             transform=plt.gca().transAxes, fontsize=10, 
+             bbox=dict(boxstyle="round,pad=0.3", facecolor='yellow', alpha=0.7))
+    
     plt.text(0.5, 0.08, f"Dp={par.Dp}, Dn={par.Dn}, m={par.seed_mode}", color="red",
          fontsize=12, ha="right", va="top", transform=plt.gca().transAxes)
 
     plt.tight_layout(); plt.savefig(f"{par.outdir}/snapshots_n_{tag}.png", dpi=160); plt.close()
+    
+    # Print values to console
+    print(f"[snapshots] Global n: min={n_min_global:.6f}, max={n_max_global:.6f}")
+    print(f"[snapshots] t=0: min={n_t[:,0].min():.6f}, max={n_t[:,0].max():.6f}")
+    print(f"[snapshots] t_final: min={n_t[:,-1].min():.6f}, max={n_t[:,-1].max():.6f}")
+    print(f"[snapshots] Time-averaged: min={n_min_avg:.6f}, max={n_max_avg:.6f}")
 
     plot_fft_initial_last(n_t, sol.t, par.L, tag=tag, k_marks=(), n_avg_time=n_avg_time)
     
@@ -553,6 +577,200 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
         par.seed_amp_n, par.seed_mode = oldA, oldm
 
 
+def run_lambda_panel(lambda0_values, u_d_fixed=2.0, tag="lambda_panel"):
+    """
+    Run parameter sweep over lambda0 values with fixed u_d
+    """
+    old_lambda0 = par.lambda0
+    old_u_d = par.u_d
+    old_outdir = par.outdir
+    
+    # Set fixed drift velocity
+    par.u_d = u_d_fixed
+    
+    results = []
+    
+    try:
+        for lambda0 in lambda0_values:
+            par.lambda0 = lambda0
+            par.outdir = f"{old_outdir}_lambda{lambda0:g}_ud{u_d_fixed:g}"
+            
+            print(f"\n[lambda_panel] Running with lambda0 = {lambda0}, u_d = {u_d_fixed}")
+            
+            t, n_t, p_t = run_once(tag=f"lambda{lambda0:g}_ud{u_d_fixed:g}")
+            results.append((lambda0, t, n_t))
+        
+        # Create panel plots
+        plot_lambda_panel(results, lambda0_values, u_d_fixed, tag=tag)
+            
+    finally:
+        par.lambda0 = old_lambda0
+        par.u_d = old_u_d
+        par.outdir = old_outdir
+    
+    return results
+
+def plot_lambda_panel(results, lambda0_values, u_d_fixed, tag="lambda_panel"):
+    """
+    Create panel plots for different lambda0 values
+    """
+    n_plots = len(lambda0_values)
+    
+    # 1. Spacetime panel
+    fig, axes = plt.subplots(
+        n_plots, 1, 
+        figsize=(12, 2.5 * n_plots),
+        gridspec_kw={'hspace': 0.15}
+    )
+    
+    if n_plots == 1:
+        axes = [axes]
+    
+    # Find global vmin/vmax for consistent color scaling
+    vmin, vmax = float('inf'), float('-inf')
+    for lambda0, t, n_t in results:
+        vmin = min(vmin, n_t.min())
+        vmax = max(vmax, n_t.max())
+    
+    for i, (lambda0, t, n_t) in enumerate(results):
+        ax = axes[i]
+        
+        extent = [x.min(), x.max(), t.min(), t.max()]
+        im = ax.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, 
+                      cmap=par.cmap, vmin=vmin, vmax=vmax)
+        
+        # Add vertical line at x0
+        ax.plot([par.x0, par.x0], [t.min(), t.max()], 'w--', lw=1, alpha=0.7)
+        
+        # Labels
+        ax.set_ylabel(f"$\\lambda_0={lambda0}$\nt", fontsize=11)
+        if i == n_plots - 1:
+            ax.set_xlabel("x", fontsize=11)
+        
+        # Add parameter info
+        ax.text(0.02, 0.95, f'$\\lambda_0={lambda0}$, $u_d={u_d_fixed}$', 
+               transform=ax.transAxes, fontsize=10, alpha=0.9, 
+               verticalalignment='top', color='white',
+               bbox=dict(boxstyle="round,pad=0.2", facecolor='black', alpha=0.6))
+    
+    # Add colorbar
+    cbar = fig.colorbar(im, ax=axes, aspect=30, pad=0.02, shrink=0.8)
+    cbar.set_label("n", fontsize=12)
+    
+    plt.suptitle(f"Spacetime evolution n(x,t) for different $\\lambda_0$ values (u_d={u_d_fixed})", fontsize=14)
+    
+    os.makedirs("out_drift", exist_ok=True)
+    plt.savefig(f"out_drift/spacetime_lambda_panel_{tag}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"out_drift/spacetime_lambda_panel_{tag}.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"[plot] saved out_drift/spacetime_lambda_panel_{tag}.png")
+    
+    # 2. Final density profiles comparison (1x3 panel)
+    n_plots = len(lambda0_values)
+    fig, axes = plt.subplots(1, n_plots, figsize=(5*n_plots, 4), gridspec_kw={'wspace': 0.3})
+    
+    if n_plots == 1:
+        axes = [axes]
+    
+    colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#FF7F00']
+    
+    # Find global y-limits for consistent scaling (including time-averaged data)
+    y_min, y_max = float('inf'), float('-inf')
+    for lambda0, t, n_t in results:
+        n_final = n_t[:, -1]
+        y_min = min(y_min, n_final.min())
+        y_max = max(y_max, n_final.max())
+        
+        # Also consider time-averaged data for y-limits
+        t_start_avg = 10.0
+        t_end_avg = 50.0
+        i_start = np.argmin(np.abs(t - t_start_avg))
+        i_end = np.argmin(np.abs(t - t_end_avg))
+        n_avg_time = np.mean(n_t[:, i_start:i_end+1], axis=1)
+        y_min = min(y_min, n_avg_time.min())
+        y_max = max(y_max, n_avg_time.max())
+    
+    for i, (lambda0, t, n_t) in enumerate(results):
+        ax = axes[i]
+        j = len(t) - 1  # final time
+        n_final = n_t[:, j]
+        n_min_final = n_final.min()
+        n_max_final = n_final.max()
+        
+        # Compute time-averaged density and its min/max
+        t_start_avg = 10.0
+        t_end_avg = 50.0
+        i_start = np.argmin(np.abs(t - t_start_avg))
+        i_end = np.argmin(np.abs(t - t_end_avg))
+        n_avg_time = np.mean(n_t[:, i_start:i_end+1], axis=1)
+        n_min_avg = n_avg_time.min()
+        n_max_avg = n_avg_time.max()
+        
+        color = colors[i % len(colors)]
+        ax.plot(x, n_final, lw=2, color=color, label='Final')
+        ax.plot(x, n_avg_time, 'k--', lw=1.5, alpha=0.7, label=f'Avg t=[{t_start_avg},{t_end_avg}]')
+        ax.axvline(par.x0, color='k', linestyle='--', alpha=0.5)
+        
+        # Set consistent y-limits
+        ax.set_ylim(y_min * 0.95, y_max * 1.05)
+        
+        ax.set_xlabel("x", fontsize=11)
+        if i == 0:
+            ax.set_ylabel("$n(x,t)$", fontsize=11)
+        
+        ax.set_title(f"$\\lambda_0 = {lambda0}$", fontsize=12)
+        ax.grid(True, alpha=0.3)
+        
+        # Add min/max info in bottom-left corner
+        minmax_text = f"Final: [{n_min_final:.3f}, {n_max_final:.3f}]\nAvg: [{n_min_avg:.3f}, {n_max_avg:.3f}]"
+        ax.text(0.02, 0.05, minmax_text, transform=ax.transAxes, fontsize=9, 
+                verticalalignment='bottom', bbox=dict(boxstyle="round,pad=0.3", 
+                facecolor='lightblue', alpha=0.8))
+        
+        if i == 0:
+            ax.legend(fontsize=9, loc='upper right')
+        
+        # Print to console
+        print(f"[panel] λ₀={lambda0}: n_final min={n_min_final:.6f}, max={n_max_final:.6f}")
+        print(f"[panel] λ₀={lambda0}: n_avg min={n_min_avg:.6f}, max={n_max_avg:.6f}")
+    
+    plt.suptitle(f"Final density profiles for different $\\lambda_0$ values (u_d={u_d_fixed})", fontsize=14)
+    plt.tight_layout()
+    
+    plt.savefig(f"out_drift/density_profiles_lambda_panel_{tag}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"out_drift/density_profiles_lambda_panel_{tag}.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"[plot] saved out_drift/density_profiles_lambda_panel_{tag}.png")
+    
+    # 3. Fourier spectra comparison
+    plt.figure(figsize=(10, 6))
+    
+    for i, (lambda0, t, n_t) in enumerate(results):
+        k, P = _power_spectrum_1d(n_t[:, -1], par.L)  # final spectrum
+        color = colors[i % len(colors)]
+        plt.plot(k, P, lw=2, color=color, label=f"$\\lambda_0 = {lambda0}$")
+    
+    plt.xlabel("$k$", fontsize=12)
+    plt.ylabel("Power $|\\hat{n}(k)|^2$", fontsize=12)
+    plt.title(f"Final Fourier spectra for different $\\lambda_0$ values (u_d={u_d_fixed})", fontsize=14)
+    plt.grid(True, alpha=0.3)
+    plt.legend(frameon=False, fontsize=11)
+    plt.xlim(0, 20)
+    plt.yscale('log')
+    plt.tight_layout()
+    
+    plt.savefig(f"out_drift/fft_spectra_lambda_panel_{tag}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"out_drift/fft_spectra_lambda_panel_{tag}.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"[plot] saved out_drift/fft_spectra_lambda_panel_{tag}.png")
+
 if __name__ == "__main__":
-    print(f"[main] Running single simulation with u_d={par.u_d}, lambda0={par.lambda0}")
-    run_once(tag=f"single_ud{par.u_d}_lambda{par.lambda0}")
+    # Lambda0 panel for different static perturbation amplitudes
+    lambda0_values = [0.15, 0.2, 0.25]
+    u_d_fixed = 2.0
+    
+    print(f"[main] Running lambda0 panel with values {lambda0_values}, fixed u_d={u_d_fixed}")
+    run_lambda_panel(lambda0_values, u_d_fixed, tag="ud2p0")
