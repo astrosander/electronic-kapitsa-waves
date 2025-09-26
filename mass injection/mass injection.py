@@ -58,7 +58,7 @@ class P:
 
     L: float = 10.0
     Nx: int = 812#812
-    t_final: float = 50.0
+    t_final: float = 20.0
     n_save: int = 360
     # rtol: float = 5e-7
     # atol: float = 5e-9
@@ -767,10 +767,199 @@ def plot_lambda_panel(results, lambda0_values, u_d_fixed, tag="lambda_panel"):
     
     print(f"[plot] saved out_drift/fft_spectra_lambda_panel_{tag}.png")
 
-if __name__ == "__main__":
-    # Lambda0 panel for different static perturbation amplitudes
-    lambda0_values = [0.15, 0.2, 0.25]
-    u_d_fixed = 2.0
+def run_ud_panel(u_d_values, lambda0_fixed=1.0, tag="ud_panel"):
+    """
+    Run parameter sweep over u_d values with fixed lambda0
+    """
+    old_lambda0 = par.lambda0
+    old_u_d = par.u_d
+    old_outdir = par.outdir
     
-    print(f"[main] Running lambda0 panel with values {lambda0_values}, fixed u_d={u_d_fixed}")
-    run_lambda_panel(lambda0_values, u_d_fixed, tag="ud2p0")
+    # Set fixed lambda0
+    par.lambda0 = lambda0_fixed
+    
+    results = []
+    
+    try:
+        for u_d in u_d_values:
+            par.u_d = u_d
+            par.outdir = f"{old_outdir}_lambda{lambda0_fixed:g}_ud{u_d:g}"
+            
+            print(f"\n[ud_panel] Running with u_d = {u_d}, lambda0 = {lambda0_fixed}")
+            
+            t, n_t, p_t = run_once(tag=f"lambda{lambda0_fixed:g}_ud{u_d:g}")
+            results.append((u_d, t, n_t))
+        
+        # Create panel plots
+        plot_ud_panel(results, u_d_values, lambda0_fixed, tag=tag)
+            
+    finally:
+        par.lambda0 = old_lambda0
+        par.u_d = old_u_d
+        par.outdir = old_outdir
+    
+    return results
+
+def plot_ud_panel(results, u_d_values, lambda0_fixed, tag="ud_panel"):
+    """
+    Create panel plots for different u_d values
+    """
+    n_plots = len(u_d_values)
+    
+    # 1. Spacetime panel
+    fig, axes = plt.subplots(
+        n_plots, 1, 
+        figsize=(12, 2.5 * n_plots),
+        gridspec_kw={'hspace': 0.15}
+    )
+    
+    if n_plots == 1:
+        axes = [axes]
+    
+    # Find global vmin/vmax for consistent color scaling
+    vmin, vmax = float('inf'), float('-inf')
+    for u_d, t, n_t in results:
+        vmin = min(vmin, n_t.min())
+        vmax = max(vmax, n_t.max())
+    
+    for i, (u_d, t, n_t) in enumerate(results):
+        ax = axes[i]
+        
+        extent = [x.min(), x.max(), t.min(), t.max()]
+        im = ax.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, 
+                      cmap=par.cmap, vmin=vmin, vmax=vmax)
+        
+        # Add vertical line at x0
+        ax.plot([par.x0, par.x0], [t.min(), t.max()], 'w--', lw=1, alpha=0.7)
+        
+        # Labels
+        ax.set_ylabel(f"$u_d={u_d}$\nt", fontsize=11)
+        if i == n_plots - 1:
+            ax.set_xlabel("x", fontsize=11)
+        
+        # Add parameter info
+        ax.text(0.02, 0.95, f'$u_d={u_d}$, $\\lambda_0={lambda0_fixed}$', 
+               transform=ax.transAxes, fontsize=10, alpha=0.9, 
+               verticalalignment='top', color='white',
+               bbox=dict(boxstyle="round,pad=0.2", facecolor='black', alpha=0.6))
+    
+    # Add colorbar
+    cbar = fig.colorbar(im, ax=axes, aspect=30, pad=0.02, shrink=0.8)
+    cbar.set_label("n", fontsize=12)
+    
+    plt.suptitle(f"Spacetime evolution n(x,t) for different $u_d$ values (λ₀={lambda0_fixed})", fontsize=14)
+    
+    os.makedirs("out_drift", exist_ok=True)
+    plt.savefig(f"out_drift/spacetime_ud_panel_{tag}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"out_drift/spacetime_ud_panel_{tag}.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"[plot] saved out_drift/spacetime_ud_panel_{tag}.png")
+    
+    # 2. Final density profiles comparison (1x6 panel)
+    fig, axes = plt.subplots(1, n_plots, figsize=(3.5*n_plots, 4), gridspec_kw={'wspace': 0.3})
+    
+    if n_plots == 1:
+        axes = [axes]
+    
+    colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#FF7F00', '#A65628']
+    
+    # Find global y-limits for consistent scaling (including time-averaged data)
+    y_min, y_max = float('inf'), float('-inf')
+    for u_d, t, n_t in results:
+        n_final = n_t[:, -1]
+        y_min = min(y_min, n_final.min())
+        y_max = max(y_max, n_final.max())
+        
+        # Also consider time-averaged data for y-limits
+        t_start_avg = 10.0
+        t_end_avg = 50.0
+        i_start = np.argmin(np.abs(t - t_start_avg))
+        i_end = np.argmin(np.abs(t - t_end_avg))
+        n_avg_time = np.mean(n_t[:, i_start:i_end+1], axis=1)
+        y_min = min(y_min, n_avg_time.min())
+        y_max = max(y_max, n_avg_time.max())
+    
+    for i, (u_d, t, n_t) in enumerate(results):
+        ax = axes[i]
+        j = len(t) - 1  # final time
+        n_final = n_t[:, j]
+        n_min_final = n_final.min()
+        n_max_final = n_final.max()
+        
+        # Compute time-averaged density and its min/max
+        t_start_avg = 10.0
+        t_end_avg = 50.0
+        i_start = np.argmin(np.abs(t - t_start_avg))
+        i_end = np.argmin(np.abs(t - t_end_avg))
+        n_avg_time = np.mean(n_t[:, i_start:i_end+1], axis=1)
+        n_min_avg = n_avg_time.min()
+        n_max_avg = n_avg_time.max()
+        
+        color = colors[i % len(colors)]
+        ax.plot(x, n_final, lw=2, color=color, label='Final')
+        ax.plot(x, n_avg_time, 'k--', lw=1.5, alpha=0.7, label=f'Avg t=[{t_start_avg},{t_end_avg}]')
+        ax.axvline(par.x0, color='k', linestyle='--', alpha=0.5)
+        
+        # Set consistent y-limits
+        ax.set_ylim(y_min * 0.95, y_max * 1.05)
+        
+        ax.set_xlabel("x", fontsize=11)
+        if i == 0:
+            ax.set_ylabel("$n(x,t)$", fontsize=11)
+        
+        ax.set_title(f"$u_d = {u_d}$", fontsize=12)
+        ax.grid(True, alpha=0.3)
+        
+        # Add min/max info in bottom-left corner
+        minmax_text = f"Final: [{n_min_final:.3f}, {n_max_final:.3f}]\nAvg: [{n_min_avg:.3f}, {n_max_avg:.3f}]"
+        ax.text(0.02, 0.05, minmax_text, transform=ax.transAxes, fontsize=9, 
+                verticalalignment='bottom', bbox=dict(boxstyle="round,pad=0.3", 
+                facecolor='lightblue', alpha=0.8))
+        
+        if i == 0:
+            ax.legend(fontsize=9, loc='upper right')
+        
+        # Print to console
+        print(f"[panel] u_d={u_d}: n_final min={n_min_final:.6f}, max={n_max_final:.6f}")
+        print(f"[panel] u_d={u_d}: n_avg min={n_min_avg:.6f}, max={n_max_avg:.6f}")
+    
+    plt.suptitle(f"Final density profiles for different $u_d$ values (λ₀={lambda0_fixed})", fontsize=14)
+    plt.tight_layout()
+    
+    plt.savefig(f"out_drift/density_profiles_ud_panel_{tag}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"out_drift/density_profiles_ud_panel_{tag}.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"[plot] saved out_drift/density_profiles_ud_panel_{tag}.png")
+    
+    # 3. Fourier spectra comparison
+    plt.figure(figsize=(10, 6))
+    
+    for i, (u_d, t, n_t) in enumerate(results):
+        k, P = _power_spectrum_1d(n_t[:, -1], par.L)  # final spectrum
+        color = colors[i % len(colors)]
+        plt.plot(k, P, lw=2, color=color, label=f"$u_d = {u_d}$")
+    
+    plt.xlabel("$k$", fontsize=12)
+    plt.ylabel("Power $|\\hat{n}(k)|^2$", fontsize=12)
+    plt.title(f"Final Fourier spectra for different $u_d$ values (λ₀={lambda0_fixed})", fontsize=14)
+    plt.grid(True, alpha=0.3)
+    plt.legend(frameon=False, fontsize=11)
+    plt.xlim(0, 20)
+    plt.yscale('log')
+    plt.tight_layout()
+    
+    plt.savefig(f"out_drift/fft_spectra_ud_panel_{tag}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"out_drift/fft_spectra_ud_panel_{tag}.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"[plot] saved out_drift/fft_spectra_ud_panel_{tag}.png")
+
+if __name__ == "__main__":
+    # u_d panel for different drift velocities with fixed lambda0=1
+    u_d_values = [0, 1, 2, 3, 4, 5]
+    lambda0_fixed = 0.2
+    
+    print(f"[main] Running u_d panel with values {u_d_values}, fixed lambda0={lambda0_fixed}")
+    run_ud_panel(u_d_values, lambda0_fixed, tag="lambda1p0")
