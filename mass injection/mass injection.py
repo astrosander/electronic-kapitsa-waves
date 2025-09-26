@@ -58,7 +58,7 @@ class P:
 
     L: float = 10.0
     Nx: int = 812#812
-    t_final: float = 20.0
+    t_final: float = 50.0
     n_save: int = 360
     # rtol: float = 5e-7
     # atol: float = 5e-9
@@ -74,9 +74,11 @@ class P:
     outdir: str = "out_drift"
     cmap: str = "inferno"
 
-    # ---- NEW: static perturbation U0 * nbar(x) = lambda0 * exp( - (x-x0)^2 / (2*sigma^2) ) ----
+    # ---- NEW: time-dependent perturbation U0 * nbar(x) = [lambda0 + lambda1*cos(nu*t)] * exp( - (x-x0)^2 / (2*sigma^2) ) ----
     use_static_perturbation: bool = True
-    lambda0: float = 0.25          # amplitude of U0 * nbar(x)
+    lambda0: float = 0.25          # base amplitude of U0 * nbar(x)
+    lambda1: float = 0.1           # modulation amplitude for time-dependent part
+    nu: float = 1.0                # driving frequency for time modulation
     sigma_static: float = 1.0     # sigma for the Gaussian in x
     set_static_equilibrium: bool = False  # if True: n0 = (U0/U) * nbar(x) at t=0
 
@@ -140,15 +142,25 @@ def J_profile():
 def gamma_from_J(Jx): 
     return np.trapz(Jx, x)/par.L
 
-def U0nbar_profile():
+def U0nbar_profile(t=0.0):
     """
-    Model from the text: U0 * nbar(x) = lambda0 * exp( - (x-x0)^2 / (2*sigma_static^2) ).
+    Time-dependent model: U0 * nbar(x) = [lambda0 + lambda1*cos(nu*t)] * exp( - (x-x0)^2 / (2*sigma_static^2) ).
     If use_static_perturbation is False, returns a uniform zero field.
+    
+    Parameters:
+    t : float
+        Current time for time-dependent modulation
     """
-    if not par.use_static_perturbation or par.lambda0 == 0.0:
+    if not par.use_static_perturbation:
         return np.zeros_like(x)
+    
     d = periodic_delta(x, par.x0, par.L)
-    return par.lambda0 * np.exp(-0.5*(d/par.sigma_static)**2)
+    spatial_profile = np.exp(-0.5*(d/par.sigma_static)**2)
+    
+    # Time-dependent amplitude: lambda(t) = lambda0 + lambda1*cos(nu*t)
+    lambda_t = par.lambda0 + par.lambda1 * np.cos(par.nu * t)
+    
+    return lambda_t * spatial_profile
 
 def S_injection(n, nbar, Jx, gamma):
     if par.source_model == "as_given":
@@ -192,8 +204,8 @@ def rhs(t, y, E_base):
         phi = phi_from_n(n_eff, nbar)
         force_Phi = n_eff * Dx(phi)
 
-    # ---- NEW: screening force n * ∂x[ U0 nbar(x) ] ----
-    grad_U0nbar = Dx(U0nbar_profile())
+    # ---- NEW: screening force n * ∂x[ U0 nbar(x,t) ] ----
+    grad_U0nbar = Dx(U0nbar_profile(t))
 
     dp_dt = -Gamma(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p) + n_eff * grad_U0nbar     # <— Eq. (14) term
     dp_dt = filter_23(dp_dt)
@@ -210,8 +222,8 @@ def initial_fields():
 
     # ---- NEW: set n0 from Eq. (13) when requested (best used with no drift) ----
     if par.set_static_equilibrium:
-        n0 = (U0nbar_profile() / max(par.U, 1e-15))  # n(x) = [U0 nbar(x)] / U
-        p0[:] = 0.0                                  # fluid at rest
+        n0 = (U0nbar_profile(0.0) / max(par.U, 1e-15))  # n(x) = [U0 nbar(x,t=0)] / U
+        p0[:] = 0.0                                     # fluid at rest
     if par.seed_amp_n != 0.0 and par.seed_mode != 0:
         if par.seed_mode == 1:
             kx1 = 2*np.pi*3 / par.L
@@ -328,7 +340,7 @@ def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=(), n_avg_time=None)
         plt.axvline(km, color="k", ls="--", lw=1, alpha=0.6)
 
     plt.xlabel("$k$")
-    plt.ylabel("power $|\\hat{n}(k)|^2$")
+    plt.ylabel("Power $|\\hat{n}(k)|^2$")
     plt.title("Fourier spectrum of $n(x,t)$: initial vs final vs time-averaged")
     plt.grid(True, which="both", alpha=0.3)
     plt.legend(frameon=False, ncol=2, fontsize=9)
@@ -388,7 +400,7 @@ def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False):
     
     os.makedirs(par.outdir, exist_ok=True)
     plt.tight_layout()
-    plt.title(f"Initial spectra at t = 0")
+    plt.title(r"Initial spectra at $t = 0$")
     plt.savefig(f"{par.outdir}/fft_final_overlay_{tag}.png", dpi=300, bbox_inches='tight')
     plt.savefig(f"{par.outdir}/fft_final_overlay_{tag}.pdf", dpi=300, bbox_inches='tight')
     plt.close()
@@ -440,8 +452,8 @@ def run_once(tag="seed_mode"):
     extent=[x.min(), x.max(), sol.t.min(), sol.t.max()]
     plt.figure(figsize=(9.6,4.3))
     plt.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, cmap=par.cmap)
-    plt.xlabel("x"); plt.ylabel("t"); plt.title(f"n(x,t)  [lab]  {tag}")
-    plt.colorbar(label="n")
+    plt.xlabel("$x$"); plt.ylabel("$t$"); plt.title(f"$n(x,t)$ [lab] {tag}")
+    plt.colorbar(label="$n$")
     plt.plot([par.x0, par.x0], [sol.t.min(), sol.t.max()], 'w--', lw=1, alpha=0.7)
     plt.tight_layout(); plt.savefig(f"{par.outdir}/spacetime_n_lab_{tag}.png", dpi=160); plt.close()
 
@@ -453,8 +465,8 @@ def run_once(tag="seed_mode"):
     plt.figure(figsize=(9.6,4.3))
     plt.imshow(n_co.T, origin="lower", aspect="auto",
                extent=[x.min(), x.max(), sol.t.min(), sol.t.max()], cmap=par.cmap)
-    plt.xlabel("ξ = x - u_d t"); plt.ylabel("t"); plt.title(f"n(ξ,t)  [co-moving u_d={par.u_d}]  {tag}")
-    plt.colorbar(label="n"); plt.tight_layout()
+    plt.xlabel("$\\xi = x - u_d t$"); plt.ylabel("$t$"); plt.title(f"$n(\\xi,t)$ [co-moving $u_d={par.u_d}$] {tag}")
+    plt.colorbar(label="$n$"); plt.tight_layout()
     plt.savefig(f"{par.outdir}/spacetime_n_comoving_{tag}.png", dpi=160); plt.close()
 
     plt.figure(figsize=(9.6,3.4))
@@ -470,19 +482,19 @@ def run_once(tag="seed_mode"):
         n_snapshot = n_t[:,j]
         n_min_snap = n_snapshot.min()
         n_max_snap = n_snapshot.max()
-        plt.plot(x, n_snapshot, label=f"t={sol.t[j]:.1f} [min={n_min_snap:.3f}, max={n_max_snap:.3f}]")
+        plt.plot(x, n_snapshot, label=f"$t={sol.t[j]:.1f}$ [min={n_min_snap:.3f}, max={n_max_snap:.3f}]")
     
     # Add time-averaged profile
-    plt.plot(x, n_avg_time, 'k--', lw=2, label=f"<n>(t=[{t_start_avg},{t_end_avg}]) [min={n_min_avg:.3f}, max={n_max_avg:.3f}]")
+    plt.plot(x, n_avg_time, 'k--', lw=2, label=f"$\\langle n\\rangle(t=[{t_start_avg},{t_end_avg}])$ [min={n_min_avg:.3f}, max={n_max_avg:.3f}]")
     
-    plt.legend(fontsize=9); plt.xlabel("x"); plt.ylabel("n"); plt.title(f"Density snapshots  {tag}")
+    plt.legend(fontsize=9); plt.xlabel("$x$"); plt.ylabel("$n$"); plt.title(f"Density snapshots {tag}")
     
     # Add global min/max info
     plt.text(0.02, 0.95, f"Global: min={n_min_global:.3f}, max={n_max_global:.3f}", 
              transform=plt.gca().transAxes, fontsize=10, 
              bbox=dict(boxstyle="round,pad=0.3", facecolor='yellow', alpha=0.7))
     
-    plt.text(0.5, 0.08, f"Dp={par.Dp}, Dn={par.Dn}, m={par.seed_mode}", color="red",
+    plt.text(0.5, 0.08, f"$D_p={par.Dp}$, $D_n={par.Dn}$, $m={par.seed_mode}$", color="red",
          fontsize=12, ha="right", va="top", transform=plt.gca().transAxes)
 
     plt.tight_layout(); plt.savefig(f"{par.outdir}/snapshots_n_{tag}.png", dpi=160); plt.close()
@@ -559,9 +571,9 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
             #     va="center", ha="right", color="red", fontsize=11
             # )
 
-        axes[-1].set_xlabel("x")
+        axes[-1].set_xlabel("$x$")
 
-        plt.suptitle(f"Density snapshots for modes m=1..5  [{tag}]")
+        plt.suptitle(f"Density snapshots for modes $m=1..5$ [{tag}]")
         outpath = f"{par.outdir}/snapshots_panels_{tag}.png"
         plt.savefig(outpath, dpi=160)
         outpath = f"{par.outdir}/snapshots_panels_{tag}.svg"
@@ -643,9 +655,9 @@ def plot_lambda_panel(results, lambda0_values, u_d_fixed, tag="lambda_panel"):
         ax.plot([par.x0, par.x0], [t.min(), t.max()], 'w--', lw=1, alpha=0.7)
         
         # Labels
-        ax.set_ylabel(f"$\\lambda_0={lambda0}$\nt", fontsize=11)
+        ax.set_ylabel(f"$\\lambda_0={lambda0}$\n$t$", fontsize=11)
         if i == n_plots - 1:
-            ax.set_xlabel("x", fontsize=11)
+            ax.set_xlabel("$x$", fontsize=11)
         
         # Add parameter info
         ax.text(0.02, 0.95, f'$\\lambda_0={lambda0}$, $u_d={u_d_fixed}$', 
@@ -655,9 +667,9 @@ def plot_lambda_panel(results, lambda0_values, u_d_fixed, tag="lambda_panel"):
     
     # Add colorbar
     cbar = fig.colorbar(im, ax=axes, aspect=30, pad=0.02, shrink=0.8)
-    cbar.set_label("n", fontsize=12)
+    cbar.set_label("$n$", fontsize=12)
     
-    plt.suptitle(f"Spacetime evolution n(x,t) for different $\\lambda_0$ values (u_d={u_d_fixed})", fontsize=14)
+    plt.suptitle(f"Spacetime evolution $n(x,t)$ for different $\\lambda_0$ values ($u_d={u_d_fixed}$)", fontsize=14)
     
     os.makedirs("out_drift", exist_ok=True)
     plt.savefig(f"out_drift/spacetime_lambda_panel_{tag}.png", dpi=300, bbox_inches='tight')
@@ -715,7 +727,7 @@ def plot_lambda_panel(results, lambda0_values, u_d_fixed, tag="lambda_panel"):
         # Set consistent y-limits
         ax.set_ylim(y_min * 0.95, y_max * 1.05)
         
-        ax.set_xlabel("x", fontsize=11)
+        ax.set_xlabel("$x$", fontsize=11)
         if i == 0:
             ax.set_ylabel("$n(x,t)$", fontsize=11)
         
@@ -725,7 +737,7 @@ def plot_lambda_panel(results, lambda0_values, u_d_fixed, tag="lambda_panel"):
         # Add min/max info in bottom-left corner (showing range = max - min)
         range_final = n_max_final - n_min_final
         range_avg = n_max_avg - n_min_avg
-        minmax_text = f"Final: Δn={range_final:.4f}\nAvg: Δn={range_avg:.4f}"
+        minmax_text = f"Final: $\\Delta n={range_final:.4f}$\nAvg: $\\Delta n={range_avg:.4f}$"
         ax.text(0.02, 0.05, minmax_text, transform=ax.transAxes, fontsize=9, 
                 verticalalignment='bottom', bbox=dict(boxstyle="round,pad=0.3", 
                 facecolor='lightblue', alpha=0.8))
@@ -737,7 +749,7 @@ def plot_lambda_panel(results, lambda0_values, u_d_fixed, tag="lambda_panel"):
         print(f"[panel] λ₀={lambda0}: n_final Δn={range_final:.6f} (min={n_min_final:.6f}, max={n_max_final:.6f})")
         print(f"[panel] λ₀={lambda0}: n_avg Δn={range_avg:.6f} (min={n_min_avg:.6f}, max={n_max_avg:.6f})")
     
-    plt.suptitle(f"Final density profiles for different $\\lambda_0$ values (u_d={u_d_fixed})", fontsize=14)
+    plt.suptitle(f"Final density profiles for different $\\lambda_0$ values ($u_d={u_d_fixed}$)", fontsize=14)
     plt.tight_layout()
     
     plt.savefig(f"out_drift/density_profiles_lambda_panel_{tag}.png", dpi=300, bbox_inches='tight')
@@ -756,11 +768,10 @@ def plot_lambda_panel(results, lambda0_values, u_d_fixed, tag="lambda_panel"):
     
     plt.xlabel("$k$", fontsize=12)
     plt.ylabel("Power $|\\hat{n}(k)|^2$", fontsize=12)
-    plt.title(f"Final Fourier spectra for different $\\lambda_0$ values (u_d={u_d_fixed})", fontsize=14)
+    plt.title(f"Final Fourier spectra for different $\\lambda_0$ values ($u_d={u_d_fixed}$)", fontsize=14)
     plt.grid(True, alpha=0.3)
     plt.legend(frameon=False, fontsize=11)
     plt.xlim(0, 20)
-    plt.yscale('log')
     plt.tight_layout()
     
     plt.savefig(f"out_drift/fft_spectra_lambda_panel_{tag}.png", dpi=300, bbox_inches='tight')
@@ -835,9 +846,9 @@ def plot_ud_panel(results, u_d_values, lambda0_fixed, tag="ud_panel"):
         ax.plot([par.x0, par.x0], [t.min(), t.max()], 'w--', lw=1, alpha=0.7)
         
         # Labels
-        ax.set_ylabel(f"$u_d={u_d}$\nt", fontsize=11)
+        ax.set_ylabel(f"$u_d={u_d}$\n$t$", fontsize=11)
         if i == n_plots - 1:
-            ax.set_xlabel("x", fontsize=11)
+            ax.set_xlabel("$x$", fontsize=11)
         
         # Add parameter info
         ax.text(0.02, 0.95, f'$u_d={u_d}$, $\\lambda_0={lambda0_fixed}$', 
@@ -847,9 +858,9 @@ def plot_ud_panel(results, u_d_values, lambda0_fixed, tag="ud_panel"):
     
     # Add colorbar
     cbar = fig.colorbar(im, ax=axes, aspect=30, pad=0.02, shrink=0.8)
-    cbar.set_label("n", fontsize=12)
+    cbar.set_label("$n$", fontsize=12)
     
-    plt.suptitle(f"Spacetime evolution n(x,t) for different $u_d$ values (λ₀={lambda0_fixed})", fontsize=14)
+    plt.suptitle(f"Spacetime evolution $n(x,t)$ for different $u_d$ values ($\\lambda_0={lambda0_fixed}$)", fontsize=14)
     
     os.makedirs("out_drift", exist_ok=True)
     plt.savefig(f"out_drift/spacetime_ud_panel_{tag}.png", dpi=300, bbox_inches='tight')
@@ -908,7 +919,7 @@ def plot_ud_panel(results, u_d_values, lambda0_fixed, tag="ud_panel"):
         # Set consistent y-limits
         ax.set_ylim(y_min * 0.95, y_max * 1.05)
         
-        ax.set_xlabel("x", fontsize=11)
+        ax.set_xlabel("$x$", fontsize=11)
         if i == 0:
             ax.set_ylabel("$n(x,t)$", fontsize=11)
         
@@ -930,7 +941,7 @@ def plot_ud_panel(results, u_d_values, lambda0_fixed, tag="ud_panel"):
         print(f"[panel] u_d={u_d}: n_final $\\Delta n={range_final:.6f}$ (min={n_min_final:.6f}, max={n_max_final:.6f})")
         print(f"[panel] u_d={u_d}: n_avg $\\Delta n={range_avg:.6f}$ (min={n_min_avg:.6f}, max={n_max_avg:.6f})")
     
-    plt.suptitle(f"Final density profiles for different $u_d$ values (λ₀={lambda0_fixed})", fontsize=14)
+    plt.suptitle(f"Final density profiles for different $u_d$ values ($\\lambda_0={lambda0_fixed}$)", fontsize=14)
     plt.tight_layout()
     
     plt.savefig(f"out_drift/density_profiles_ud_panel_{tag}.png", dpi=300, bbox_inches='tight')
@@ -949,11 +960,10 @@ def plot_ud_panel(results, u_d_values, lambda0_fixed, tag="ud_panel"):
     
     plt.xlabel("$k$", fontsize=12)
     plt.ylabel("Power $|\\hat{n}(k)|^2$", fontsize=12)
-    plt.title(f"Final Fourier spectra for different $u_d$ values (λ₀={lambda0_fixed})", fontsize=14)
+    plt.title(f"Final Fourier spectra for different $u_d$ values ($\\lambda_0={lambda0_fixed}$)", fontsize=14)
     plt.grid(True, alpha=0.3)
     plt.legend(frameon=False, fontsize=11)
     plt.xlim(0, 20)
-    plt.yscale('log')
     plt.tight_layout()
     
     plt.savefig(f"out_drift/fft_spectra_ud_panel_{tag}.png", dpi=300, bbox_inches='tight')
@@ -961,6 +971,324 @@ def plot_ud_panel(results, u_d_values, lambda0_fixed, tag="ud_panel"):
     plt.close()
     
     print(f"[plot] saved out_drift/fft_spectra_ud_panel_{tag}.png")
+
+def extract_pulse_frequency(n_t, t, x, method="peak_tracking"):
+    """
+    Extract the characteristic frequency of pulse propagation from simulation data.
+    
+    Parameters:
+    n_t : ndarray
+        Density field evolution (space x time)
+    t : ndarray
+        Time array
+    x : ndarray
+        Spatial array
+    method : str
+        Method to extract frequency: "peak_tracking", "spectral", or "correlation"
+    
+    Returns:
+    omega_pulse : float
+        Characteristic pulse frequency
+    """
+    if method == "peak_tracking":
+        # Track the motion of density peaks over time
+        peak_positions = []
+        for j in range(n_t.shape[1]):
+            # Find the position of maximum density at each time
+            i_max = np.argmax(n_t[:, j])
+            peak_positions.append(x[i_max])
+        
+        peak_positions = np.array(peak_positions)
+        
+        # Calculate velocity from position differences (accounting for periodicity)
+        dt = t[1] - t[0]
+        velocities = []
+        for j in range(1, len(peak_positions)):
+            dx = peak_positions[j] - peak_positions[j-1]
+            # Handle periodic boundary conditions
+            if dx > par.L/2:
+                dx -= par.L
+            elif dx < -par.L/2:
+                dx += par.L
+            velocities.append(dx / dt)
+        
+        velocities = np.array(velocities)
+        # Remove outliers and get average velocity
+        v_mean = np.median(velocities)
+        
+        # Estimate characteristic wavelength from spatial profile
+        k_vals, P_vals = _power_spectrum_1d(n_t[:, -1], par.L)
+        i_peak = np.argmax(P_vals)
+        k_char = k_vals[i_peak]
+        lambda_char = 2*np.pi / k_char if k_char > 0 else par.L
+        
+        # Characteristic frequency: omega = 2*pi*v/lambda
+        omega_pulse = 2*np.pi * v_mean / lambda_char
+        
+    elif method == "spectral":
+        # Use temporal Fourier transform at a fixed spatial point
+        x_monitor = par.x0  # Monitor point at the perturbation center
+        i_monitor = np.argmin(np.abs(x - x_monitor))
+        n_temporal = n_t[i_monitor, :]
+        
+        # Remove mean and window the signal
+        n_temporal = n_temporal - np.mean(n_temporal)
+        window = np.hanning(len(n_temporal))
+        n_windowed = n_temporal * window
+        
+        # FFT to get frequency spectrum
+        dt = t[1] - t[0]
+        freqs = fftfreq(len(t), dt)
+        fft_vals = fft(n_windowed)
+        power = np.abs(fft_vals)**2
+        
+        # Find dominant frequency (excluding DC component)
+        pos_freqs = freqs[freqs > 0]
+        pos_power = power[freqs > 0]
+        i_max = np.argmax(pos_power)
+        omega_pulse = 2*np.pi * pos_freqs[i_max]
+        
+    elif method == "correlation":
+        # Cross-correlation between different spatial points
+        x1_idx = np.argmin(np.abs(x - par.x0))
+        x2_idx = np.argmin(np.abs(x - (par.x0 + par.L/4) % par.L))
+        
+        n1 = n_t[x1_idx, :] - np.mean(n_t[x1_idx, :])
+        n2 = n_t[x2_idx, :] - np.mean(n_t[x2_idx, :])
+        
+        # Cross-correlation
+        correlation = np.correlate(n1, n2, mode='full')
+        lags = np.arange(-len(n1)+1, len(n1))
+        
+        # Find peak correlation and corresponding lag
+        i_peak = np.argmax(np.abs(correlation))
+        lag_time = lags[i_peak] * (t[1] - t[0])
+        
+        # Estimate frequency from phase delay
+        distance = par.L/4  # Distance between monitoring points
+        if lag_time != 0:
+            phase_velocity = distance / np.abs(lag_time)
+            # Estimate wavelength and frequency
+            k_vals, P_vals = _power_spectrum_1d(n_t[:, -1], par.L)
+            i_peak = np.argmax(P_vals)
+            k_char = k_vals[i_peak]
+            omega_pulse = k_char * phase_velocity
+        else:
+            omega_pulse = 0.0
+    
+    return omega_pulse
+
+def analyze_resonance_response(nu_values, lambda1_fixed=0.1, tag="resonance_sweep"):
+    """
+    Sweep driving frequency nu and analyze the system response to find resonances.
+    
+    Parameters:
+    nu_values : array_like
+        Array of driving frequencies to test
+    lambda1_fixed : float
+        Fixed modulation amplitude
+    tag : str
+        Tag for output files
+    
+    Returns:
+    results : list
+        List of tuples (nu, omega_pulse, response_amplitude, t, n_t)
+    """
+    old_nu = par.nu
+    old_lambda1 = par.lambda1
+    old_outdir = par.outdir
+    
+    par.lambda1 = lambda1_fixed
+    
+    results = []
+    
+    try:
+        for nu in nu_values:
+            par.nu = nu
+            par.outdir = f"{old_outdir}_resonance_nu{nu:.3f}"
+            
+            print(f"\n[resonance] Running with nu = {nu:.3f}, lambda1 = {lambda1_fixed}")
+            
+            t, n_t, p_t = run_once(tag=f"resonance_nu{nu:.3f}")
+            
+            # Extract pulse frequency
+            omega_pulse = extract_pulse_frequency(n_t, t, x, method="spectral")
+            
+            # Calculate response amplitude (variance of density fluctuations)
+            # Use time window after transients have settled
+            t_start = max(5.0, par.t_final * 0.3)
+            i_start = np.argmin(np.abs(t - t_start))
+            n_late = n_t[:, i_start:]
+            response_amplitude = np.var(n_late)
+            
+            results.append((nu, omega_pulse, response_amplitude, t, n_t))
+            
+            print(f"[resonance] nu={nu:.3f}: omega_pulse={omega_pulse:.3f}, response_amp={response_amplitude:.6e}")
+            
+    finally:
+        par.nu = old_nu
+        par.lambda1 = old_lambda1
+        par.outdir = old_outdir
+    
+    return results
+
+def plot_resonance_analysis(results, tag="resonance"):
+    """
+    Plot resonance analysis results.
+    
+    Parameters:
+    results : list
+        Results from analyze_resonance_response
+    tag : str
+        Tag for output files
+    """
+    nu_vals = [r[0] for r in results]
+    omega_pulse_vals = [r[1] for r in results]
+    response_amps = [r[2] for r in results]
+    
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 12))
+    
+    # 1. Response amplitude vs driving frequency
+    ax1.plot(nu_vals, response_amps, 'o-', lw=2, ms=6, color='blue')
+    ax1.set_xlabel("Driving frequency $\\nu$")
+    ax1.set_ylabel("Response amplitude (var($\\delta n$))")
+    ax1.set_title("System Response vs Driving Frequency")
+    ax1.grid(True, alpha=0.3)
+    
+    # Mark the peak response
+    i_max = np.argmax(response_amps)
+    nu_resonance = nu_vals[i_max]
+    ax1.axvline(nu_resonance, color='red', linestyle='--', alpha=0.7, 
+                label=f'Max response at $\\nu={nu_resonance:.3f}$')
+    ax1.legend()
+    
+    # 2. Pulse frequency vs driving frequency
+    ax2.plot(nu_vals, omega_pulse_vals, 's-', lw=2, ms=6, color='green', label='$\\omega_{\\text{pulse}}$')
+    ax2.plot(nu_vals, nu_vals, 'k--', alpha=0.5, label='$\\nu$ (driving)')
+    ax2.set_xlabel("Driving frequency $\\nu$")
+    ax2.set_ylabel("Frequency")
+    ax2.set_title("Pulse Frequency vs Driving Frequency")
+    ax2.grid(True, alpha=0.3)
+    ax2.legend()
+    
+    # 3. Resonance condition: |omega_pulse - nu|
+    frequency_mismatch = np.abs(np.array(omega_pulse_vals) - np.array(nu_vals))
+    ax3.plot(nu_vals, frequency_mismatch, '^-', lw=2, ms=6, color='purple')
+    ax3.set_xlabel("Driving frequency $\\nu$")
+    ax3.set_ylabel("$|\\omega_{\\text{pulse}} - \\nu|$")
+    ax3.set_title("Frequency Mismatch (Resonance Condition)")
+    ax3.grid(True, alpha=0.3)
+    
+    # Mark minimum mismatch
+    i_min = np.argmin(frequency_mismatch)
+    nu_best_match = nu_vals[i_min]
+    ax3.axvline(nu_best_match, color='red', linestyle='--', alpha=0.7,
+                label=f'Best match at $\\nu={nu_best_match:.3f}$')
+    ax3.legend()
+    
+    plt.tight_layout()
+    
+    os.makedirs("out_drift", exist_ok=True)
+    plt.savefig(f"out_drift/resonance_analysis_{tag}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"out_drift/resonance_analysis_{tag}.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"[plot] saved out_drift/resonance_analysis_{tag}.png")
+    print(f"[resonance] Peak response at nu = {nu_resonance:.3f}")
+    print(f"[resonance] Best frequency match at nu = {nu_best_match:.3f}")
+    
+    return nu_resonance, nu_best_match
+
+def plot_time_dependent_modulation(t_plot, tag="modulation"):
+    """
+    Plot the time-dependent modulation function λ(t) = λ₀ + λ₁cos(νt).
+    
+    Parameters:
+    t_plot : ndarray
+        Time array for plotting
+    tag : str
+        Tag for output files
+    """
+    lambda_t = par.lambda0 + par.lambda1 * np.cos(par.nu * t_plot)
+    
+    plt.figure(figsize=(10, 6))
+    plt.subplot(2, 1, 1)
+    plt.plot(t_plot, lambda_t, 'b-', lw=2, label=f'$\\lambda(t) = {par.lambda0} + {par.lambda1}\\cos({par.nu}t)$')
+    plt.axhline(par.lambda0, color='k', linestyle='--', alpha=0.5, label=f'$\\lambda_0 = {par.lambda0}$')
+    plt.axhline(par.lambda0 + par.lambda1, color='r', linestyle=':', alpha=0.7, label=f'Max: {par.lambda0 + par.lambda1}')
+    plt.axhline(par.lambda0 - par.lambda1, color='r', linestyle=':', alpha=0.7, label=f'Min: {par.lambda0 - par.lambda1}')
+    plt.xlabel("Time $t$")
+    plt.ylabel("$\\lambda(t)$")
+    plt.title("Time-dependent Potential Modulation")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    
+    # Show the spatial profile at a few different times
+    plt.subplot(2, 1, 2)
+    times_sample = [0, np.pi/(2*par.nu), np.pi/par.nu, 3*np.pi/(2*par.nu)]
+    colors = ['blue', 'green', 'red', 'orange']
+    
+    for i, t_sample in enumerate(times_sample):
+        if t_sample <= t_plot[-1]:
+            U0nbar_profile_t = U0nbar_profile(t_sample)
+            phase_desc = f"$\\nu t = {par.nu * t_sample:.2f}$"
+            plt.plot(x, U0nbar_profile_t, color=colors[i], lw=2, 
+                    label=f't={t_sample:.2f} ({phase_desc})')
+    
+    plt.xlabel("Position $x$")
+    plt.ylabel("$U_0 \\bar{n}(x,t)$")
+    plt.title("Spatial Profile at Different Times")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    
+    plt.tight_layout()
+    
+    os.makedirs("out_drift", exist_ok=True)
+    plt.savefig(f"out_drift/time_modulation_{tag}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"out_drift/time_modulation_{tag}.pdf", dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"[plot] saved out_drift/time_modulation_{tag}.png")
+
+def run_resonance_study(tag="resonance_study"):
+    """
+    Complete resonance study: sweep frequencies and analyze results.
+    """
+    # First, run a single simulation to estimate the natural pulse frequency
+    print("[resonance_study] Running reference simulation to estimate natural frequency...")
+    
+    old_lambda1 = par.lambda1
+    par.lambda1 = 0.0  # No modulation for reference
+    
+    try:
+        t_ref, n_t_ref, _ = run_once(tag="reference_no_modulation")
+        omega_natural = extract_pulse_frequency(n_t_ref, t_ref, x, method="spectral")
+        print(f"[resonance_study] Estimated natural pulse frequency: ω ≈ {omega_natural:.3f}")
+        
+    finally:
+        par.lambda1 = old_lambda1
+    
+    # Create frequency sweep around the natural frequency
+    if omega_natural > 0:
+        nu_center = omega_natural / (2*np.pi)  # Convert to frequency
+        nu_values = np.linspace(0.5 * nu_center, 2.0 * nu_center, 15)
+    else:
+        # Fallback if natural frequency estimation fails
+        nu_values = np.linspace(0.1, 2.0, 15)
+    
+    print(f"[resonance_study] Sweeping frequencies: {nu_values}")
+    
+    # Plot the modulation function
+    t_plot = np.linspace(0, par.t_final, 200)
+    plot_time_dependent_modulation(t_plot, tag=tag)
+    
+    # Run frequency sweep
+    results = analyze_resonance_response(nu_values, lambda1_fixed=par.lambda1, tag=tag)
+    
+    # Plot results
+    nu_resonance, nu_best_match = plot_resonance_analysis(results, tag=tag)
+    
+    return results, nu_resonance, nu_best_match
 
 def create_snapshots_panel_from_images(lambda0_val, u_d_values, tag="snapshots_panel"):
     """
@@ -1049,16 +1377,93 @@ def create_snapshots_panel_from_images(lambda0_val, u_d_values, tag="snapshots_p
     print(f"[plot] saved {output_path}")
 
 if __name__ == "__main__":
-    # u_d panel for different drift velocities with fixed lambda0=0.2
-    u_d_values = [0, 1, 2, 3, 4, 5]
-    lambda0_fixed = 0.2
+    # Time-dependent modulation resonance study
+    print(f"[main] Starting time-dependent modulation resonance study")
+    print(f"[main] Parameters: λ₀={par.lambda0}, λ₁={par.lambda1}, ν={par.nu}")
     
-    print(f"[main] Running u_d panel with values {u_d_values}, fixed lambda0={lambda0_fixed}")
-    results = run_ud_panel(u_d_values, lambda0_fixed, tag="lambda0p2")
+    # Run the complete resonance study
+    results, nu_resonance, nu_best_match = run_resonance_study(tag="kapitsa_resonance")
     
-    # After running simulations, create the snapshots panel from generated images
-    print(f"\n[main] Creating snapshots panel from existing images with delta calculations")
+    print(f"\n[main] Resonance study completed!")
+    print(f"[main] Peak response found at driving frequency ν = {nu_resonance:.3f}")
+    print(f"[main] Best frequency match at ν = {nu_best_match:.3f}")
     
-    # Store results in the function for delta calculations
-    create_snapshots_panel_from_images.recent_results = results
-    create_snapshots_panel_from_images(lambda0_fixed, u_d_values, tag="vertical")
+    # Optional: run a detailed simulation at the resonance frequency
+    if nu_resonance > 0:
+        print(f"\n[main] Running detailed simulation at resonance frequency ν = {nu_resonance:.3f}")
+        old_nu = par.nu
+        par.nu = nu_resonance
+        par.outdir = "out_drift_resonance_detailed"
+        
+        try:
+            t_res, n_t_res, _ = run_once(tag=f"resonance_detailed_nu{nu_resonance:.3f}")
+            
+            # Create additional analysis plots for the resonance case
+            plt.figure(figsize=(12, 8))
+            
+            # Spacetime plot
+            plt.subplot(2, 2, 1)
+            extent = [x.min(), x.max(), t_res.min(), t_res.max()]
+            plt.imshow(n_t_res.T, origin="lower", aspect="auto", extent=extent, cmap=par.cmap)
+            plt.xlabel("$x$")
+            plt.ylabel("$t$")
+            plt.title(f"$n(x,t)$ at resonance $\\nu={nu_resonance:.3f}$")
+            plt.colorbar(label="$n$")
+            
+            # Temporal evolution at the perturbation center
+            plt.subplot(2, 2, 2)
+            i_center = np.argmin(np.abs(x - par.x0))
+            n_center = n_t_res[i_center, :]
+            plt.plot(t_res, n_center, 'b-', lw=2, label="$n(x_0,t)$")
+            
+            # Add the driving modulation for comparison
+            lambda_t = par.lambda0 + par.lambda1 * np.cos(par.nu * t_res)
+            plt.plot(t_res, par.nbar0 + 0.1*(lambda_t - par.lambda0), 'r--', lw=2, 
+                    label="$\\lambda(t)$ (scaled)")
+            plt.xlabel("$t$")
+            plt.ylabel("$n$")
+            plt.title("Temporal Evolution at $x_0$")
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            
+            # FFT of temporal signal
+            plt.subplot(2, 2, 3)
+            dt = t_res[1] - t_res[0]
+            freqs = fftfreq(len(t_res), dt)
+            n_centered = n_center - np.mean(n_center)
+            fft_n = fft(n_centered * np.hanning(len(n_centered)))
+            power_n = np.abs(fft_n)**2
+            
+            pos_freqs = freqs[freqs > 0]
+            pos_power = power_n[freqs > 0]
+            
+            plt.plot(pos_freqs, pos_power, 'b-', lw=2)
+            plt.axvline(nu_resonance/(2*np.pi), color='r', linestyle='--', 
+                       label=f'Driving freq = {nu_resonance/(2*np.pi):.3f}')
+            plt.xlabel("Frequency")
+            plt.ylabel("Power")
+            plt.title("Frequency Spectrum of $n(x_0,t)$")
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            
+            # Final spatial profile
+            plt.subplot(2, 2, 4)
+            plt.plot(x, n_t_res[:, 0], 'k--', alpha=0.7, label="$t=0$")
+            plt.plot(x, n_t_res[:, -1], 'b-', lw=2, label=f"$t={t_res[-1]:.1f}$")
+            plt.axvline(par.x0, color='r', linestyle=':', alpha=0.7, label="$x_0$")
+            plt.xlabel("$x$")
+            plt.ylabel("$n$")
+            plt.title("Initial vs Final Density")
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            
+            plt.tight_layout()
+            plt.savefig(f"out_drift/resonance_detailed_analysis.png", dpi=300, bbox_inches='tight')
+            plt.savefig(f"out_drift/resonance_detailed_analysis.pdf", dpi=300, bbox_inches='tight')
+            plt.close()
+            
+            print(f"[main] Detailed resonance analysis saved to out_drift/resonance_detailed_analysis.png")
+            
+        finally:
+            par.nu = old_nu
+            par.outdir = "out_drift"
