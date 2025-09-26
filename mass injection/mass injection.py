@@ -77,7 +77,7 @@ class P:
     # ---- NEW: time-dependent perturbation U0 * nbar(x) = [lambda0 + lambda1*cos(nu*t)] * exp( - (x-x0)^2 / (2*sigma^2) ) ----
     use_static_perturbation: bool = True
     lambda0: float = 0.25          # base amplitude of U0 * nbar(x)
-    lambda1: float = 0.1           # modulation amplitude for time-dependent part
+    lambda1: float = 0.0           # modulation amplitude for time-dependent part
     nu: float = 1.0                # driving frequency for time modulation
     sigma_static: float = 1.0     # sigma for the Gaussian in x
     set_static_equilibrium: bool = False  # if True: n0 = (U0/U) * nbar(x) at t=0
@@ -1199,6 +1199,106 @@ def plot_resonance_analysis(results, tag="resonance"):
     
     return nu_resonance, nu_best_match
 
+def plot_temporal_evolution_panel(nu_values, lambda1_fixed=0.1, tag="temporal_panel"):
+    """
+    Plot temporal evolution at x₀ for various driving frequencies in a N×1 panel format.
+    Layout: N rows × 1 column (vertical arrangement).
+    
+    Parameters:
+    nu_values : array_like
+        Array of driving frequencies to test
+    lambda1_fixed : float
+        Fixed modulation amplitude
+    tag : str
+        Tag for output files
+    """
+    old_nu = par.nu
+    old_lambda1 = par.lambda1
+    old_outdir = par.outdir
+    
+    par.lambda1 = lambda1_fixed
+    
+    results = []
+    
+    try:
+        print(f"[temporal_panel] Running simulations for nu values: {nu_values}")
+        
+        for nu in nu_values:
+            par.nu = nu
+            par.outdir = f"{old_outdir}_temporal_nu{nu:.3f}"
+            
+            print(f"\n[temporal_panel] Running with nu = {nu:.3f}, lambda1 = {lambda1_fixed}")
+            
+            t, n_t, p_t = run_once(tag=f"temporal_nu{nu:.3f}")
+            results.append((nu, t, n_t))
+            
+    finally:
+        par.nu = old_nu
+        par.lambda1 = old_lambda1
+        par.outdir = old_outdir
+    
+    # Create panel plot (n_panels rows x 1 column)
+    n_panels = len(nu_values)
+    fig, axes = plt.subplots(n_panels, 1, figsize=(8, 3*n_panels), gridspec_kw={'hspace': 0.25})
+    
+    if n_panels == 1:
+        axes = [axes]
+    
+    # Find center index for monitoring
+    i_center = np.argmin(np.abs(x - par.x0))
+    
+    # Find global y-limits for consistent scaling
+    y_min, y_max = float('inf'), float('-inf')
+    for nu, t, n_t in results:
+        n_center = n_t[i_center, :]
+        y_min = min(y_min, n_center.min())
+        y_max = max(y_max, n_center.max())
+    
+    for i, (nu, t, n_t) in enumerate(results):
+        ax = axes[i]
+        
+        # Extract temporal evolution at x₀
+        n_center = n_t[i_center, :]
+        
+        # Plot density evolution
+        ax.plot(t, n_center, 'b-', lw=2, label=f"$n(x_0,t)$")
+        
+        # Add the driving modulation for comparison
+        lambda_t = par.lambda0 + lambda1_fixed * np.cos(nu * t)
+        # Scale and shift for visibility
+        lambda_scaled = par.nbar0 + 0.1*(lambda_t - par.lambda0)
+        ax.plot(t, lambda_scaled, 'r--', lw=1.5, alpha=0.7, label="$\\lambda(t)$ (scaled)")
+        
+        # Set consistent y-limits
+        ax.set_ylim(y_min * 0.95, y_max * 1.05)
+        
+        if i == n_panels - 1:  # Only label x-axis on bottom panel
+            ax.set_xlabel("$t$", fontsize=11)
+        ax.set_ylabel("$n(x_0,t)$", fontsize=11)
+        
+        ax.set_title(f"$\\nu = {nu:.3f}$", fontsize=12)
+        ax.grid(True, alpha=0.3)
+        
+        if i == 0:
+            ax.legend(fontsize=9, loc='upper right')
+        
+        # Add frequency info
+        period = 2*np.pi/nu if nu > 0 else np.inf
+        ax.text(0.02, 0.95, f"$T = {period:.2f}$", transform=ax.transAxes, 
+                fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor='lightblue', alpha=0.8))
+    
+    plt.suptitle(f"Temporal Evolution at $x_0$ for Different Driving Frequencies ($\\lambda_1 = {lambda1_fixed}$)", fontsize=13, y=0.995)
+    plt.tight_layout(rect=[0, 0, 1, 0.97])  # Leave space for suptitle
+    
+    os.makedirs("out_drift", exist_ok=True)
+    plt.savefig(f"out_drift/temporal_evolution_panel_{tag}.png", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.savefig(f"out_drift/temporal_evolution_panel_{tag}.pdf", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+    
+    print(f"[plot] Temporal evolution panel saved: out_drift/temporal_evolution_panel_{tag}.png")
+    
+    return results
+
 def plot_time_dependent_modulation(t_plot, tag="modulation"):
     """
     Plot the time-dependent modulation function λ(t) = λ₀ + λ₁cos(νt).
@@ -1387,6 +1487,13 @@ if __name__ == "__main__":
     print(f"\n[main] Resonance study completed!")
     print(f"[main] Peak response found at driving frequency ν = {nu_resonance:.3f}")
     print(f"[main] Best frequency match at ν = {nu_best_match:.3f}")
+    
+    # Generate temporal evolution panel around the resonance
+    print(f"\n[main] Generating temporal evolution panel around resonance...")
+    nu_center = nu_resonance
+    nu_panel_values = np.array([0.7*nu_center, 0.85*nu_center, nu_center, 1.15*nu_center, 1.3*nu_center])
+    plot_temporal_evolution_panel(nu_panel_values, lambda1_fixed=par.lambda1, tag="around_resonance")
+    print(f"[main] Temporal panel saved: out_drift/temporal_evolution_panel_around_resonance.png")
     
     # Optional: run a detailed simulation at the resonance frequency
     if nu_resonance > 0:
