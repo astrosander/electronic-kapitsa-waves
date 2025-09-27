@@ -77,7 +77,7 @@ class P:
     # ---- NEW: time-dependent perturbation U0 * nbar(x) = [lambda0 + lambda1*cos(nu*t)] * exp( - (x-x0)^2 / (2*sigma^2) ) ----
     use_static_perturbation: bool = True
     lambda0: float = 0.15          # base amplitude of U0 * nbar(x)
-    lambda1: float = 0.2           # modulation amplitude for time-dependent part
+    lambda1: float = 0.1           # modulation amplitude for time-dependent part
     nu: float = 1.0                # driving frequency for time modulation
     sigma_static: float = 1.0     # sigma for the Gaussian in x
     set_static_equilibrium: bool = False  # if True: n0 = (U0/U) * nbar(x) at t=0
@@ -409,7 +409,7 @@ def run_once(tag="seed_mode"):
     os.makedirs(par.outdir, exist_ok=True)
 
     n0, p0 = initial_fields()
-    #E_base = E_base_from_drift(nbar_profile()) if par.maintain_drift in ("field","feedback") else 0.0
+    # E_base = E_base_from_drift(nbar_profile()) if par.maintain_drift in ("field","feedback") else 0.0
     
     E_base=15.0
     print(f"[run] E_base = {E_base:.4f}")
@@ -1314,6 +1314,524 @@ def plot_temporal_evolution_panel(nu_values, lambda1_fixed=0.1, tag="temporal_pa
     print(f"[plot] Temporal evolution panel saved: out_drift/temporal_evolution_panel_{tag}.png")
     
     return results
+
+def plot_spatial_temporal_evolution_panel(nu_values, lambda1_fixed=0.1, tag="spatial_temporal_panel"):
+    """
+    Plot temporal evolution at multiple spatial locations (left and right of x₀) for various driving frequencies.
+    Layout: N rows × 1 column, each showing n(t) at different x positions.
+    
+    Parameters:
+    nu_values : array_like
+        Array of driving frequencies to test
+    lambda1_fixed : float
+        Fixed modulation amplitude
+    tag : str
+        Tag for output files
+    """
+    old_nu = par.nu
+    old_lambda1 = par.lambda1
+    old_outdir = par.outdir
+    
+    par.lambda1 = lambda1_fixed
+    
+    results = []
+    
+    try:
+        print(f"[spatial_temporal_panel] Running simulations for nu values: {nu_values}")
+        
+        for nu in nu_values:
+            if nu <= 0.0001:
+                par.lambda1 = 0.0
+            else:
+                par.lambda1 = lambda1_fixed
+
+            par.nu = nu
+            par.outdir = f"{old_outdir}_spatial_temporal_nu{nu:.3f}"
+            
+            print(f"\n[spatial_temporal_panel] Running with nu = {nu:.3f}, lambda1 = {par.lambda1}")
+            
+            t, n_t, p_t = run_once(tag=f"spatial_temporal_nu{nu:.3f}")
+            results.append((nu, t, n_t))
+            
+    finally:
+        par.nu = old_nu
+        par.lambda1 = old_lambda1
+        par.outdir = old_outdir
+    
+    # Define spatial monitoring points relative to x₀ (reduced to 3 points)
+    x_offsets = [-1.0, 0.0, 1.0]  # Relative to x₀
+    x_positions = [(par.x0 + offset) % par.L for offset in x_offsets]  # Handle periodic boundaries
+    x_indices = [np.argmin(np.abs(x - x_pos)) for x_pos in x_positions]
+    
+    colors = ['red', 'blue', 'green']  # Colors for different positions
+    labels = [f'$x_0{offset:+.1f}$' if offset != 0 else '$x_0$' for offset in x_offsets]
+    
+    # Vertical displacement for clarity (small offsets to separate the curves)
+    vertical_offsets = [-0.005, 0.0, 0.005]  # Small vertical shifts
+    
+    # Create panel plot (n_panels rows x 1 column)
+    n_panels = len(nu_values)
+    fig, axes = plt.subplots(n_panels, 1, figsize=(10, 2.8*n_panels), gridspec_kw={'hspace': 0.25})
+    
+    if n_panels == 1:
+        axes = [axes]
+    
+    # Find global y-limits for consistent scaling across all positions and frequencies
+    y_min, y_max = float('inf'), float('-inf')
+    for nu, t, n_t in results:
+        for i_pos in x_indices:
+            n_pos = n_t[i_pos, :]
+            y_min = min(y_min, n_pos.min())
+            y_max = max(y_max, n_pos.max())
+    
+    for i, (nu, t, n_t) in enumerate(results):
+        ax = axes[i]
+        
+        # Plot temporal evolution at each spatial position with vertical displacement
+        for j, (i_pos, color, label, v_offset) in enumerate(zip(x_indices, colors, labels, vertical_offsets)):
+            n_pos = n_t[i_pos, :] + v_offset  # Add vertical displacement
+            ax.plot(t, n_pos, color=color, lw=1.2, label=label, alpha=0.8)
+        
+        # Add the driving modulation for comparison (only if λ₁ > 0)
+        if nu > 0.0001 and par.lambda1 > 0:
+            lambda_t = par.lambda0 + par.lambda1 * np.cos(nu * t)
+            # Scale and shift for visibility
+            lambda_scaled = par.nbar0 + 0.1 * (lambda_t - par.lambda0)
+            ax.plot(t, lambda_scaled, 'k--', lw=1.0, alpha=0.6, label="$\\lambda(t)$ (scaled)")
+        
+        # Set consistent y-limits
+        ax.set_ylim(y_min * 0.98, y_max * 1.02)
+        
+        if i == n_panels - 1:  # Only label x-axis on bottom panel
+            ax.set_xlabel("$t$", fontsize=11)
+        ax.set_ylabel("$n(x,t)$", fontsize=11)
+        
+        if nu <= 0.0001:
+            ax.set_title(f"$\\lambda_1 = 0.0$ (no modulation)", fontsize=12)
+        else:
+            ax.set_title(f"$\\nu = {nu:.3f}$", fontsize=12)
+
+        ax.grid(True, alpha=0.3)
+        
+        if i == 0:
+            ax.legend(fontsize=9, loc='upper right', ncol=2)
+        
+        # Add frequency info
+        period = 2*np.pi/nu if nu > 0 else np.inf
+        period_text = f"$T = {period:.2f}$" if period < 1000 else "$T = \\infty$"
+        ax.text(0.02, 0.95, period_text, transform=ax.transAxes, 
+                fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgreen', alpha=0.8))
+    
+    plt.suptitle(f"Temporal Evolution at Multiple Spatial Locations ($\\lambda_1 = {lambda1_fixed}$)", fontsize=13, y=0.995)
+    plt.tight_layout(rect=[0, 0, 1, 0.97])  # Leave space for suptitle
+    
+    os.makedirs("out_drift", exist_ok=True)
+    plt.savefig(f"out_drift/spatial_temporal_evolution_panel_{tag}.png", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.savefig(f"out_drift/spatial_temporal_evolution_panel_{tag}.pdf", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+    
+    print(f"[plot] Spatial-temporal evolution panel saved: out_drift/spatial_temporal_evolution_panel_{tag}.png")
+    
+    return results
+
+def plot_final_density_profiles_panel(nu_values, lambda1_fixed=0.1, tag="final_density_panel"):
+    """
+    Plot density profiles at t=t_final for various driving frequencies in a N×1 panel format.
+    Layout: N rows × 1 column (vertical arrangement).
+    
+    Parameters:
+    nu_values : array_like
+        Array of driving frequencies to test
+    lambda1_fixed : float
+        Fixed modulation amplitude
+    tag : str
+        Tag for output files
+    """
+    old_nu = par.nu
+    old_lambda1 = par.lambda1
+    old_outdir = par.outdir
+    
+    par.lambda1 = lambda1_fixed
+    
+    results = []
+    
+    try:
+        print(f"[final_density_panel] Running simulations for nu values: {nu_values}")
+        
+        for nu in nu_values:
+            if nu <= 0.0001:
+                par.lambda1 = 0.0
+            else:
+                par.lambda1 = lambda1_fixed
+
+            par.nu = nu
+            par.outdir = f"{old_outdir}_final_density_nu{nu:.3f}"
+            
+            print(f"\n[final_density_panel] Running with nu = {nu:.3f}, lambda1 = {par.lambda1}")
+            
+            t, n_t, p_t = run_once(tag=f"final_density_nu{nu:.3f}")
+            results.append((nu, t, n_t))
+            
+    finally:
+        par.nu = old_nu
+        par.lambda1 = old_lambda1
+        par.outdir = old_outdir
+    
+    # Create panel plot (n_panels rows x 1 column)
+    n_panels = len(nu_values)
+    fig, axes = plt.subplots(n_panels, 1, figsize=(10, 2.8*n_panels), gridspec_kw={'hspace': 0.25})
+    
+    if n_panels == 1:
+        axes = [axes]
+    
+    # Find global y-limits for consistent scaling
+    y_min, y_max = float('inf'), float('-inf')
+    for nu, t, n_t in results:
+        n_final = n_t[:, -1]
+        n_initial = n_t[:, 0]
+        y_min = min(y_min, n_final.min(), n_initial.min())
+        y_max = max(y_max, n_final.max(), n_initial.max())
+    
+    for i, (nu, t, n_t) in enumerate(results):
+        ax = axes[i]
+        
+        # Plot initial and final density profiles
+        n_initial = n_t[:, 0]
+        n_final = n_t[:, -1]
+        
+        ax.plot(x, n_initial, 'k--', lw=1.5, alpha=0.7, label=f"$t = 0$")
+        ax.plot(x, n_final, 'b-', lw=2.0, label=f"$t = {t[-1]:.1f}$")
+        
+        # Add vertical line at x₀
+        ax.axvline(par.x0, color='red', linestyle=':', alpha=0.7, lw=1.5, label='$x_0$')
+        
+        # Calculate and display density variation measures
+        delta_n_initial = n_initial.max() - n_initial.min()
+        delta_n_final = n_final.max() - n_final.min()
+        
+        # Set consistent y-limits
+        ax.set_ylim(y_min * 0.98, y_max * 1.02)
+        
+        if i == n_panels - 1:  # Only label x-axis on bottom panel
+            ax.set_xlabel("$x$", fontsize=11)
+        ax.set_ylabel("$n(x)$", fontsize=11)
+        
+        if nu <= 0.0001:
+            ax.set_title(f"$\\lambda_1 = 0.0$ (no modulation)", fontsize=12)
+        else:
+            ax.set_title(f"$\\nu = {nu:.3f}$", fontsize=12)
+
+        ax.grid(True, alpha=0.3)
+        
+        if i == 0:
+            ax.legend(fontsize=9, loc='upper right')
+        
+        # Add density variation info
+        delta_text = f"$\\Delta n_{{final}} = {delta_n_final:.4f}$"
+        ax.text(0.02, 0.95, delta_text, transform=ax.transAxes, 
+                fontsize=9, bbox=dict(boxstyle="round,pad=0.3", facecolor='lightyellow', alpha=0.8),
+                verticalalignment='top')
+        
+        # Add frequency info on the right
+        period = 2*np.pi/nu if nu > 0 else np.inf
+        period_text = f"$T = {period:.2f}$" if period < 1000 else "$T = \\infty$"
+        ax.text(0.98, 0.95, period_text, transform=ax.transAxes, 
+                fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor='lightblue', alpha=0.8),
+                verticalalignment='top', horizontalalignment='right')
+    
+    plt.suptitle(f"Density Profiles: Initial vs Final ($\\lambda_1 = {lambda1_fixed}$)", fontsize=13, y=0.995)
+    plt.tight_layout(rect=[0, 0, 1, 0.97])  # Leave space for suptitle
+    
+    os.makedirs("out_drift", exist_ok=True)
+    plt.savefig(f"out_drift/final_density_profiles_panel_{tag}.png", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.savefig(f"out_drift/final_density_profiles_panel_{tag}.pdf", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+    
+    print(f"[plot] Final density profiles panel saved: out_drift/final_density_profiles_panel_{tag}.png")
+    
+    return results
+
+def run_simulations_once_and_analyze(nu_values, lambda1_fixed=0.1, tag="comprehensive_analysis"):
+    """
+    Efficient analysis: run each simulation only once, then perform all analyses on the stored results.
+    
+    Parameters:
+    nu_values : array_like
+        Array of driving frequencies to test
+    lambda1_fixed : float
+        Fixed modulation amplitude
+    tag : str
+        Tag for output files
+        
+    Returns:
+    results : list
+        List of (nu, t, n_t, p_t) tuples containing simulation results
+    """
+    old_nu = par.nu
+    old_lambda1 = par.lambda1
+    old_outdir = par.outdir
+    
+    results = []
+    
+    try:
+        print(f"[comprehensive_analysis] Running simulations once for nu values: {nu_values}")
+        print(f"[comprehensive_analysis] This will generate all analysis plots from the same simulation data")
+        
+        for i, nu in enumerate(nu_values):
+            # Set parameters for this frequency
+            if nu <= 0.0001:
+                par.lambda1 = 0.0
+                print(f"\n[{i+1}/{len(nu_values)}] Running baseline simulation (nu ≈ 0, λ₁=0)")
+            else:
+                par.lambda1 = lambda1_fixed
+                print(f"\n[{i+1}/{len(nu_values)}] Running simulation for nu = {nu:.3f}, λ₁ = {par.lambda1}")
+
+            par.nu = nu
+            par.outdir = f"{old_outdir}_comprehensive_nu{nu:.3f}"
+            
+            # Run simulation once
+            t, n_t, p_t = run_once(tag=f"comprehensive_nu{nu:.3f}")
+            results.append((nu, t, n_t, p_t))
+            
+            print(f"    ✓ Simulation completed for nu = {nu:.3f}")
+            
+    finally:
+        par.nu = old_nu
+        par.lambda1 = old_lambda1
+        par.outdir = old_outdir
+    
+    print(f"\n[comprehensive_analysis] All simulations completed! Now generating analysis plots...")
+    return results
+
+def plot_from_stored_results(results, lambda1_used=0.1, tag="from_stored"):
+    """
+    Generate all analysis plots from pre-computed simulation results.
+    
+    Parameters:
+    results : list
+        List of (nu, t, n_t, p_t) tuples from run_simulations_once_and_analyze
+    lambda1_used : float
+        The lambda1 value that was used in the simulations
+    tag : str
+        Tag for output files
+    """
+    nu_values = [r[0] for r in results]
+    
+    print(f"[plot_from_stored] Generating comprehensive analysis from {len(results)} stored results...")
+    
+    # === 1. TEMPORAL EVOLUTION AT x₀ ===
+    print(f"[plot_from_stored] 1/3: Temporal evolution at x₀...")
+    
+    n_panels = len(nu_values)
+    fig, axes = plt.subplots(n_panels, 1, figsize=(8, 2.5*n_panels), gridspec_kw={'hspace': 0.25})
+    
+    if n_panels == 1:
+        axes = [axes]
+    
+    # Find center index for monitoring
+    i_center = np.argmin(np.abs(x - par.x0))
+    
+    # Find global y-limits for consistent scaling
+    y_min, y_max = float('inf'), float('-inf')
+    for nu, t, n_t, p_t in results:
+        n_center = n_t[i_center, :]
+        y_min = min(y_min, n_center.min())
+        y_max = max(y_max, n_center.max())
+    
+    for i, (nu, t, n_t, p_t) in enumerate(results):
+        ax = axes[i]
+        
+        # Extract temporal evolution at x₀
+        n_center = n_t[i_center, :]
+        
+        # Plot density evolution
+        ax.plot(t, n_center, 'b-', lw=1.0, label=f"$n(x_0,t)$")
+        
+        # Add the driving modulation for comparison (only if λ₁ > 0)
+        if nu > 0.0001 and lambda1_used > 0:
+            lambda_t = par.lambda0 + lambda1_used * np.cos(nu * t)
+            # Scale and shift for visibility
+            lambda_scaled = par.nbar0 + 0.1*(lambda_t - par.lambda0)
+            ax.plot(t, lambda_scaled, 'r-', lw=0.5, alpha=0.7, label="$\\lambda(t)$ (scaled)")
+        
+        if i == n_panels - 1:  # Only label x-axis on bottom panel
+            ax.set_xlabel("$t$", fontsize=11)
+        ax.set_ylabel("$n(x_0,t)$", fontsize=11)
+        
+        if nu <= 0.0001:
+            ax.set_title(f"$\\lambda_1 = 0.0$", fontsize=14)
+        else:
+            ax.set_title(f"$\\nu = {nu:.3f}$", fontsize=12)
+
+        ax.grid(True, alpha=0.3)
+        
+        if i == 0:
+            ax.legend(fontsize=9, loc='upper right')
+        
+        # Add frequency info
+        period = 2*np.pi/nu if nu > 0 else np.inf
+        ax.text(0.02, 0.95, f"$T = {period:.2f}$" if period < 1000 else "$T = \\infty$", 
+                transform=ax.transAxes, fontsize=10, 
+                bbox=dict(boxstyle="round,pad=0.3", facecolor='lightblue', alpha=0.8))
+    
+    os.makedirs("out_drift", exist_ok=True)
+    plt.savefig(f"out_drift/temporal_evolution_panel_{tag}.png", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.savefig(f"out_drift/temporal_evolution_panel_{tag}.pdf", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+    
+    print(f"    ✓ Saved: out_drift/temporal_evolution_panel_{tag}.png")
+    
+    # === 2. SPATIAL-TEMPORAL EVOLUTION ===
+    print(f"[plot_from_stored] 2/3: Spatial-temporal evolution...")
+    
+    # Define spatial monitoring points relative to x₀ (reduced to 3 points)
+    x_offsets = [-1.0, 0.0, 1.0]  # Relative to x₀
+    x_positions = [(par.x0 + offset) % par.L for offset in x_offsets]  # Handle periodic boundaries
+    x_indices = [np.argmin(np.abs(x - x_pos)) for x_pos in x_positions]
+    
+    colors = ['red', 'blue', 'green']  # Colors for different positions
+    labels = [f'$x_0{offset:+.1f}$' if offset != 0 else '$x_0$' for offset in x_offsets]
+    
+    # Vertical displacement for clarity (small offsets to separate the curves)
+    vertical_offsets = [-0.05, 0.0, 0.05]  # Small vertical shifts
+    
+    fig, axes = plt.subplots(n_panels, 1, figsize=(10, 2.8*n_panels), gridspec_kw={'hspace': 0.25})
+    
+    if n_panels == 1:
+        axes = [axes]
+    
+    # Find global y-limits for consistent scaling across all positions and frequencies
+    y_min, y_max = float('inf'), float('-inf')
+    for nu, t, n_t, p_t in results:
+        for i_pos in x_indices:
+            n_pos = n_t[i_pos, :]
+            y_min = min(y_min, n_pos.min())
+            y_max = max(y_max, n_pos.max())
+    
+    for i, (nu, t, n_t, p_t) in enumerate(results):
+        ax = axes[i]
+        
+        # Plot temporal evolution at each spatial position with vertical displacement
+        for j, (i_pos, color, label, v_offset) in enumerate(zip(x_indices, colors, labels, vertical_offsets)):
+            n_pos = n_t[i_pos, :] + v_offset  # Add vertical displacement
+            ax.plot(t, n_pos, color=color, lw=1.2, label=label, alpha=0.8)
+        
+        # Add the driving modulation for comparison (only if λ₁ > 0)
+        if nu > 0.0001 and lambda1_used > 0:
+            lambda_t = par.lambda0 + lambda1_used * np.cos(nu * t)
+            # Scale and shift for visibility
+            lambda_scaled = par.nbar0 + 0.1 * (lambda_t - par.lambda0)
+            ax.plot(t, lambda_scaled, 'k--', lw=1.0, alpha=0.6, label="$\\lambda(t)$ (scaled)")
+        
+        # Set consistent y-limits
+        ax.set_ylim(y_min * 0.98, y_max * 1.02)
+        
+        if i == n_panels - 1:  # Only label x-axis on bottom panel
+            ax.set_xlabel("$t$", fontsize=11)
+        ax.set_ylabel("$n(x,t)$", fontsize=11)
+        
+        if nu <= 0.0001:
+            ax.set_title(f"$\\lambda_1 = 0.0$ (no modulation)", fontsize=12)
+        else:
+            ax.set_title(f"$\\nu = {nu:.3f}$", fontsize=12)
+
+        ax.grid(True, alpha=0.3)
+        
+        if i == 0:
+            ax.legend(fontsize=9, loc='upper right', ncol=2)
+        
+        # Add frequency info
+        period = 2*np.pi/nu if nu > 0 else np.inf
+        period_text = f"$T = {period:.2f}$" if period < 1000 else "$T = \\infty$"
+        ax.text(0.02, 0.95, period_text, transform=ax.transAxes, 
+                fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor='lightgreen', alpha=0.8))
+    
+    plt.suptitle(f"Temporal Evolution at Multiple Spatial Locations ($\\lambda_1 = {lambda1_used}$)", fontsize=13, y=0.995)
+    plt.tight_layout(rect=[0, 0, 1, 0.97])  # Leave space for suptitle
+    
+    plt.savefig(f"out_drift/spatial_temporal_evolution_panel_{tag}.png", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.savefig(f"out_drift/spatial_temporal_evolution_panel_{tag}.pdf", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+    
+    print(f"    ✓ Saved: out_drift/spatial_temporal_evolution_panel_{tag}.png")
+    
+    # === 3. FINAL DENSITY PROFILES ===
+    print(f"[plot_from_stored] 3/3: Final density profiles...")
+    
+    fig, axes = plt.subplots(n_panels, 1, figsize=(10, 2.8*n_panels), gridspec_kw={'hspace': 0.25})
+    
+    if n_panels == 1:
+        axes = [axes]
+    
+    # Find global y-limits for consistent scaling
+    y_min, y_max = float('inf'), float('-inf')
+    for nu, t, n_t, p_t in results:
+        n_final = n_t[:, -1]
+        n_initial = n_t[:, 0]
+        y_min = min(y_min, n_final.min(), n_initial.min())
+        y_max = max(y_max, n_final.max(), n_initial.max())
+    
+    for i, (nu, t, n_t, p_t) in enumerate(results):
+        ax = axes[i]
+        
+        # Plot initial and final density profiles
+        n_initial = n_t[:, 0]
+        n_final = n_t[:, -1]
+        
+        ax.plot(x, n_initial, 'k--', lw=1.5, alpha=0.7, label=f"$t = 0$")
+        ax.plot(x, n_final, 'b-', lw=2.0, label=f"$t = {t[-1]:.1f}$")
+        
+        # Add vertical line at x₀
+        ax.axvline(par.x0, color='red', linestyle=':', alpha=0.7, lw=1.5, label='$x_0$')
+        
+        # Calculate and display density variation measures
+        delta_n_initial = n_initial.max() - n_initial.min()
+        delta_n_final = n_final.max() - n_final.min()
+        
+        # Set consistent y-limits
+        ax.set_ylim(y_min * 0.98, y_max * 1.02)
+        
+        if i == n_panels - 1:  # Only label x-axis on bottom panel
+            ax.set_xlabel("$x$", fontsize=11)
+        ax.set_ylabel("$n(x)$", fontsize=11)
+        
+        if nu <= 0.0001:
+            ax.set_title(f"$\\lambda_1 = 0.0$ (no modulation)", fontsize=12)
+        else:
+            ax.set_title(f"$\\nu = {nu:.3f}$", fontsize=12)
+
+        ax.grid(True, alpha=0.3)
+        
+        if i == 0:
+            ax.legend(fontsize=9, loc='upper right')
+        
+        # Add density variation info
+        delta_text = f"$\\Delta n_{{final}} = {delta_n_final:.4f}$"
+        ax.text(0.02, 0.95, delta_text, transform=ax.transAxes, 
+                fontsize=9, bbox=dict(boxstyle="round,pad=0.3", facecolor='lightyellow', alpha=0.8),
+                verticalalignment='top')
+        
+        # Add frequency info on the right
+        period = 2*np.pi/nu if nu > 0 else np.inf
+        period_text = f"$T = {period:.2f}$" if period < 1000 else "$T = \\infty$"
+        ax.text(0.98, 0.95, period_text, transform=ax.transAxes, 
+                fontsize=10, bbox=dict(boxstyle="round,pad=0.3", facecolor='lightblue', alpha=0.8),
+                verticalalignment='top', horizontalalignment='right')
+    
+    plt.suptitle(f"Density Profiles: Initial vs Final ($\\lambda_1 = {lambda1_used}$)", fontsize=13, y=0.995)
+    plt.tight_layout(rect=[0, 0, 1, 0.97])  # Leave space for suptitle
+    
+    plt.savefig(f"out_drift/final_density_profiles_panel_{tag}.png", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.savefig(f"out_drift/final_density_profiles_panel_{tag}.pdf", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    plt.close()
+    
+    print(f"    ✓ Saved: out_drift/final_density_profiles_panel_{tag}.png")
+    
+    print(f"\n[plot_from_stored] All analysis plots completed!")
+    print(f"Generated files:")
+    print(f"  • out_drift/temporal_evolution_panel_{tag}.png")
+    print(f"  • out_drift/spatial_temporal_evolution_panel_{tag}.png") 
+    print(f"  • out_drift/final_density_profiles_panel_{tag}.png")
 
 def plot_time_dependent_modulation(t_plot, tag="modulation"):
     """

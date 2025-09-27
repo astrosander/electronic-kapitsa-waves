@@ -51,6 +51,28 @@ def main():
     # Run baseline analysis with no modulation (λ₁=0)
     results_baseline = plot_temporal_evolution_panel(nu_values, lambda1_fixed=0.1, tag="nu_comparison_baseline")
     
+    print(f"\n2. Plotting temporal evolution at multiple spatial locations (left and right of x₀)")
+    print(f"   - Monitor density n(t) at x₀-2, x₀-1, x₀, x₀+1, x₀+2")
+    print(f"   - Shows spatial propagation of density variations")
+    
+    # Plot temporal evolution at multiple spatial locations
+    results_spatial = plot_spatial_temporal_evolution_panel(nu_values, lambda1_fixed=0.1, tag="nu_comparison_spatial")
+    
+    print(f"\n3. Plotting density profiles at t=t_final for each frequency")
+    print(f"   - Compare initial vs final density profiles") 
+    print(f"   - Shows structural changes after time evolution")
+    print(f"   - Quantifies density variations (Δn) for each frequency")
+    
+    # Plot final density profiles
+    results_profiles = plot_final_density_profiles_panel(nu_values, lambda1_fixed=0.1, tag="nu_comparison_profiles")
+    
+    print(f"\n=" * 60)
+    print(f"Analysis complete! Generated plots:")
+    print(f"  1. out_drift/temporal_evolution_panel_nu_comparison_baseline.png")
+    print(f"  2. out_drift/spatial_temporal_evolution_panel_nu_comparison_spatial.png") 
+    print(f"  3. out_drift/final_density_profiles_panel_nu_comparison_profiles.png")
+    print(f"=" * 60)
+    
     
 if __name__ == "__main__":
     main()
