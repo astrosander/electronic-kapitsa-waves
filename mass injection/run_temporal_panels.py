@@ -37,7 +37,7 @@ def main():
     nu_values_range = np.linspace(0.5, 3.0, 5)
     
     # Option 3: Specific interesting frequencies
-    nu_values_specific = np.array([0, 2*np.pi/(2.5/21), 2*np.pi/(2.5/22), 2*np.pi/(2.5/23)])#, 1.2, 1.426, 1.8, 2.2])
+    nu_values_specific = np.array([0, 52, 55, 57])#, 1.2, 1.426, 1.8, 2.2])
     print(nu_values_specific)
     # Choose which set to use
     nu_values = nu_values_specific
