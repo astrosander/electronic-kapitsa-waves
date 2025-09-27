@@ -49,7 +49,7 @@ def plot_mu_time_averaged_comparison():
     Plot time-averaged density profiles for a range of mu values
     """
     # Define mu values to test - constant step spacing
-    mu_values = np.arange(0.826, 2.426, 0.2)  # From 0.8 to 2.2 with step 0.2
+    mu_values = np.arange(0.826, 2.426, 0.02)  # From 0.8 to 2.2 with step 0.2
     print(mu_values)
     # This gives: [0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2]
     
@@ -122,7 +122,7 @@ def plot_delta_n_vs_nu():
     Plot the differences max(n)-min(n) vs frequency nu
     """
     # Define nu values to test - constant step spacing
-    nu_values = np.arange(0.826, 2.426, 0.2)  # From 0.8 to 2.2 with step 0.2
+    nu_values = np.arange(0.826, 2.426, 0.02)  # From 0.8 to 2.2 with step 0.2
     print(f"ν values: {nu_values}")
     
     # Store results
@@ -165,6 +165,54 @@ def plot_delta_n_vs_nu():
     
     return nu_values, delta_n_values
 
+def plot_sum_n_vs_nu():
+    """
+    Plot the sum max(n)+min(n) vs frequency nu
+    """
+    # Define nu values to test - constant step spacing
+    nu_values = np.arange(0.826, 2.426, 0.02)  # From 0.8 to 2.2 with step 0.02
+    print(f"ν values: {nu_values}")
+    
+    # Store results
+    sum_n_values = []
+    
+    # Run simulations for each nu value
+    for nu in nu_values:
+        n_avg_time, t, n_t = run_simulation_for_nu(nu)
+        
+        # Calculate min, max, and sum
+        n_min = n_avg_time.min()
+        n_max = n_avg_time.max()
+        sum_n = n_max + n_min
+        sum_n_values.append(sum_n)
+        
+        print(f"[results] ν = {nu}: min = {n_min:.8f}, max = {n_max:.8f}, Σn = {sum_n:.8f}")
+    
+    # Create the plot with simpler design
+    plt.figure(figsize=(8, 5))
+    
+    # Plot sum_n vs nu with simpler styling
+    plt.plot(nu_values, sum_n_values, 'o-', linewidth=2, markersize=6, 
+             color='red')
+    
+    # Simple formatting
+    plt.xlabel('$\\nu$', fontsize=12)
+    plt.ylabel('$\\max(n) + \\min(n)$', fontsize=12)
+    plt.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    os.makedirs("out_drift", exist_ok=True)
+    plt.savefig("out_drift/sum_n_vs_nu.png", dpi=300, bbox_inches='tight')
+    plt.savefig("out_drift/sum_n_vs_nu.pdf", dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    print(f"\n[plot] Saved: out_drift/sum_n_vs_nu.png")
+    print(f"[plot] Saved: out_drift/sum_n_vs_nu.pdf")
+    
+    return nu_values, sum_n_values
+
 def run_simulation_for_nu(nu_value, tag=""):
     """
     Run simulation for a specific nu value and return time-averaged density profile
@@ -201,8 +249,8 @@ def run_simulation_for_nu(nu_value, tag=""):
 if __name__ == "__main__":
     print("=" * 70)
     print("Density Analysis vs Frequency")
-    nu_test_values = np.arange(0.826, 2.426, 0.2)
-    print(f"ν values (constant step Δν=0.2): {nu_test_values}")
+    nu_test_values = np.arange(0.826, 2.426, 0.02)
+    print(f"ν values (constant step Δν=0.02): {nu_test_values}")
     print("=" * 70)
     
     # Plot delta_n vs nu
@@ -213,6 +261,16 @@ if __name__ == "__main__":
     print("Summary of Δn vs ν Results:")
     for nu, delta_n in zip(nu_values, delta_n_values):
         print(f"ν = {nu:6.3f}: Δn = {delta_n:.8f}")
+    print("=" * 70)
+    
+    # Plot sum_n vs nu
+    print("\n[MAIN] Creating max(n)+min(n) vs ν plot...")
+    nu_values_sum, sum_n_values = plot_sum_n_vs_nu()
+    
+    print("\n" + "=" * 70)
+    print("Summary of max(n)+min(n) vs ν Results:")
+    for nu, sum_n in zip(nu_values_sum, sum_n_values):
+        print(f"ν = {nu:6.3f}: max(n)+min(n) = {sum_n:.8f}")
     print("=" * 70)
     
     # Optionally also run the time-averaged comparison
