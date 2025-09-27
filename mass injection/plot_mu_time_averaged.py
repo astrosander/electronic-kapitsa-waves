@@ -48,8 +48,11 @@ def plot_mu_time_averaged_comparison():
     """
     Plot time-averaged density profiles for a range of mu values
     """
-    # Define mu values to test - expanded range including original three values
-    mu_values = [0.8, 1.0, 1.2, 1.261, 1.426, 1.5, 1.591, 1.8, 2.0, 2.2]
+    # Define mu values to test - constant step spacing
+    mu_values = np.arange(0.8
+    26, 2.426, 0.2)  # From 0.8 to 2.2 with step 0.2
+    print(mu_values)
+    # This gives: [0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2]
     
     # Store results
     results = []
@@ -118,7 +121,8 @@ x₀ = {par.x0}"""
 if __name__ == "__main__":
     print("=" * 70)
     print("Time-Averaged Density Profile Comparison")
-    print("μ values: [0.8, 1.0, 1.2, 1.261, 1.426, 1.5, 1.591, 1.8, 2.0, 2.2]")
+    mu_test_values = np.arange(0.8, 2.4, 0.2)
+    print(f"μ values (constant step Δμ=0.2): {mu_test_values}")
     print("=" * 70)
     
     # Run the comparison
