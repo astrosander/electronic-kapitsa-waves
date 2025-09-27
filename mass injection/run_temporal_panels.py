@@ -37,8 +37,8 @@ def main():
     nu_values_range = np.linspace(0.5, 3.0, 5)
     
     # Option 3: Specific interesting frequencies
-    nu_values_specific = np.array([50, 53, 55])#, 1.2, 1.426, 1.8, 2.2])
-    
+    nu_values_specific = np.array([0, 2*np.pi/(2.5/21), 2*np.pi/(2.5/22), 2*np.pi/(2.5/23)])#, 1.2, 1.426, 1.8, 2.2])
+    print(nu_values_specific)
     # Choose which set to use
     nu_values = nu_values_specific
     
@@ -49,7 +49,7 @@ def main():
     print(f"   - ν parameter should have NO effect on system behavior")
     
     # Run baseline analysis with no modulation (λ₁=0)
-    results_baseline = plot_temporal_evolution_panel(nu_values, lambda1_fixed=0.05, tag="nu_comparison_baseline")
+    results_baseline = plot_temporal_evolution_panel(nu_values, lambda1_fixed=0.1, tag="nu_comparison_baseline")
     
     
 if __name__ == "__main__":
