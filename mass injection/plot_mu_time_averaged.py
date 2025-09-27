@@ -30,12 +30,27 @@ def run_simulation_for_mu(mu_value, tag=""):
         # Run simulation
         t, n_t, p_t = run_once(tag=f"mu{mu_value:g}")
         
-        # Calculate time-averaged density profile
+        # Calculate Gaussian-weighted time-averaged density profile
         t_start_avg = 10.0
         t_end_avg = 50.0
+        t_center = 30.0  # Gaussian center
+        t_width = 10.0   # Gaussian width (sigma)
+        
         i_start = np.argmin(np.abs(t - t_start_avg))
         i_end = np.argmin(np.abs(t - t_end_avg))
-        n_avg_time = np.mean(n_t[:, i_start:i_end+1], axis=1)
+        
+        # Extract time window and corresponding time points
+        t_window = t[i_start:i_end+1]
+        n_window = n_t[:, i_start:i_end+1]
+        
+        # Calculate Gaussian weights
+        weights = np.exp(-0.5 * ((t_window - t_center) / t_width)**2)
+        weights = weights / np.sum(weights)  # Normalize weights
+        
+        # Apply Gaussian-weighted averaging
+        n_avg_time = np.average(n_window, axis=1, weights=weights)
+        
+        print(f"[mu={mu_value}] Gaussian weights: center={t_center}, width={t_width}, sum={np.sum(weights):.6f}")
         
         return n_avg_time, t, n_t
         
@@ -49,9 +64,8 @@ def plot_mu_time_averaged_comparison():
     Plot time-averaged density profiles for a range of mu values
     """
     # Define mu values to test - constant step spacing
-    mu_values = np.arange(0.8
-    26, 2.426, 0.2)  # From 0.8 to 2.2 with step 0.2
-    print(mu_values)
+    mu_values = np.arange(0.8, 2.4, 0.2)  # From 0.8 to 2.2 with step 0.2
+    print("mu_values:", mu_values)
     # This gives: [0.8, 1.0, 1.2, 1.4, 1.6, 1.8, 2.0, 2.2]
     
     # Store results
@@ -85,8 +99,8 @@ def plot_mu_time_averaged_comparison():
     
     # Formatting
     plt.xlabel('$x$', fontsize=14)
-    plt.ylabel('$\\langle n \\rangle_{time}$', fontsize=14)
-    plt.title('Time-Averaged Density Profiles for Different μ Values', fontsize=16)
+    plt.ylabel('$\\langle n \\rangle_{time}$ (Gaussian weighted)', fontsize=14)
+    plt.title('Gaussian-Weighted Time-Averaged Density Profiles for Different μ Values', fontsize=16)
     plt.grid(True, alpha=0.3)
     plt.legend(fontsize=10, frameon=True, loc='best', ncol=2)
     
@@ -98,7 +112,8 @@ def plot_mu_time_averaged_comparison():
 λ₀ = {par.lambda0}
 λ₁ = {par.lambda1}
 u_d = {par.u_d}
-Time avg: t ∈ [10, 50]
+Gaussian avg: t ∈ [10, 50]
+  center = 30, σ = 10
 x₀ = {par.x0}"""
     
     plt.text(0.02, 0.98, param_text, transform=plt.gca().transAxes, 
@@ -120,16 +135,17 @@ x₀ = {par.x0}"""
 
 if __name__ == "__main__":
     print("=" * 70)
-    print("Time-Averaged Density Profile Comparison")
+    print("Gaussian-Weighted Time-Averaged Density Profile Comparison")
     mu_test_values = np.arange(0.8, 2.4, 0.2)
     print(f"μ values (constant step Δμ=0.2): {mu_test_values}")
+    print("Gaussian weighting: center=30, σ=10, range=[10,50]")
     print("=" * 70)
     
     # Run the comparison
     results = plot_mu_time_averaged_comparison()
     
     print("\n" + "=" * 70)
-    print("Summary of Results (8 decimal places):")
+    print("Summary of Gaussian-Weighted Results (8 decimal places):")
     for mu, n_avg_time in results:
         n_min = n_avg_time.min()
         n_max = n_avg_time.max()
