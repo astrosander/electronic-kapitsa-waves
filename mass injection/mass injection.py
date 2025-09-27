@@ -59,7 +59,7 @@ class P:
     L: float = 10.0
     Nx: int = 812#812
     t_final: float = 50.0
-    n_save: int = 360
+    n_save: int = 360*30
     # rtol: float = 5e-7
     # atol: float = 5e-9
     rtol = 1e-3
