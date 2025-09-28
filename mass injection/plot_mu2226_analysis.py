@@ -79,8 +79,8 @@ def plot_snapshots_nu2226(t, n_t):
     nu_value = 2.226
     
     # Calculate time-averaged density profile (t=[10,50])
-    t_start_avg = 10.0
-    t_end_avg = 50.0
+    t_start_avg = 30.0
+    t_end_avg = 100.0
     i_start = np.argmin(np.abs(t - t_start_avg))
     i_end = np.argmin(np.abs(t - t_end_avg))
     n_avg_time = np.mean(n_t[:, i_start:i_end+1], axis=1)
@@ -268,6 +268,118 @@ def plot_fourier_analysis_x6(t, n_at_x6, x_actual):
     
     return pos_freqs, power_spectrum, peaks if 'peaks' in locals() else []
 
+def plot_fourier_spectrum_t50(t, n_t):
+    """
+    Perform spatial Fourier analysis at t=50 to show the spatial spectrum
+    """
+    nu_value = 2.226
+    
+    # Find the time index closest to t=50
+    t_target = 50.0
+    i_t = np.argmin(np.abs(t - t_target))
+    t_actual = t[i_t]
+    
+    # Extract spatial profile at this time
+    n_at_t50 = n_t[:, i_t]
+    
+    # Remove the mean for Fourier analysis
+    n_detrended = n_at_t50 - np.mean(n_at_t50)
+    
+    # Compute spatial FFT
+    N = len(n_detrended)
+    dx = x[1] - x[0]  # Spatial step
+    
+    # Perform FFT
+    n_fft = fft(n_detrended)
+    k_vals = fftfreq(N, dx)
+    
+    # Take only positive wavenumbers
+    pos_k = k_vals[:N//2]
+    power_spectrum = np.abs(n_fft[:N//2])**2
+    
+    # Normalize power spectrum
+    power_spectrum = power_spectrum / np.max(power_spectrum)
+    
+    # Create spatial Fourier analysis plot
+    plt.figure(figsize=(12, 8))
+    
+    # Plot 1: Spatial profile at t=50 (top panel)
+    plt.subplot(2, 1, 1)
+    plt.plot(x, n_at_t50, 'b-', lw=2)
+    plt.xlabel(r'$x$', fontsize=12)
+    plt.ylabel(r'$n$', fontsize=12)
+    plt.title(r'$n(x)$ at $t=50$', fontsize=14)
+    plt.grid(True, alpha=0.3)
+    
+    # Add vertical line at x=6.0
+    plt.axvline(x=6.0, color='red', linestyle=':', lw=2, alpha=0.8, label='x=6.0')
+    plt.legend()
+    
+    # Plot 2: Spatial power spectrum (bottom panel)
+    plt.subplot(2, 1, 2)
+    plt.plot(pos_k, power_spectrum, 'r-', lw=2)
+    plt.xlabel(r'$k$', fontsize=12)
+    plt.ylabel(r'Power', fontsize=12)
+    plt.title(r'Spatial FFT spectrum, $\nu = 2.226$', fontsize=14)
+    plt.grid(True, alpha=0.3)
+    
+    # Find and mark the two highest peaks
+    # Remove DC component (k = 0)
+    power_no_dc = power_spectrum.copy()
+    power_no_dc[0] = 0  # Remove DC
+    
+    # Find peaks
+    from scipy.signal import find_peaks
+    peaks, properties = find_peaks(power_no_dc, height=0.01, distance=5)  # Minimum distance between peaks
+    
+    # Sort peaks by height and take the two strongest
+    if len(peaks) >= 2:
+        peak_heights = power_spectrum[peaks]
+        sorted_indices = np.argsort(peak_heights)[::-1]  # Sort in descending order
+        top_peaks = peaks[sorted_indices[:2]]  # Take two strongest peaks
+        
+        # Mark the peaks
+        for i, peak_idx in enumerate(top_peaks):
+            k_peak = pos_k[peak_idx]
+            power_peak = power_spectrum[peak_idx]
+            plt.plot(k_peak, power_peak, 'go', markersize=10, label=f'Peak {i+1}: k={k_peak:.3f}')
+            
+            # Add vertical lines
+            plt.axvline(k_peak, color='green', linestyle='--', alpha=0.7)
+            
+        plt.legend()
+        
+        # Print peak information
+        print(f"\n[spatial_fourier] Found peaks in spatial power spectrum at t={t_actual:.1f}:")
+        for i, peak_idx in enumerate(top_peaks):
+            k_peak = pos_k[peak_idx]
+            power_peak = power_spectrum[peak_idx]
+            print(f"  Peak {i+1}: wavenumber k = {k_peak:.6f}, power = {power_peak:.6f}")
+    
+    else:
+        print(f"[spatial_fourier] Warning: Found only {len(peaks)} peak(s) at t={t_actual:.1f}, expected 2")
+        if len(peaks) > 0:
+            for i, peak_idx in enumerate(peaks):
+                k_peak = pos_k[peak_idx]
+                power_peak = power_spectrum[peak_idx]
+                plt.plot(k_peak, power_peak, 'go', markersize=10, label=f'Peak {i+1}: k={k_peak:.3f}')
+                print(f"  Peak {i+1}: wavenumber k = {k_peak:.6f}, power = {power_peak:.6f}")
+            plt.legend()
+    
+    # Set reasonable wavenumber range for display
+    k_max = np.max(pos_k) * 0.3  # Show low-to-medium wavenumbers where peaks are expected
+    plt.xlim(0, k_max)
+    
+    plt.tight_layout()
+    
+    # Save the plot
+    plt.savefig(f"spatial_fourier_t50_nu{nu_value}.png", dpi=300, bbox_inches='tight')
+    plt.show()
+    
+    print(f"[plot] Saved: spatial_fourier_t50_nu{nu_value}.png")
+    
+    return pos_k, power_spectrum, peaks if 'peaks' in locals() else []
+
 def main():
     """
     Main function to run all analyses for nu=2.226
@@ -296,6 +408,10 @@ def main():
     print("\n[5] Performing Fourier analysis...")
     freqs, power_spectrum, peaks = plot_fourier_analysis_x6(t, n_at_x6, x_actual)
     
+    # Perform spatial Fourier analysis at t=50
+    print("\n[6] Performing spatial Fourier analysis at t=50...")
+    k_vals, spatial_power_spectrum, spatial_peaks = plot_fourier_spectrum_t50(t, n_t)
+    
     print("\n" + "=" * 70)
     print("All plots generated successfully!")
     print("Generated files:")
@@ -303,6 +419,7 @@ def main():
     print("  - snapshots_n_nu2.226.png") 
     print("  - n_time_series_x6_nu2.226.png")
     print("  - fourier_analysis_x6_nu2.226.png")
+    print("  - spatial_fourier_t50_nu2.226.png")
     print("=" * 70)
 
 if __name__ == "__main__":
