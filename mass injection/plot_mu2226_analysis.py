@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
-Script to generate specific plots for nu=2.226:
-1. spacetime_n_lab_nu2.226.png
-2. snapshots_n_nu2.226.png  
+Script to generate specific plots for f=0.354 (cyclic frequency):
+1. spacetime_n_lab_f0.354.png
+2. snapshots_n_f0.354.png  
 3. Time series of n(t) at x=6.0
 4. Fourier analysis of n(t) at x=6.0 showing two peaks
+5. Spatial Fourier analysis at t=50
+
+Note: f = ν/(2π) where ν is the angular frequency
+For ν = 2.226, f = 2.226/(2π) ≈ 0.354 Hz
 """
 
 import numpy as np
@@ -15,7 +19,7 @@ from scipy.fft import fft, fftfreq
 # Import the main simulation functions
 exec(open('mass injection.py').read().split('if __name__')[0])
 
-def run_simulation_nu2226():
+def run_simulation_f0354():
     """
     Run simulation specifically for nu=2.226 and return full time series data
     """
@@ -23,16 +27,17 @@ def run_simulation_nu2226():
     old_nu = par.nu
     old_outdir = par.outdir
     
-    # Set nu=2.226 (stored as par.nu in the code)
-    nu_value = 2.226
+    # Set f=0.354 (cyclic frequency), convert to ν = 2πf
+    f_value = 0.354
+    nu_value = 2 * np.pi * f_value
     par.nu = nu_value
-    par.outdir = f"out_drift_nu{nu_value:g}"
+    par.outdir = f"out_drift_f{f_value:g}"
     
     try:
-        print(f"\n[nu2226] Running simulation for ν = {nu_value}")
+        print(f"\n[f0354] Running simulation for f = {f_value} Hz (ν = {nu_value:.3f})")
         
         # Run simulation
-        t, n_t, p_t = run_once(tag=f"nu{nu_value:g}")
+        t, n_t, p_t = run_once(tag=f"f{f_value:g}")
         
         return t, n_t, p_t
         
@@ -41,11 +46,11 @@ def run_simulation_nu2226():
         par.nu = old_nu
         par.outdir = old_outdir
 
-def plot_spacetime_lab_nu2226(t, n_t):
+def plot_spacetime_lab_f0354(t, n_t):
     """
-    Create spacetime_n_lab_nu2.226.png plot
+    Create spacetime_n_lab_f0.354.png plot
     """
-    nu_value = 2.226
+    f_value = 0.354
     
     # Create spacetime plot in lab frame
     extent = [x.min(), x.max(), t.min(), t.max()]
@@ -53,7 +58,7 @@ def plot_spacetime_lab_nu2226(t, n_t):
     plt.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, cmap=par.cmap)
     plt.xlabel(r"$x$", fontsize=14)
     plt.ylabel(r"$t$", fontsize=14) 
-    plt.title(r"$n(x,t)$, $\nu = 2.226$", fontsize=16)
+    plt.title(r"$n(x,t)$, $f = 0.354$ Hz", fontsize=16)
     plt.colorbar(label=r"$n$")
     
     # Add vertical line at perturbation center
@@ -67,16 +72,16 @@ def plot_spacetime_lab_nu2226(t, n_t):
     
     # Save the plot
     os.makedirs("out_drift", exist_ok=True)
-    plt.savefig(f"spacetime_n_lab_nu{nu_value}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"spacetime_n_lab_f{f_value}.png", dpi=300, bbox_inches='tight')
     plt.show()
     
-    print(f"[plot] Saved: spacetime_n_lab_nu{nu_value}.png")
+    print(f"[plot] Saved: spacetime_n_lab_f{f_value}.png")
 
-def plot_snapshots_nu2226(t, n_t):
+def plot_snapshots_f0354(t, n_t):
     """
-    Create snapshots_n_nu2.226.png plot
+    Create snapshots_n_f0.354.png plot
     """
-    nu_value = 2.226
+    f_value = 0.354
     
     # Calculate time-averaged density profile (t=[10,50])
     t_start_avg = 30.0
@@ -110,21 +115,21 @@ def plot_snapshots_nu2226(t, n_t):
     plt.legend(fontsize=9)
     plt.xlabel(r"$x$", fontsize=14)
     plt.ylabel(r"$n$", fontsize=14)
-    plt.title(r"$n(x)$, $\nu = 2.226$", fontsize=16)
+    plt.title(r"$n(x)$, $f = 0.354$ Hz", fontsize=16)
     
     plt.tight_layout()
     
     # Save the plot
-    plt.savefig(f"snapshots_n_nu{nu_value}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"snapshots_n_f{f_value}.png", dpi=300, bbox_inches='tight')
     plt.show()
     
-    print(f"[plot] Saved: snapshots_n_nu{nu_value}.png")
+    print(f"[plot] Saved: snapshots_n_f{f_value}.png")
 
 def plot_time_series_at_x6(t, n_t):
     """
-    Extract and plot n(t) at x=6.0 for nu=2.226
+    Extract and plot n(t) at x=6.0 for f=0.354 Hz
     """
-    nu_value = 2.226
+    f_value = 0.354
     
     # Find the index corresponding to x=6.0
     x_target = 6.0
@@ -139,7 +144,7 @@ def plot_time_series_at_x6(t, n_t):
     plt.plot(t, n_at_x6, 'b-', lw=2)
     plt.xlabel(r'$t$', fontsize=14)
     plt.ylabel(r'$n$', fontsize=14)
-    plt.title(r'$n(t)$ at $x=6.0$, $\nu = 2.226$', fontsize=16)
+    plt.title(r'$n(t)$ at $x=6.0$, $f = 0.354$ Hz', fontsize=16)
     plt.grid(True, alpha=0.3)
     
     # Add some statistics
@@ -161,10 +166,10 @@ Max:  {n_max:.6f}"""
     plt.tight_layout()
     
     # Save the plot
-    plt.savefig(f"n_time_series_x6_mu{nu_value}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"n_time_series_x6_f{f_value}.png", dpi=300, bbox_inches='tight')
     plt.show()
     
-    print(f"[plot] Saved: n_time_series_x6_mu{nu_value}.png")
+    print(f"[plot] Saved: n_time_series_x6_f{f_value}.png")
     
     return n_at_x6, x_actual
 
@@ -172,7 +177,7 @@ def plot_fourier_analysis_x6(t, n_at_x6, x_actual):
     """
     Perform Fourier analysis of n(t) at x=6.0 and show the two peaks
     """
-    nu_value = 2.226
+    f_value = 0.354
     
     # Remove the mean for Fourier analysis
     n_detrended = n_at_x6 - np.mean(n_at_x6)
@@ -208,7 +213,7 @@ def plot_fourier_analysis_x6(t, n_at_x6, x_actual):
     plt.plot(pos_freqs, power_spectrum, 'r-', lw=2)
     plt.xlabel(r'$f$', fontsize=12)
     plt.ylabel(r'Power', fontsize=12)
-    plt.title(r'FFT spectrum, $\nu = 2.226$', fontsize=14)
+    plt.title(r'FFT spectrum, $f = 0.354$ Hz', fontsize=14)
     plt.grid(True, alpha=0.3)
     
     # Find and mark the two highest peaks
@@ -261,10 +266,10 @@ def plot_fourier_analysis_x6(t, n_at_x6, x_actual):
     plt.tight_layout()
     
     # Save the plot
-    plt.savefig(f"fourier_analysis_x6_mu{nu_value}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"fourier_analysis_x6_f{f_value}.png", dpi=300, bbox_inches='tight')
     plt.show()
     
-    print(f"[plot] Saved: fourier_analysis_x6_mu{nu_value}.png")
+    print(f"[plot] Saved: fourier_analysis_x6_f{f_value}.png")
     
     return pos_freqs, power_spectrum, peaks if 'peaks' in locals() else []
 
@@ -272,7 +277,7 @@ def plot_fourier_spectrum_t50(t, n_t):
     """
     Perform spatial Fourier analysis at t=50 to show the spatial spectrum
     """
-    nu_value = 2.226
+    f_value = 0.354
     
     # Find the time index closest to t=50
     t_target = 50.0
@@ -291,7 +296,7 @@ def plot_fourier_spectrum_t50(t, n_t):
     
     # Perform FFT
     n_fft = fft(n_detrended)
-    k_vals = fftfreq(N, dx)
+    k_vals = 2 * np.pi * fftfreq(N, dx)  # Include 2π factor to match main simulation
     
     # Take only positive wavenumbers
     pos_k = k_vals[:N//2]
@@ -320,7 +325,7 @@ def plot_fourier_spectrum_t50(t, n_t):
     plt.plot(pos_k, power_spectrum, 'r-', lw=2)
     plt.xlabel(r'$k$', fontsize=12)
     plt.ylabel(r'Power', fontsize=12)
-    plt.title(r'Spatial FFT spectrum, $\nu = 2.226$', fontsize=14)
+    plt.title(r'Spatial FFT spectrum, $f = 0.354$ Hz', fontsize=14)
     plt.grid(True, alpha=0.3)
     
     # Find and mark the two highest peaks
@@ -373,32 +378,33 @@ def plot_fourier_spectrum_t50(t, n_t):
     plt.tight_layout()
     
     # Save the plot
-    plt.savefig(f"spatial_fourier_t50_nu{nu_value}.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"spatial_fourier_t50_f{f_value}.png", dpi=300, bbox_inches='tight')
     plt.show()
     
-    print(f"[plot] Saved: spatial_fourier_t50_nu{nu_value}.png")
+    print(f"[plot] Saved: spatial_fourier_t50_f{f_value}.png")
     
     return pos_k, power_spectrum, peaks if 'peaks' in locals() else []
 
 def main():
     """
-    Main function to run all analyses for nu=2.226
+    Main function to run all analyses for f=0.354 Hz (cyclic frequency)
     """
     print("=" * 70)
-    print("Analysis for ν = 2.226")
+    print("Analysis for f = 0.354 Hz (cyclic frequency)")
+    print("Note: f = ν/(2π), so ν = 2πf ≈ 2.226")
     print("=" * 70)
     
-    # Run simulation for nu=2.226
+    # Run simulation for f=0.354 Hz
     print("\n[1] Running simulation...")
-    t, n_t, p_t = run_simulation_nu2226()
+    t, n_t, p_t = run_simulation_f0354()
     
     # Create spacetime lab frame plot
     print("\n[2] Creating spacetime lab frame plot...")
-    plot_spacetime_lab_nu2226(t, n_t)
+    plot_spacetime_lab_f0354(t, n_t)
     
     # Create snapshots plot  
     print("\n[3] Creating snapshots plot...")
-    plot_snapshots_nu2226(t, n_t)
+    plot_snapshots_f0354(t, n_t)
     
     # Create time series plot at x=6.0
     print("\n[4] Creating time series at x=6.0...")
@@ -415,11 +421,11 @@ def main():
     print("\n" + "=" * 70)
     print("All plots generated successfully!")
     print("Generated files:")
-    print("  - spacetime_n_lab_nu2.226.png")
-    print("  - snapshots_n_nu2.226.png") 
-    print("  - n_time_series_x6_nu2.226.png")
-    print("  - fourier_analysis_x6_nu2.226.png")
-    print("  - spatial_fourier_t50_nu2.226.png")
+    print("  - spacetime_n_lab_f0.354.png")
+    print("  - snapshots_n_f0.354.png") 
+    print("  - n_time_series_x6_f0.354.png")
+    print("  - fourier_analysis_x6_f0.354.png")
+    print("  - spatial_fourier_t50_f0.354.png")
     print("=" * 70)
 
 if __name__ == "__main__":
