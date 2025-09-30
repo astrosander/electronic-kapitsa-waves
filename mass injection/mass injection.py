@@ -1,5 +1,6 @@
 import os
-NTHREADS = int(os.environ.get("NTHREADS", "4"))
+import time
+NTHREADS = int(os.environ.get("NTHREADS", "1"))
 os.environ["OMP_NUM_THREADS"] = str(NTHREADS)
 os.environ["OPENBLAS_NUM_THREADS"] = str(NTHREADS)
 os.environ["MKL_NUM_THREADS"] = str(NTHREADS)
@@ -44,8 +45,8 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.5/2#/10#0.03
-    Dp: float = 0.1/2
+    Dn: float = 0.5/4#/10#0.03
+    Dp: float = 0.1/4
 
     J0: float = 1.0#0.04
     sigma_J: float = 2.0**1/2#6.0
@@ -57,8 +58,8 @@ class P:
     nbar_sigma: float = 120.0
 
     L: float = 10.0
-    Nx: int = 1512#1024
-    t_final: float = 10.0
+    Nx: int = 2524#1024
+    t_final: float = 50.0
     n_save: int = 200  # Reduced for speed
     # rtol: float = 5e-7
     # atol: float = 5e-9
@@ -353,11 +354,12 @@ def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False):
     plt.savefig(f"{par.outdir}/fft_final_overlay_{tag}.pdf", dpi=300, bbox_inches='tight')
     plt.close()
 
-def rhs_with_progress(t, y, E_base, last_print_time=[0.0]):
+def rhs_with_progress(t, y, E_base, last_print_time=[0.0], start_time=[0.0]):
     """RHS function with progress tracking"""
     if t - last_print_time[0] > 0.05:  # Print every 0.05 time units (less frequent for speed)
         progress = (t / par.t_final) * 100
-        print(f"\r[Progress] {progress:6.1f}% (t = {t:6.3f}/{par.t_final:.3f})", end="", flush=True)
+        elapsed_wall_time = time.time() - start_time[0]
+        print(f"\r[Progress] {progress:6.1f}% (t = {t:6.3f}/{par.t_final:.3f}) | Wall time: {elapsed_wall_time:6.1f}s", end="", flush=True)
         last_print_time[0] = t
     return rhs(t, y, E_base)
 
@@ -374,23 +376,30 @@ def run_once(tag="seed_mode"):
 
     print(f"[Simulation] Starting simulation for {tag}...")
     print(f"[Simulation] Parameters: t_final={par.t_final}, Nx={par.Nx}, u_d={par.u_d}")
+    
+    # Initialize timing variables
+    start_wall_time = time.time()
+    last_print_time = [0.0]
+    start_time = [start_wall_time]
 
     if HAS_THREADPOOLCTL:
         with threadpool_limits(limits=NTHREADS, user_api="blas"):
             with set_workers(NTHREADS):
-                sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base),
+                sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time),
                                 (0.0, par.t_final), y0, t_eval=t_eval,
                                 method="DOP853", rtol=par.rtol, atol=par.atol,
                                 max_step=0.05, vectorized=False)
     else:
         with set_workers(NTHREADS):
-            sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base),
+            sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time),
                             (0.0, par.t_final), y0, t_eval=t_eval,
                             method="DOP853", rtol=par.rtol, atol=par.atol,
                             max_step=0.05, vectorized=False)
     
+    total_wall_time = time.time() - start_wall_time
     print(f"\n[Simulation] Completed successfully!")
     print(f"[Simulation] Final time: {sol.t[-1]:.3f}, Success: {sol.success}")
+    print(f"[Simulation] Total wall time: {total_wall_time:.2f} seconds")
 
     N = par.Nx
     n_t = sol.y[:N,:]
@@ -460,6 +469,9 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
     oldA, oldm = par.seed_amp_n, par.seed_mode
 
     print(f"[Multi-mode] Running {len(modes)} modes: {list(modes)}")
+    
+    # Start timing for multi-mode run
+    multi_start_time = time.time()
 
     try:
         for i, m in enumerate(modes, 1):
@@ -513,7 +525,10 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
         print(f"[plot] saved {outpath}")
 
         plot_all_final_spectra(results, par.L, tag=tag, normalize=False)
+        
+        total_multi_time = time.time() - multi_start_time
         print(f"\n[Multi-mode] All {len(modes)} modes completed successfully!")
+        print(f"[Multi-mode] Total wall time: {total_multi_time:.2f} seconds")
 
     finally:
         par.seed_amp_n, par.seed_mode = oldA, oldm
