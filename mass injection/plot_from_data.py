@@ -384,8 +384,9 @@ def plot_velocity_field(data, u_d, tag="velocity_field"):
 def plot_velocity_vs_ud(data_files, tag="velocity_vs_ud"):
     """Plot measured velocity (spatial shifting) vs target u_d at t=t_final"""
     u_d_values = []
-    measured_velocities = []
-    amplitudes = []
+    u_true_values = []
+    n_pulses_values = []
+    frequency_values = []
     
     for filename, u_d in data_files:
         try:
@@ -425,15 +426,27 @@ def plot_velocity_vs_ud(data_files, tag="velocity_vs_ud"):
             # Find optimal shift
             max_idx = np.argmax(correlations)
             shift_opt = shifts[max_idx]
-            u_drift = shift_opt / (t2 - t1)
+            u_true = shift_opt / (t2 - t1)
             
-            # Calculate amplitude at t_final
+            # Calculate density of pulses (count peaks in final density profile)
             n_final = n_t[:, -1]
-            amplitude = np.max(n_final) - np.min(n_final)
+            n_mean = np.mean(n_final)
+            n_std = np.std(n_final)
+            
+            # Find peaks (local maxima above threshold)
+            from scipy.signal import find_peaks
+            threshold = n_mean + 0.5 * n_std
+            peaks, _ = find_peaks(n_final, height=threshold, distance=5)
+            N_pulses = len(peaks)
+            n_pulses = N_pulses / L
+            
+            # Calculate frequency
+            frequency = u_true * n_pulses
             
             u_d_values.append(abs(u_d))
-            measured_velocities.append(u_drift)
-            amplitudes.append(amplitude)
+            u_true_values.append(u_true)
+            n_pulses_values.append(n_pulses)
+            frequency_values.append(frequency)
             
         except Exception as e:
             continue
@@ -443,25 +456,33 @@ def plot_velocity_vs_ud(data_files, tag="velocity_vs_ud"):
     
     # Convert to numpy arrays
     u_d_values = np.array(u_d_values)
-    measured_velocities = np.array(measured_velocities)
-    amplitudes = np.array(amplitudes)
+    u_true_values = np.array(u_true_values)
+    n_pulses_values = np.array(n_pulses_values)
+    frequency_values = np.array(frequency_values)
     
     # Create plots
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
     
-    # Plot 1: Velocity vs u_d
-    ax1.plot(u_d_values, np.abs(measured_velocities), 'bo-', linewidth=2, markersize=8)
+    # Plot 1: u_true vs u_d
+    ax1.plot(u_d_values, np.abs(u_true_values), 'bo-', linewidth=2, markersize=8)
     ax1.set_xlabel('$u_d$')
-    ax1.set_ylabel('$u_d^{\\text{shifted}}$')
-    ax1.set_title('Velocity vs $u_d$')
+    ax1.set_ylabel('$u_{\\text{true}}$')
+    ax1.set_title('$u_{\\text{true}}$ vs $u_d$')
     ax1.grid(True, alpha=0.3)
     
-    # Plot 2: Amplitude vs u_d
-    ax2.plot(u_d_values, amplitudes, 'ro-', linewidth=2, markersize=8)
+    # Plot 2: n_pulses vs u_d
+    ax2.plot(u_d_values, n_pulses_values, 'ro-', linewidth=2, markersize=8)
     ax2.set_xlabel('$u_d$')
-    ax2.set_ylabel('Amplitude = $n_{\\max} - n_{\\min}$')
-    ax2.set_title('Amplitude vs $u_d$')
+    ax2.set_ylabel('$n_{\\text{pulses}} = N/L$')
+    ax2.set_title('$n_{\\text{pulses}}$ vs $u_d$')
     ax2.grid(True, alpha=0.3)
+    
+    # Plot 3: frequency vs u_d
+    ax3.plot(u_d_values, frequency_values, 'go-', linewidth=2, markersize=8)
+    ax3.set_xlabel('$u_d$')
+    ax3.set_ylabel('$f = u_{\\text{true}} \\cdot n_{\\text{pulses}}$')
+    ax3.set_title('$f$ vs $u_d$')
+    ax3.grid(True, alpha=0.3)
     
     plt.tight_layout()
     
@@ -472,15 +493,26 @@ def plot_velocity_vs_ud(data_files, tag="velocity_vs_ud"):
     plt.show()
     plt.close()
     
-    return u_d_values, measured_velocities, amplitudes
+    return u_d_values, u_true_values, n_pulses_values, frequency_values
 
-def plot_multiple_ud_panel():
-    u_d_values = [1.25, 1.3,1.4,1.41,1.415,1.42, 1.45,1.5, 2, 3]
-    filenames = [f"multiple_u_d/out_drift_ud{ud}/data_m01_ud{ud}.npz" for ud in u_d_values]
+def plot_multiple_ud_panel(data_files=None):
+    """Plot density profiles for multiple u_d values"""
+    if data_files is None:
+        data_files = find_available_simulations()
     
-    fig, axes = plt.subplots(10, 1, figsize=(10, 16))
+    if not data_files:
+        print("No data files found for panel plot!")
+        return
     
-    for i, (filename, u_d) in enumerate(zip(filenames, u_d_values)):
+    # Limit to first 10 files for readability
+    data_files = data_files[:10]
+    n_files = len(data_files)
+    
+    fig, axes = plt.subplots(n_files, 1, figsize=(10, 2*n_files))
+    if n_files == 1:
+        axes = [axes]
+    
+    for i, (filename, u_d) in enumerate(data_files):
         try:
             data = load_data(filename)
             n_t = data['n_t']
@@ -498,7 +530,7 @@ def plot_multiple_ud_panel():
             axes[i].set_xlim(0, L)
             axes[i].tick_params(labelsize=8)
             
-            if i == 9:
+            if i == n_files - 1:
                 axes[i].set_xlabel('$x$', fontsize=12)
             
         except Exception as e:
@@ -506,7 +538,6 @@ def plot_multiple_ud_panel():
             axes[i].text(0.5, 0.5, f'Error loading u_d={u_d}', 
                         transform=axes[i].transAxes, ha='center', va='center')
     
-    # plt.suptitle('Final density profiles $n(x,t_{final})$ for different $u_d$', fontsize=14, y=0.98)
     plt.subplots_adjust(hspace=0.1, top=0.95)
     
     os.makedirs("multiple_u_d", exist_ok=True)
@@ -514,6 +545,50 @@ def plot_multiple_ud_panel():
     plt.savefig("multiple_u_d/final_profiles_panel.svg", dpi=160, bbox_inches='tight')
     plt.show()
     plt.close()
+
+def find_available_simulations():
+    """Automatically find all available simulation files in out_drift_ud* subdirectories"""
+    data_files = []
+    
+    # Search in multiple_u_d/out_drift_ud* subdirectories
+    if os.path.exists("multiple_u_d"):
+        for item in os.listdir("multiple_u_d"):
+            if item.startswith("out_drift_ud") and os.path.isdir(os.path.join("multiple_u_d", item)):
+                # Extract u_d from directory name
+                try:
+                    u_d_str = item.replace("out_drift_ud", "")
+                    u_d = float(u_d_str)
+                    
+                    # Look for data file in this subdirectory
+                    subdir_path = os.path.join("multiple_u_d", item)
+                    for file in os.listdir(subdir_path):
+                        if file.startswith("data_m01_ud") and file.endswith(".npz"):
+                            filepath = os.path.join(subdir_path, file)
+                            data_files.append((filepath, u_d))
+                            break  # Only take first matching file
+                except ValueError:
+                    continue
+    
+    # Search in out_drift directory (main level only)
+    if os.path.exists("out_drift"):
+        for file in os.listdir("out_drift"):
+            if file.startswith("data_m01_ud") and file.endswith(".npz"):
+                try:
+                    u_d_str = file.replace("data_m01_ud", "").replace(".npz", "")
+                    u_d = float(u_d_str)
+                    filepath = os.path.join("out_drift", file)
+                    data_files.append((filepath, u_d))
+                except ValueError:
+                    continue
+    
+    # Sort by u_d value
+    data_files.sort(key=lambda x: x[1])
+    
+    print(f"Found {len(data_files)} simulation files:")
+    for filepath, u_d in data_files:
+        print(f"  u_d={u_d}: {filepath}")
+    
+    return data_files
 
 if __name__ == "__main__":
     # Single file analysis
@@ -530,12 +605,13 @@ if __name__ == "__main__":
     # plot_velocity_evolution(data, u_d)
     # plot_velocity_field(data, u_d)
     
-    # Velocity vs u_d analysis
-    u_d_values = [0.75, 1.0,1.1, 1.2,1.3,1.4,1.45, 1.5, 2, 3, 3.5, 3.6, 3.75, 4, 5, 6, 7]
-    data_files = [(f"multiple_u_d/out_drift_ud{ud}/data_m01_ud{ud}.npz", ud) for ud in u_d_values]
-    plot_velocity_vs_ud(data_files)
-    
-    # Multiple u_d panel
-    plot_multiple_ud_panel()
+    # Automatically find and analyze all available simulations
+    data_files = find_available_simulations()
+    if data_files:
+        plot_velocity_vs_ud(data_files)
+        # Multiple u_d panel
+        plot_multiple_ud_panel(data_files)
+    else:
+        print("No simulation files found!")
     
     print("All plots generated!")
