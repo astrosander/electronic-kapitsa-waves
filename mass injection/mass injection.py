@@ -45,8 +45,8 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.5/4#/10#0.03
-    Dp: float = 0.1/4
+    Dn: float = 0.5/2#/10#0.03
+    Dp: float = 0.1/2
 
     J0: float = 1.0#0.04
     sigma_J: float = 2.0**1/2#6.0
@@ -58,9 +58,9 @@ class P:
     nbar_sigma: float = 120.0
 
     L: float = 10.0
-    Nx: int = 2524#1024
-    t_final: float = 50.0
-    n_save: int = 200  # Reduced for speed
+    Nx: int = 1512#2524#1024
+    t_final: float = 1.0
+    n_save: int = 200#200  # Reduced for speed
     # rtol: float = 5e-7
     # atol: float = 5e-9
     rtol = 1e-2  # Relaxed for speed
@@ -127,6 +127,236 @@ def _power_spectrum_1d(n_slice, L):
     kpos = 2*np.pi*m / L
     return kpos[1:], P[1:N//2+1]
 
+def find_modulation_period_by_shift(n_t1, n_t2, t1, t2, L):
+    """
+    Find the drift velocity by comparing two snapshots at different times.
+    
+    The idea: 
+    1. Take snapshots at times t1 and t2
+    2. Shift n_t1 spatially to find best match with n_t2
+    3. The shift that gives best match (max correlation) indicates how far the pattern moved
+    4. Velocity = shift / (t2 - t1)
+    
+    Parameters:
+    -----------
+    n_t1 : array
+        Density profile at time t1
+    n_t2 : array
+        Density profile at time t2
+    t1 : float
+        First time
+    t2 : float
+        Second time
+    L : float
+        Domain length
+        
+    Returns:
+    --------
+    u_drift : float
+        Drift velocity
+    shift_optimal : float
+        Optimal spatial shift
+    correlation_max : float
+        Maximum correlation achieved
+    shifts : array
+        Array of tested shifts
+    correlations : array
+        Correlation for each shift
+    """
+    dx = L / len(n_t1)
+    x = np.linspace(0, L, len(n_t1), endpoint=False)
+    
+    # Remove mean to focus on fluctuations
+    dn_t1 = n_t1 - np.mean(n_t1)
+    dn_t2 = n_t2 - np.mean(n_t2)
+    
+    # Test different spatial shifts
+    n_shifts = len(n_t1)  # Test all possible shifts
+    shifts = np.arange(n_shifts) * dx
+    correlations = np.zeros(n_shifts)
+    
+    for i, shift in enumerate(shifts):
+        # Shift n_t1 forward in space
+        x_shifted = (x + shift) % L
+        dn_t1_shifted = np.interp(x, x_shifted, dn_t1)
+        
+        # Calculate correlation between shifted n_t1 and n_t2
+        correlations[i] = np.corrcoef(dn_t1_shifted, dn_t2)[0, 1]
+    
+    # Find the shift with maximum correlation
+    max_idx = np.argmax(correlations)
+    shift_optimal = shifts[max_idx]
+    correlation_max = correlations[max_idx]
+    
+    # Calculate velocity
+    delta_t = t2 - t1
+    if delta_t > 0:
+        u_drift = shift_optimal / delta_t
+    else:
+        u_drift = 0.0
+    
+    return u_drift, shift_optimal, correlation_max, shifts, correlations
+
+def calculate_velocity_from_period(n_initial, n_final, t_initial, t_final, L):
+    """
+    Calculate velocity by comparing initial and final profiles.
+    
+    This method:
+    1. Takes snapshots at t_initial and t_final
+    2. Finds the spatial shift that best matches the two profiles
+    3. Calculates velocity = shift / (t_final - t_initial)
+    
+    Parameters:
+    -----------
+    n_initial : array
+        Initial density profile n(x, t=t_initial)
+    n_final : array
+        Final density profile n(x, t=t_final)
+    t_initial : float
+        Initial time
+    t_final : float
+        Final time
+    L : float
+        Domain length
+        
+    Returns:
+    --------
+    u_drift : float
+        Drift velocity
+    shift_optimal : float
+        Optimal spatial shift
+    correlation_max : float
+        Maximum correlation
+    shifts : array
+        Array of tested shifts
+    correlations : array
+        Correlation for each shift
+    """
+    u_drift, shift_optimal, correlation_max, shifts, correlations = find_modulation_period_by_shift(
+        n_initial, n_final, t_initial, t_final, L
+    )
+    
+    return u_drift, shift_optimal, correlation_max, shifts, correlations
+
+def calculate_velocity_from_shift_refined(n_initial, n_final, t_final, L, search_range=None):
+    """
+    Refined velocity calculation using sub-pixel shift optimization.
+    
+    Parameters:
+    -----------
+    n_initial, n_final : array
+        Initial and final density profiles
+    t_final : float
+        Final time
+    L : float
+        Domain length  
+    search_range : tuple, optional
+        (u_min, u_max) to limit search range
+        
+    Returns:
+    --------
+    u_optimal : float
+        Optimal velocity
+    shift_optimal : float  
+        Optimal spatial shift
+    correlation_max : float
+        Maximum correlation achieved
+    """
+    dx = L / len(n_initial)
+    x = np.linspace(0, L, len(n_initial), endpoint=False)
+    
+    # Remove mean
+    dn_initial = n_initial - np.mean(n_initial)
+    dn_final = n_final - np.mean(n_final)
+    
+    # First get coarse estimate
+    u_coarse, shift_coarse, _ = calculate_velocity_from_shift(n_initial, n_final, t_final, L)
+    
+    # Define search range around coarse estimate
+    if search_range is None:
+        u_search_width = 2.0  # Search ±2 units around coarse estimate
+        u_min = u_coarse - u_search_width
+        u_max = u_coarse + u_search_width
+    else:
+        u_min, u_max = search_range
+    
+    # Fine search with sub-pixel resolution
+    n_search = 201  # Number of search points
+    u_test = np.linspace(u_min, u_max, n_search)
+    correlations = np.zeros(n_search)
+    
+    for i, u in enumerate(u_test):
+        shift = u * t_final
+        
+        # Create shifted initial profile using interpolation
+        x_shifted = (x - shift) % L
+        dn_initial_shifted = np.interp(x, x_shifted, dn_initial)
+        
+        # Calculate correlation coefficient
+        correlations[i] = np.corrcoef(dn_final, dn_initial_shifted)[0, 1]
+    
+    # Find optimal velocity
+    max_idx = np.argmax(correlations)
+    u_optimal = u_test[max_idx]
+    shift_optimal = u_optimal * t_final
+    correlation_max = correlations[max_idx]
+    
+    return u_optimal, shift_optimal, correlation_max
+
+def plot_period_detection(n_initial, n_final, t_initial, t_final, L, u_momentum, u_target, tag="period_detection"):
+    """
+    Plot the velocity detection method showing correlation vs shift.
+    """
+    # Calculate velocity by comparing initial and final profiles
+    u_drift, shift_opt, corr_max, shifts, correlations = calculate_velocity_from_period(
+        n_initial, n_final, t_initial, t_final, L
+    )
+    
+    # Create figure with subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    
+    # Plot 1: Initial and shifted initial vs final
+    x = np.linspace(0, L, len(n_final), endpoint=False)
+    
+    # Create shifted initial profile at detected shift
+    x_shifted = (x + shift_opt) % L
+    n_initial_shifted = np.interp(x, x_shifted, n_initial)
+    
+    ax1.plot(x, n_initial, 'b-', label=f'Initial n(x,{t_initial:.2f})', alpha=0.6, linewidth=1.5)
+    ax1.plot(x, n_final, 'r-', label=f'Final n(x,{t_final:.2f})', alpha=0.8, linewidth=2)
+    ax1.plot(x, n_initial_shifted, 'g--', label=f'Initial shifted by {shift_opt:.3f}', alpha=0.8, linewidth=2)
+    ax1.set_xlabel('x')
+    ax1.set_ylabel('n(x)')
+    ax1.set_title('Velocity Detection: Shifted Initial vs Final')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot 2: Correlation vs shift
+    ax2.plot(shifts, correlations, 'b-', linewidth=2, label='Correlation')
+    ax2.axvline(shift_opt, color='r', linestyle='--', linewidth=2, label=f'Optimal shift={shift_opt:.3f}')
+    ax2.plot([shift_opt], [corr_max], 'ro', markersize=8, label=f'Max corr={corr_max:.3f}')
+    
+    ax2.set_xlabel('Spatial shift')
+    ax2.set_ylabel('Correlation')
+    ax2.set_title('Correlation vs Shift')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    
+    # Add text summary
+    delta_t = t_final - t_initial
+    fig.suptitle(f'Instantaneous velocity at t={t_final:.3f}: u_drift={u_drift:.3f} (shift={shift_opt:.3f}, Δt={delta_t:.4f}) | u_momentum={u_momentum:.3f}, u_target={u_target:.3f}', 
+                 y=0.98, fontsize=10.5)
+    
+    os.makedirs(par.outdir, exist_ok=True)
+    plt.savefig(f"{par.outdir}/period_detection_{tag}.png", dpi=160, bbox_inches='tight')
+    plt.savefig(f"{par.outdir}/period_detection_{tag}.pdf", dpi=160, bbox_inches='tight')
+    plt.show()
+    plt.close()
+    
+    return u_drift, shift_opt, corr_max
+
 def nbar_profile():
     if par.use_nbar_gaussian and par.nbar_amp != 0.0:
         d = periodic_delta(x, par.x0, par.L)
@@ -153,6 +383,7 @@ def S_injection(n, nbar, Jx, gamma):
         raise ValueError("source_model must be 'as_given' or 'balanced'")
 
 def E_base_from_drift(nbar):
+    print(np.mean(Gamma(nbar)))
     return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e /0.8187307530779819*40.0
 
 def rhs(t, y, E_base):
@@ -388,13 +619,13 @@ def run_once(tag="seed_mode"):
                 sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time),
                                 (0.0, par.t_final), y0, t_eval=t_eval,
                                 method="DOP853", rtol=par.rtol, atol=par.atol,
-                                max_step=0.05, vectorized=False)
+                                max_step=0.05, vectorized=False)#BDF
     else:
         with set_workers(NTHREADS):
             sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time),
                             (0.0, par.t_final), y0, t_eval=t_eval,
                             method="DOP853", rtol=par.rtol, atol=par.atol,
-                            max_step=0.05, vectorized=False)
+                            max_step=0.05, vectorized=False)#BDF
     
     total_wall_time = time.time() - start_wall_time
     print(f"\n[Simulation] Completed successfully!")
@@ -407,7 +638,27 @@ def run_once(tag="seed_mode"):
 
     n_eff_t = np.maximum(n_t, par.n_floor)
     v_t = p_t/(par.m*n_eff_t)
-    print(f"[run]  <u>(t=0)={np.mean(v_t[:,0]):.4f},  <u>(t_end)={np.mean(v_t[:,-1]):.4f},  target u_d={par.u_d:.4f}")
+    u_momentum_initial = np.mean(v_t[:,0])
+    u_momentum_final = np.mean(v_t[:,-1])
+    
+    # Calculate INSTANTANEOUS velocity at t=t_final using two close snapshots
+    # Use the last two time points for instantaneous velocity measurement
+    idx_t1 = -5  # Second-to-last snapshot
+    idx_t2 = -1  # Last snapshot
+
+    print("len=",len(sol.t), idx_t1, idx_t2)
+    
+    u_drift_inst, shift_opt_inst, corr_max_inst, shifts_inst, correlations_inst = calculate_velocity_from_period(
+        n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], par.L
+    )
+    
+    print(f"[run]  <u>(t=0)={u_momentum_initial:.4f},  <u>(t_end)={u_momentum_final:.4f},  target u_d={par.u_d:.4f}")
+    print(f"[run]  u_drift_instantaneous={u_drift_inst:.4f} (from shift={shift_opt_inst:.3f}, Δt={sol.t[idx_t2]-sol.t[idx_t1]:.3f})")
+    print(f"[run]  measured at t={sol.t[idx_t2]:.3f}, correlation_max={corr_max_inst:.4f}")
+    
+    # Create velocity detection plot showing instantaneous measurement
+    plot_period_detection(n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], 
+                         par.L, u_momentum_final, par.u_d, tag=tag)
 
     extent=[x.min(), x.max(), sol.t.min(), sol.t.max()]
     plt.figure(figsize=(9.6,4.3))
@@ -415,7 +666,9 @@ def run_once(tag="seed_mode"):
     plt.xlabel("x"); plt.ylabel("t"); plt.title(f"n(x,t)  [lab]  {tag}")
     plt.colorbar(label="n")
     plt.plot([par.x0, par.x0], [sol.t.min(), sol.t.max()], 'w--', lw=1, alpha=0.7)
-    plt.tight_layout(); plt.savefig(f"{par.outdir}/spacetime_n_lab_{tag}.png", dpi=160); plt.close()
+    plt.tight_layout(); plt.savefig(f"{par.outdir}/spacetime_n_lab_{tag}.png", dpi=160); 
+    plt.show()
+    plt.close()
 
     n_co = np.empty_like(n_t)
     for j, tj in enumerate(sol.t):
