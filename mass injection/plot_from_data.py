@@ -383,7 +383,7 @@ def plot_velocity_field(data, u_d, tag="velocity_field"):
 
 def plot_multiple_ud_panel():
     u_d_values = [1.5, 2, 3, 3.5, 3.6, 3.75, 4, 5, 6, 7]
-    filenames = [f"multiple_u_d/10e-3/out_drift_ud{ud}/data_m01_ud{ud}.npz" for ud in u_d_values]
+    filenames = [f"multiple_u_d/out_drift_ud{ud}/data_m01_ud{ud}.npz" for ud in u_d_values]
     
     fig, axes = plt.subplots(10, 1, figsize=(10, 16))
     

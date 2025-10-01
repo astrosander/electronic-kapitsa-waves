@@ -732,7 +732,7 @@ def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
 def run_all_modes_snapshots(tag="snapshots_panels"):
     os.makedirs(par.outdir, exist_ok=True)
 
-    modes = range(1,2)#range(1,7)
+    modes = range(2,3)#range(1,7)
     results = []
 
     oldA, oldm = par.seed_amp_n, par.seed_mode
@@ -804,7 +804,7 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
 
 
 def run_multiple_ud():
-    u_d_values = [1.5, 2, 3, 3.5, 3.6, 3.75, 4, 5, 6, 7]#[5, 6, 7]#[3,3.5,3.6]
+    u_d_values = [4, 5, 6, 7]#[5, 6, 7]#[3,3.5,3.6]
     
     for u_d in u_d_values:
         print(f"\n{'='*50}")
@@ -813,7 +813,7 @@ def run_multiple_ud():
         
         par.u_d = u_d
         par.outdir = f"multiple_u_d/out_drift_ud{u_d}"
-        par.t_final = 50.0
+        par.t_final = 10.0
         par.n_save = 200
         
         print(f"Parameters: u_d={par.u_d}, t_final={par.t_final}, Nx={par.Nx}")
