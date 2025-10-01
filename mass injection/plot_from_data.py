@@ -81,7 +81,7 @@ def plot_snapshots(data, tag="snapshots"):
     x = np.linspace(0, L, n_t.shape[0], endpoint=False)
     
     plt.figure(figsize=(9.6, 3.4))
-    for frac in [0.0, 1.0]:
+    for frac in [0.0, 0.25, 0.5, 0.75, 1.0]:
         j = int(frac*(len(t)-1))
         plt.plot(x, n_t[:,j], label=f"t={t[j]:.1f}")
     plt.legend()
@@ -217,13 +217,17 @@ def plot_velocity_evolution(data, u_d, tag="velocity_evolution"):
     u_momentum_t = np.mean(v_t, axis=0)
     
     n_times = len(t)
-    u_drift_t = np.zeros(n_times - 1)
+    dt_skip = 1
+
+    valid_indices = []
+    u_drift_values = []
+    t_mid_values = []
     
-    for i in range(n_times - 1):
+    for i in range(0, n_times - dt_skip, dt_skip):
         n_t1 = n_t[:, i]
-        n_t2 = n_t[:, i + 1]
+        n_t2 = n_t[:, i + dt_skip]
         t1 = t[i]
-        t2 = t[i + 1]
+        t2 = t[i + dt_skip]
         
         dn_t1 = n_t1 - np.mean(n_t1)
         dn_t2 = n_t2 - np.mean(n_t2)
@@ -244,11 +248,14 @@ def plot_velocity_evolution(data, u_d, tag="velocity_evolution"):
         corr_max = correlations[max_idx]
         u_drift = shift_opt / (t2 - t1)
         
-        u_drift_t[i] = u_drift
+        u_drift_values.append(abs(u_drift))
+        t_mid_values.append((t1 + t2) / 2)
     
-    t_mid = (t[:-1] + t[1:]) / 2
+    u_drift_t = np.array(u_drift_values)
+    t_mid = np.array(t_mid_values)
     plt.figure(figsize=(8, 5))
-    plt.plot(t_mid, -u_drift_t, 'b-', linewidth=2, label='Measured $u_d$ (shift method)')
+    print(u_drift_t[:-1], u_momentum_t[:-1])
+    plt.plot(t_mid, u_drift_t, 'b-', linewidth=2, label='Measured $u_d$ (shift method)')
     plt.plot(t, u_momentum_t, 'r-', linewidth=2, label='$\\langle v \\rangle$ (momentum)')
     # plt.axhline(y=u_d, color='r', linestyle='--', linewidth=2, label=f'Target $u_d={u_d}$')
     plt.xlabel('$t$')

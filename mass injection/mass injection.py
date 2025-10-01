@@ -67,7 +67,7 @@ class P:
 
     L: float = 10.0
     Nx: int = 812#1512#2524#1024
-    t_final: float = 50.0
+    t_final: float = 10.0
     n_save: int = 200#200#200  # Reduced for speed
     # rtol: float = 5e-7
     # atol: float = 5e-9
