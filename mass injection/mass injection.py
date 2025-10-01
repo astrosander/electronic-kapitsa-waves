@@ -53,8 +53,8 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.5#/10#0.03
-    Dp: float = 0.1
+    Dn: float = 0.5/2#/10#0.03
+    Dp: float = 0.1/2
 
     J0: float = 1.0#0.04
     sigma_J: float = 2.0**1/2#6.0
