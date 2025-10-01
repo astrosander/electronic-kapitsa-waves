@@ -272,7 +272,7 @@ def plot_velocity_evolution(data, u_d, tag="velocity_evolution"):
     plt.close()
 
 if __name__ == "__main__":
-    filename = "out_drift/data_m01_m1_Dn025Dp005.npz"
+    filename = "out_drift/data_m01_m1.npz"
     data = load_data(filename)
     
     u_d = data['meta'].get('u_d', 20.0)

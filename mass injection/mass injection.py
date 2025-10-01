@@ -48,13 +48,13 @@ class P:
     include_poisson: bool = False
     eps: float = 20.0
 
-    u_d: float = 6.245
+    u_d: float = 5.245
     # u_d: float = .0
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.5/2#/10#0.03
-    Dp: float = 0.1/2
+    Dn: float = 0.5#/10#0.03
+    Dp: float = 0.1
 
     J0: float = 1.0#0.04
     sigma_J: float = 2.0**1/2#6.0
@@ -360,7 +360,7 @@ def plot_period_detection(n_initial, n_final, t_initial, t_final, L, u_momentum,
     os.makedirs(par.outdir, exist_ok=True)
     plt.savefig(f"{par.outdir}/period_detection_{tag}.png", dpi=160, bbox_inches='tight')
     plt.savefig(f"{par.outdir}/period_detection_{tag}.pdf", dpi=160, bbox_inches='tight')
-    plt.show()
+    # plt.show()
     plt.close()
     
     return u_drift, shift_opt, corr_max
@@ -683,7 +683,7 @@ def run_once(tag="seed_mode"):
     plt.colorbar(label="n")
     plt.plot([par.x0, par.x0], [sol.t.min(), sol.t.max()], 'w--', lw=1, alpha=0.7)
     plt.tight_layout(); plt.savefig(f"{par.outdir}/spacetime_n_lab_{tag}.png", dpi=160); 
-    plt.show()
+    # plt.show()
     plt.close()
 
     n_co = np.empty_like(n_t)
