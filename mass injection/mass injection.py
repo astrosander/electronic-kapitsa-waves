@@ -48,7 +48,7 @@ class P:
     include_poisson: bool = False
     eps: float = 20.0
 
-    u_d: float = 20.00
+    u_d: float = 6.245
     # u_d: float = .0
     maintain_drift: str = "field"
     Kp: float = 0.15
@@ -392,7 +392,7 @@ def S_injection(n, nbar, Jx, gamma):
 
 def E_base_from_drift(nbar):
     print(np.mean(Gamma(nbar)))
-    return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e /0.8187307530779819*40.0
+    return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e 
 
 def rhs(t, y, E_base):
     N = par.Nx
@@ -605,7 +605,8 @@ def run_once(tag="seed_mode"):
     n0, p0 = initial_fields()
     E_base = E_base_from_drift(nbar_profile()) if par.maintain_drift in ("field","feedback") else 0.0
 
-    E_base = 15.0
+    print(f"[Simulation] E_base={E_base}")
+    #E_base = 15.0
 
     y0 = np.concatenate([n0, p0])
     t_eval = np.linspace(0.0, par.t_final, par.n_save)
