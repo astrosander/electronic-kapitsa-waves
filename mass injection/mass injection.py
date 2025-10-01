@@ -67,7 +67,7 @@ class P:
 
     L: float = 10.0
     Nx: int = 1512#2524#1024
-    t_final: float = 1.0
+    t_final: float = 10.0
     n_save: int = 200#200  # Reduced for speed
     # rtol: float = 5e-7
     # atol: float = 5e-9
@@ -491,57 +491,20 @@ def initial_fields():
         # p0 += par.seed_amp_p * np.cos(kx * x)
     return n0, p0
 
-def save_final_spectra(m, t, n_t, L, tag=""):
-    """
-    Save the complete time evolution of power spectra.
-    
-    Parameters:
-    -----------
-    m : int
-        Mode number
-    t : array
-        Time array (all snapshots)
-    n_t : array (Nx, Nt)
-        Density field at all time snapshots
-    L : float
-        Domain length
-    tag : str
-        Output file tag
-    """
-    # Calculate spectra for all time snapshots
-    n_times = n_t.shape[1]
-    k_wave, P_first = _power_spectrum_1d(n_t[:, 0], L)  # Get k array size
-    n_modes = len(k_wave)
-    
-    # Preallocate array for all spectra
-    P_all = np.zeros((n_modes, n_times))
-    
-    print(f"[save] Computing spectra for {n_times} time snapshots...")
-    for i in range(n_times):
-        _, P_all[:, i] = _power_spectrum_1d(n_t[:, i], L)
-    
-    # Keep old variables for backward compatibility
-    k0, P0 = k_wave, P_all[:, 0]
-    kf, Pf = k_wave, P_all[:, -1]
-
+def save_final_spectra(m, t, n_t, p_t, L, tag=""):
     meta = asdict(par).copy()
     meta['outdir'] = str(par.outdir)
-
     os.makedirs(par.outdir, exist_ok=True)
-    out = os.path.join(par.outdir, f"spec_m{int(m):02d}_{tag}.npz")
+    out = os.path.join(par.outdir, f"data_m{int(m):02d}_{tag}.npz")
     np.savez_compressed(out,
                         m=int(m),
-                        t=t,  # Full time array
-                        t_final=float(t[-1]),
+                        t=t,
+                        n_t=n_t,
+                        p_t=p_t,
                         L=float(L),
                         Nx=int(par.Nx),
-                        k0=k0, P0=P0,  # First snapshot (backward compat)
-                        k=kf, P=Pf,     # Last snapshot (backward compat)
-                        k_wave=k_wave,  # Wavenumber array
-                        P_all=P_all,    # Full spectral evolution (n_modes, n_times)
                         meta=meta)
-    print(f"[save] Full spectral evolution → {out}")
-    print(f"[save]   k_wave shape: {k_wave.shape}, P_all shape: {P_all.shape}, t shape: {t.shape}")
+    print(f"[save] Full data → {out}")
 
 
 def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
@@ -736,7 +699,7 @@ def run_once(tag="seed_mode"):
 
     plot_fft_initial_last(n_t, sol.t, par.L, tag=tag, k_marks=())
     
-    save_final_spectra(par.seed_mode, sol.t, n_t, par.L, tag=tag)
+    save_final_spectra(par.seed_mode, sol.t, n_t, p_t, par.L, tag=tag)
 
     return sol.t, n_t, p_t
 
@@ -772,9 +735,9 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
         for i, m in enumerate(modes, 1):
             print(f"\n[Multi-mode] Running mode {m} ({i}/{len(modes)})")
             par.seed_mode = m
-            t, n_t, _ = run_once(tag=f"m{m}")  
+            t, n_t, p_t = run_once(tag=f"m{m}")  
             results.append((m, t, n_t))
-            save_final_spectra(m, t, n_t, par.L, tag=f"m{m}")
+            save_final_spectra(m, t, n_t, p_t, par.L, tag=f"m{m}")
             print(f"[Multi-mode] Completed mode {m}")
 
         fig, axes = plt.subplots(
