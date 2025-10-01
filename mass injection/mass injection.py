@@ -76,9 +76,9 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 20e-3
+    seed_amp_n: float = 10e-3
     seed_mode: int = 1
-    seed_amp_p: float = 20e-3
+    seed_amp_p: float = 10e-3
 
     outdir: str = "out_drift"
     cmap: str = "inferno"
@@ -804,7 +804,7 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
 
 
 def run_multiple_ud():
-    u_d_values = [3,3.5,3.6]
+    u_d_values = [1.5, 2, 3, 3.5, 3.6, 3.75, 4, 5, 6, 7]#[5, 6, 7]#[3,3.5,3.6]
     
     for u_d in u_d_values:
         print(f"\n{'='*50}")
