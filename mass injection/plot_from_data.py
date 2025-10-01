@@ -275,7 +275,7 @@ def plot_multiple_ud_panel():
     u_d_values = [1.5, 2, 3, 3.5, 3.6, 3.75, 4, 5, 6, 7]
     filenames = [f"multiple_u_d/out_drift_ud{ud}/data_m01_ud{ud}.npz" for ud in u_d_values]
     
-    fig, axes = plt.subplots(10, 1, figsize=(10, 12))
+    fig, axes = plt.subplots(10, 1, figsize=(10, 16))
     
     for i, (filename, u_d) in enumerate(zip(filenames, u_d_values)):
         try:
@@ -288,25 +288,28 @@ def plot_multiple_ud_panel():
             n_final = n_t[:, -1]
             
             axes[i].plot(x, n_final, 'b-', linewidth=1.5)
-            axes[i].set_ylabel(f'$u_d={u_d}$')
+            axes[i].text(0.02, 0.95, f'$u_d={u_d}$', transform=axes[i].transAxes, 
+                        fontsize=10, verticalalignment='top', 
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
             axes[i].grid(True, alpha=0.3)
             axes[i].set_xlim(0, L)
+            axes[i].tick_params(labelsize=8)
             
-            if i == 5:
-                axes[i].set_xlabel('$x$')
+            if i == 9:
+                axes[i].set_xlabel('$x$', fontsize=12)
             
         except Exception as e:
             print(f"Error loading {filename}: {e}")
             axes[i].text(0.5, 0.5, f'Error loading u_d={u_d}', 
                         transform=axes[i].transAxes, ha='center', va='center')
     
-    plt.suptitle('Final density profiles $n(x,t_{final})$ for different $u_d$', fontsize=14)
-    plt.tight_layout()
+    # plt.suptitle('Final density profiles $n(x,t_{final})$ for different $u_d$', fontsize=14, y=0.98)
+    plt.subplots_adjust(hspace=0.1, top=0.95)
     
     os.makedirs("multiple_u_d", exist_ok=True)
     plt.savefig("multiple_u_d/final_profiles_panel.png", dpi=160, bbox_inches='tight')
-    plt.savefig("multiple_u_d/final_profiles_panel.pdf", dpi=160, bbox_inches='tight')
-    plt.show()
+    plt.savefig("multiple_u_d/final_profiles_panel.svg", dpi=160, bbox_inches='tight')
+    # plt.show()
     plt.close()
 
 if __name__ == "__main__":
