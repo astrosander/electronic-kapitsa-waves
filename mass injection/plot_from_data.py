@@ -460,25 +460,36 @@ def plot_velocity_vs_ud(data_files, tag="velocity_vs_ud"):
     n_pulses_values = np.array(n_pulses_values)
     frequency_values = np.array(frequency_values)
     
+    # Filter for u_d > 1.4
+    mask = u_d_values > 1.41
+    u_d_filtered = u_d_values[mask]
+    u_true_filtered = u_true_values[mask]
+    n_pulses_filtered = n_pulses_values[mask]
+    frequency_filtered = frequency_values[mask]
+    
+    if len(u_d_filtered) == 0:
+        print("No data points with u_d > 1.4 found!")
+        return
+    
     # Create plots
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(18, 6))
     
     # Plot 1: u_true vs u_d
-    ax1.plot(u_d_values, np.abs(u_true_values), 'bo-', linewidth=2, markersize=8)
+    ax1.plot(u_d_filtered, np.abs(u_true_filtered), 'bo-', linewidth=2, markersize=8)
     ax1.set_xlabel('$u_d$')
     ax1.set_ylabel('$u_{\\text{true}}$')
     ax1.set_title('$u_{\\text{true}}$ vs $u_d$')
     ax1.grid(True, alpha=0.3)
     
     # Plot 2: n_pulses vs u_d
-    ax2.plot(u_d_values, n_pulses_values, 'ro-', linewidth=2, markersize=8)
+    ax2.plot(u_d_filtered, n_pulses_filtered, 'ro-', linewidth=2, markersize=8)
     ax2.set_xlabel('$u_d$')
     ax2.set_ylabel('$n_{\\text{pulses}} = N/L$')
     ax2.set_title('$n_{\\text{pulses}}$ vs $u_d$')
     ax2.grid(True, alpha=0.3)
     
     # Plot 3: frequency vs u_d
-    ax3.plot(u_d_values, frequency_values, 'go-', linewidth=2, markersize=8)
+    ax3.plot(u_d_filtered, np.abs(frequency_filtered), 'go-', linewidth=2, markersize=8)
     ax3.set_xlabel('$u_d$')
     ax3.set_ylabel('$f = u_{\\text{true}} \\cdot n_{\\text{pulses}}$')
     ax3.set_title('$f$ vs $u_d$')
@@ -505,10 +516,10 @@ def plot_multiple_ud_panel(data_files=None):
         return
     
     # Limit to first 10 files for readability
-    data_files = data_files[:10]
+    data_files = data_files#[:20]
     n_files = len(data_files)
     
-    fig, axes = plt.subplots(n_files, 1, figsize=(10, 2*n_files))
+    fig, axes = plt.subplots(n_files, 1, figsize=(len(data_files), 2*n_files))
     if n_files == 1:
         axes = [axes]
     
