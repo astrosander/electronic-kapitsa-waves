@@ -195,6 +195,62 @@ def plot_velocity_detection(data, u_d, tag="velocity_detection"):
     outdir = data['meta'].get('outdir', 'out_drift')
     os.makedirs(outdir, exist_ok=True)
     plt.savefig(f"{outdir}/{tag}_m{m}.png", dpi=160, bbox_inches='tight')
+    # plt.show()
+    plt.close()
+
+def plot_velocity_evolution(data, u_d, tag="velocity_evolution"):
+    n_t = data['n_t']
+    t = data['t']
+    L = data['L']
+    m = data['m']
+    
+    x = np.linspace(0, L, n_t.shape[0], endpoint=False)
+    dx = L / len(x)
+    
+    n_times = len(t)
+    u_drift_t = np.zeros(n_times - 1)
+    
+    for i in range(n_times - 1):
+        n_t1 = n_t[:, i]
+        n_t2 = n_t[:, i + 1]
+        t1 = t[i]
+        t2 = t[i + 1]
+        
+        dn_t1 = n_t1 - np.mean(n_t1)
+        dn_t2 = n_t2 - np.mean(n_t2)
+        
+        n_shifts = len(n_t1)
+        shifts = np.arange(-n_shifts//2, n_shifts//2) * dx
+        correlations = np.zeros(len(shifts))
+        
+        for j, shift in enumerate(shifts):
+            if shift >= 0:
+                dn_t1_shifted = np.roll(dn_t1, -int(shift/dx))
+            else:
+                dn_t1_shifted = np.roll(dn_t1, int(-shift/dx))
+            correlations[j] = np.corrcoef(dn_t1_shifted, dn_t2)[0, 1]
+        
+        max_idx = np.argmax(correlations)
+        shift_opt = shifts[max_idx]
+        corr_max = correlations[max_idx]
+        u_drift = shift_opt / (t2 - t1)
+        
+        u_drift_t[i] = u_drift
+    
+    t_mid = (t[:-1] + t[1:]) / 2
+    plt.figure(figsize=(8, 5))
+    plt.plot(t_mid, u_drift_t, 'b-', linewidth=2, label='Measured $u_d$')
+    # plt.axhline(y=u_d, color='r', linestyle='--', linewidth=2, label=f'Target $u_d={u_d}$')
+    plt.xlabel('$t$')
+    plt.ylabel('$u_d$')
+    plt.title('Velocity Evolution')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    outdir = data['meta'].get('outdir', 'out_drift')
+    os.makedirs(outdir, exist_ok=True)
+    plt.savefig(f"{outdir}/{tag}_m{m}.png", dpi=160, bbox_inches='tight')
     plt.show()
     plt.close()
 
@@ -209,5 +265,6 @@ if __name__ == "__main__":
     plot_snapshots(data)
     plot_fft_compare(data)
     plot_velocity_detection(data, u_d)
+    plot_velocity_evolution(data, u_d)
     
     print("All plots generated!")
