@@ -271,6 +271,116 @@ def plot_velocity_evolution(data, u_d, tag="velocity_evolution"):
     plt.show()
     plt.close()
 
+def plot_velocity_field(data, u_d, tag="velocity_field"):
+    """Plot v(x) = p(x)/n(x) alongside p(x) and n(x) at different time snapshots"""
+    n_t = data['n_t']
+    p_t = data['p_t']
+    t = data['t']
+    L = data['L']
+    m = data['m']
+    meta = data['meta']
+    
+    m_par = meta.get('m', 1.0)
+    n_floor = meta.get('n_floor', 1e-7)
+    
+    x = np.linspace(0, L, n_t.shape[0], endpoint=False)
+    
+    # Calculate velocity field v(x,t) = p(x,t) / (m * n(x,t))
+    n_eff_t = np.maximum(n_t, n_floor)
+    v_t = p_t / (m_par * n_eff_t)
+    
+    # Select time snapshots
+    time_fractions = [0.0, 0.25, 0.5, 0.75, 1.0]
+    
+    fig, axes = plt.subplots(len(time_fractions), 1, figsize=(12, 2.5*len(time_fractions)))
+    if len(time_fractions) == 1:
+        axes = [axes]
+    
+    for i, frac in enumerate(time_fractions):
+        j = int(frac * (len(t) - 1))
+        t_val = t[j]
+        
+        n_slice = n_t[:, j]
+        p_slice = p_t[:, j]
+        v_slice = v_t[:, j]
+        
+        # Plot n(x), p(x), and v(x) on the same subplot
+        ax = axes[i]
+        
+        # Use different y-axes for different quantities
+        ax2 = ax.twinx()
+        ax3 = ax.twinx()
+        ax3.spines['right'].set_position(('outward', 60))
+        
+        # Plot n(x) on left axis
+        line1 = ax.plot(x, n_slice, 'b-', linewidth=2, alpha=0.8)
+        ax.set_ylabel('$n(x)$', color='b', fontsize=12)
+        ax.tick_params(axis='y', labelcolor='b')
+        ax.set_ylim(0, np.max(n_slice) * 1.1)
+        
+        # Plot p(x) on middle axis
+        line2 = ax2.plot(x, p_slice, 'r-', linewidth=2, alpha=0.8)
+        ax2.set_ylabel('$p(x)$', color='r', fontsize=12)
+        ax2.tick_params(axis='y', labelcolor='r')
+        
+        # Plot v(x) on right axis
+        line3 = ax3.plot(x, v_slice, 'g-', linewidth=2, alpha=0.8)
+        ax3.set_ylabel('$v(x)$', color='g', fontsize=12)
+        ax3.tick_params(axis='y', labelcolor='g')
+        
+        # Add horizontal line at v=0 for reference
+        # ax3.axhline(y=0, color='g', linestyle='--', alpha=0.5)
+        
+        # Add target velocity line
+        # ax3.axhline(y=u_d, color='orange', linestyle=':', alpha=0.7, label=f'Target $u_d={u_d}$')
+        
+        # Only add x-label for the bottom panel
+        if i == len(time_fractions) - 1:
+            ax.set_xlabel('$x$', fontsize=12)
+        else:
+            ax.set_xticklabels([])  # Remove x-axis labels for upper panels
+        
+        # ax.set_title(f'Velocity Field Analysis at $t={t_val:.2f}$ (m={m})', fontsize=14)
+        ax.grid(True, alpha=0.3)
+        
+        # Combine legends
+        lines = line1 + line2 + line3
+        labels = [l.get_label() for l in lines]
+        ax.legend(lines, labels, loc='upper right', fontsize=10)
+        
+        # Add statistics text
+        v_mean = np.mean(v_slice)
+        v_std = np.std(v_slice)
+        v_min = np.min(v_slice)
+        v_max = np.max(v_slice)
+        
+        # stats_text = f'$\\langle v \\rangle = {v_mean:.3f}$\n$\\sigma_v = {v_std:.3f}$\n$v_{{min}} = {v_min:.3f}$\n$v_{{max}} = {v_max:.3f}$'
+        stats_text = f'$t={t_val:.1f}$'
+        ax.text(0.02, 0.98, stats_text, transform=ax.transAxes, fontsize=9,
+                verticalalignment='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    plt.subplots_adjust(hspace=0.1)  # Reduce space between subplots
+    plt.tight_layout()
+    
+    outdir = data['meta'].get('outdir', 'out_drift')
+    os.makedirs(outdir, exist_ok=True)
+    plt.savefig(f"{outdir}/{tag}_m{m}.png", dpi=160, bbox_inches='tight')
+    plt.show()
+    plt.close()
+    
+    # Print summary statistics
+    print(f"\nVelocity Field Analysis Summary (m={m}):")
+    print(f"Target u_d = {u_d}")
+    for i, frac in enumerate(time_fractions):
+        j = int(frac * (len(t) - 1))
+        t_val = t[j]
+        v_slice = v_t[:, j]
+        v_mean = np.mean(v_slice)
+        v_std = np.std(v_slice)
+        v_min = np.min(v_slice)
+        v_max = np.max(v_slice)
+        print(f"  t={t_val:.2f}: <v>={v_mean:.3f}, σ_v={v_std:.3f}, v_range=[{v_min:.3f}, {v_max:.3f}]")
+
 def plot_multiple_ud_panel():
     u_d_values = [1.5, 2, 3, 3.5, 3.6, 3.75, 4, 5, 6, 7]
     filenames = [f"multiple_u_d/out_drift_ud{ud}/data_m01_ud{ud}.npz" for ud in u_d_values]
@@ -314,19 +424,20 @@ def plot_multiple_ud_panel():
 
 if __name__ == "__main__":
     # Single file analysis
-    filename = "out_drift/data_m01_m1.npz"
+    filename = "out_drift/data_m01_m1_t10.npz"#"out_drift/data_m01_m1.npz"
     data = load_data(filename)
     
     u_d = data['meta'].get('u_d', 20.0)
     print(u_d)
-    # plot_spacetime_lab(data)
-    # plot_spacetime_comoving(data, u_d)
-    # plot_snapshots(data)
-    # plot_fft_compare(data)
-    # plot_velocity_detection(data, u_d)
-    # plot_velocity_evolution(data, u_d)
+    plot_spacetime_lab(data)
+    plot_spacetime_comoving(data, u_d)
+    plot_snapshots(data)
+    plot_fft_compare(data)
+    plot_velocity_detection(data, u_d)
+    plot_velocity_evolution(data, u_d)
+    plot_velocity_field(data, u_d)
     
     # Multiple u_d panel
-    plot_multiple_ud_panel()
+    # plot_multiple_ud_panel()
     
     print("All plots generated!")
