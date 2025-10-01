@@ -803,5 +803,36 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
         par.seed_amp_n, par.seed_mode = oldA, oldm
 
 
+def run_multiple_ud():
+    u_d_values = [1.5]
+    
+    for u_d in u_d_values:
+        print(f"\n{'='*50}")
+        print(f"Running simulation for u_d = {u_d}")
+        print(f"{'='*50}")
+        
+        par.u_d = u_d
+        par.outdir = f"multiple_u_d/out_drift_ud{u_d}"
+        par.t_final = 10.0
+        par.n_save = 200
+        
+        print(f"Parameters: u_d={par.u_d}, t_final={par.t_final}, Nx={par.Nx}")
+        
+        try:
+            t, n_t, p_t = run_once(tag=f"ud{u_d}")
+            
+            print(f"Simulation completed successfully for u_d={u_d}")
+            print(f"Final time: {t[-1]:.3f}")
+            print(f"Data shapes: n_t={n_t.shape}, p_t={p_t.shape}")
+            
+        except Exception as e:
+            print(f"Error in simulation for u_d={u_d}: {e}")
+            continue
+    
+    print(f"\n{'='*50}")
+    print("All simulations completed!")
+    print(f"{'='*50}")
+
 if __name__ == "__main__":
-    run_all_modes_snapshots(tag="seed_modes_1to5")
+    # run_all_modes_snapshots(tag="seed_modes_1to5")
+    run_multiple_ud()

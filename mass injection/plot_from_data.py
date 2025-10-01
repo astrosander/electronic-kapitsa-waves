@@ -271,17 +271,59 @@ def plot_velocity_evolution(data, u_d, tag="velocity_evolution"):
     plt.show()
     plt.close()
 
+def plot_multiple_ud_panel():
+    u_d_values = [1.5, 2, 3, 3.5, 3.6, 3.75, 4, 5, 6, 7]
+    filenames = [f"multiple_u_d/out_drift_ud{ud}/data_m01_ud{ud}.npz" for ud in u_d_values]
+    
+    fig, axes = plt.subplots(10, 1, figsize=(10, 12))
+    
+    for i, (filename, u_d) in enumerate(zip(filenames, u_d_values)):
+        try:
+            data = load_data(filename)
+            n_t = data['n_t']
+            t = data['t']
+            L = data['L']
+            
+            x = np.linspace(0, L, n_t.shape[0], endpoint=False)
+            n_final = n_t[:, -1]
+            
+            axes[i].plot(x, n_final, 'b-', linewidth=1.5)
+            axes[i].set_ylabel(f'$u_d={u_d}$')
+            axes[i].grid(True, alpha=0.3)
+            axes[i].set_xlim(0, L)
+            
+            if i == 5:
+                axes[i].set_xlabel('$x$')
+            
+        except Exception as e:
+            print(f"Error loading {filename}: {e}")
+            axes[i].text(0.5, 0.5, f'Error loading u_d={u_d}', 
+                        transform=axes[i].transAxes, ha='center', va='center')
+    
+    plt.suptitle('Final density profiles $n(x,t_{final})$ for different $u_d$', fontsize=14)
+    plt.tight_layout()
+    
+    os.makedirs("multiple_u_d", exist_ok=True)
+    plt.savefig("multiple_u_d/final_profiles_panel.png", dpi=160, bbox_inches='tight')
+    plt.savefig("multiple_u_d/final_profiles_panel.pdf", dpi=160, bbox_inches='tight')
+    plt.show()
+    plt.close()
+
 if __name__ == "__main__":
+    # Single file analysis
     filename = "out_drift/data_m01_m1.npz"
     data = load_data(filename)
     
     u_d = data['meta'].get('u_d', 20.0)
     print(u_d)
-    plot_spacetime_lab(data)
-    plot_spacetime_comoving(data, u_d)
-    plot_snapshots(data)
-    plot_fft_compare(data)
-    plot_velocity_detection(data, u_d)
-    plot_velocity_evolution(data, u_d)
+    # plot_spacetime_lab(data)
+    # plot_spacetime_comoving(data, u_d)
+    # plot_snapshots(data)
+    # plot_fft_compare(data)
+    # plot_velocity_detection(data, u_d)
+    # plot_velocity_evolution(data, u_d)
+    
+    # Multiple u_d panel
+    plot_multiple_ud_panel()
     
     print("All plots generated!")
