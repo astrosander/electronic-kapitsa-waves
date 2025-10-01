@@ -385,6 +385,7 @@ def plot_velocity_vs_ud(data_files, tag="velocity_vs_ud"):
     """Plot measured velocity (spatial shifting) vs target u_d at t=t_final"""
     u_d_values = []
     measured_velocities = []
+    amplitudes = []
     
     for filename, u_d in data_files:
         try:
@@ -426,8 +427,13 @@ def plot_velocity_vs_ud(data_files, tag="velocity_vs_ud"):
             shift_opt = shifts[max_idx]
             u_drift = shift_opt / (t2 - t1)
             
+            # Calculate amplitude at t_final
+            n_final = n_t[:, -1]
+            amplitude = np.max(n_final) - np.min(n_final)
+            
             u_d_values.append(abs(u_d))
             measured_velocities.append(u_drift)
+            amplitudes.append(amplitude)
             
         except Exception as e:
             continue
@@ -438,14 +444,26 @@ def plot_velocity_vs_ud(data_files, tag="velocity_vs_ud"):
     # Convert to numpy arrays
     u_d_values = np.array(u_d_values)
     measured_velocities = np.array(measured_velocities)
+    amplitudes = np.array(amplitudes)
     
-    # Create simple plot
-    plt.figure(figsize=(8, 6))
-    plt.plot(u_d_values, np.abs(measured_velocities), 'bo-', linewidth=2, markersize=8)
-    # plt.plot(np.abs(u_d_values), np.abs(u_d_values), 'r--', linewidth=2)
-    plt.xlabel('$u_d$')
-    plt.ylabel('$u_d^{\\text{shifted}}$')
-    plt.grid(True, alpha=0.3)
+    # Create plots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    
+    # Plot 1: Velocity vs u_d
+    ax1.plot(u_d_values, np.abs(measured_velocities), 'bo-', linewidth=2, markersize=8)
+    ax1.set_xlabel('$u_d$')
+    ax1.set_ylabel('$u_d^{\\text{shifted}}$')
+    ax1.set_title('Velocity vs $u_d$')
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot 2: Amplitude vs u_d
+    ax2.plot(u_d_values, amplitudes, 'ro-', linewidth=2, markersize=8)
+    ax2.set_xlabel('$u_d$')
+    ax2.set_ylabel('Amplitude = $n_{\\max} - n_{\\min}$')
+    ax2.set_title('Amplitude vs $u_d$')
+    ax2.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
     
     # Save the plot
     os.makedirs("multiple_u_d", exist_ok=True)
@@ -454,10 +472,10 @@ def plot_velocity_vs_ud(data_files, tag="velocity_vs_ud"):
     plt.show()
     plt.close()
     
-    return u_d_values, measured_velocities
+    return u_d_values, measured_velocities, amplitudes
 
 def plot_multiple_ud_panel():
-    u_d_values = [1.5, 2, 3, 3.5, 3.6, 3.75, 4, 5, 6, 7]
+    u_d_values = [1.25, 1.3,1.4,1.41,1.415,1.42, 1.45,1.5, 2, 3]
     filenames = [f"multiple_u_d/out_drift_ud{ud}/data_m01_ud{ud}.npz" for ud in u_d_values]
     
     fig, axes = plt.subplots(10, 1, figsize=(10, 16))
@@ -494,7 +512,7 @@ def plot_multiple_ud_panel():
     os.makedirs("multiple_u_d", exist_ok=True)
     plt.savefig("multiple_u_d/final_profiles_panel.png", dpi=160, bbox_inches='tight')
     plt.savefig("multiple_u_d/final_profiles_panel.svg", dpi=160, bbox_inches='tight')
-    # plt.show()
+    plt.show()
     plt.close()
 
 if __name__ == "__main__":
@@ -513,9 +531,9 @@ if __name__ == "__main__":
     # plot_velocity_field(data, u_d)
     
     # Velocity vs u_d analysis
-    # u_d_values = [1.5, 2, 3, 3.5, 3.6, 3.75, 4, 5, 6, 7]
-    # data_files = [(f"multiple_u_d/out_drift_ud{ud}/data_m01_ud{ud}.npz", ud) for ud in u_d_values]
-    # plot_velocity_vs_ud(data_files)
+    u_d_values = [0.75, 1.0,1.1, 1.2,1.3,1.4,1.45, 1.5, 2, 3, 3.5, 3.6, 3.75, 4, 5, 6, 7]
+    data_files = [(f"multiple_u_d/out_drift_ud{ud}/data_m01_ud{ud}.npz", ud) for ud in u_d_values]
+    plot_velocity_vs_ud(data_files)
     
     # Multiple u_d panel
     plot_multiple_ud_panel()

@@ -806,7 +806,7 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
 
 
 def run_multiple_ud():
-    u_d_values = [0.5,0.75,1.0,1.25,1.5]#3.5, 3.6, 3.75]#[5, 6, 7]#[3,3.5,3.6]
+    u_d_values = [1.415]#3.5, 3.6, 3.75]#[5, 6, 7]#[3,3.5,3.6]
     
     for u_d in u_d_values:
         print(f"\n{'='*50}")
