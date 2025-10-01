@@ -13,6 +13,14 @@ from scipy.fft import fft, ifft, fftfreq, set_workers
 from scipy.integrate import solve_ivp
 import glob
 from dataclasses import asdict
+
+# Import spectral analysis helpers
+try:
+    from spectral_analysis import load_spectral_evolution, plot_spectral_evolution, plot_spectral_growth_rates, compare_spectral_evolution
+    HAS_SPECTRAL_ANALYSIS = True
+except ImportError:
+    HAS_SPECTRAL_ANALYSIS = False
+    print("[Warning] spectral_analysis module not found. Install with: pip install -e .")
 try:
     from threadpoolctl import threadpool_limits
     HAS_THREADPOOLCTL = True
@@ -484,8 +492,37 @@ def initial_fields():
     return n0, p0
 
 def save_final_spectra(m, t, n_t, L, tag=""):
-    k0, P0 = _power_spectrum_1d(n_t[:, 0],  L)
-    kf, Pf = _power_spectrum_1d(n_t[:, -1], L)
+    """
+    Save the complete time evolution of power spectra.
+    
+    Parameters:
+    -----------
+    m : int
+        Mode number
+    t : array
+        Time array (all snapshots)
+    n_t : array (Nx, Nt)
+        Density field at all time snapshots
+    L : float
+        Domain length
+    tag : str
+        Output file tag
+    """
+    # Calculate spectra for all time snapshots
+    n_times = n_t.shape[1]
+    k_wave, P_first = _power_spectrum_1d(n_t[:, 0], L)  # Get k array size
+    n_modes = len(k_wave)
+    
+    # Preallocate array for all spectra
+    P_all = np.zeros((n_modes, n_times))
+    
+    print(f"[save] Computing spectra for {n_times} time snapshots...")
+    for i in range(n_times):
+        _, P_all[:, i] = _power_spectrum_1d(n_t[:, i], L)
+    
+    # Keep old variables for backward compatibility
+    k0, P0 = k_wave, P_all[:, 0]
+    kf, Pf = k_wave, P_all[:, -1]
 
     meta = asdict(par).copy()
     meta['outdir'] = str(par.outdir)
@@ -494,13 +531,18 @@ def save_final_spectra(m, t, n_t, L, tag=""):
     out = os.path.join(par.outdir, f"spec_m{int(m):02d}_{tag}.npz")
     np.savez_compressed(out,
                         m=int(m),
+                        t=t,  # Full time array
                         t_final=float(t[-1]),
                         L=float(L),
                         Nx=int(par.Nx),
-                        k0=k0, P0=P0,
-                        k=kf, P=Pf,
+                        k0=k0, P0=P0,  # First snapshot (backward compat)
+                        k=kf, P=Pf,     # Last snapshot (backward compat)
+                        k_wave=k_wave,  # Wavenumber array
+                        P_all=P_all,    # Full spectral evolution (n_modes, n_times)
                         meta=meta)
-    print(f"[save] spectra → {out}")
+    print(f"[save] Full spectral evolution → {out}")
+    print(f"[save]   k_wave shape: {k_wave.shape}, P_all shape: {P_all.shape}, t shape: {t.shape}")
+
 
 def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
     """Overlay t=0 and t=t_end spectra; optional vertical k_marks."""
