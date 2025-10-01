@@ -53,8 +53,8 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.5/2#/10#0.03
-    Dp: float = 0.1/2
+    Dn: float = 0.5#/10#0.03
+    Dp: float = 0.1
 
     J0: float = 1.0#0.04
     sigma_J: float = 2.0**1/2#6.0
@@ -66,13 +66,13 @@ class P:
     nbar_sigma: float = 120.0
 
     L: float = 10.0
-    Nx: int = 1512#2524#1024
+    Nx: int = 812#1512#2524#1024
     t_final: float = 10.0
-    n_save: int = 200#200  # Reduced for speed
+    n_save: int = 200#200#200  # Reduced for speed
     # rtol: float = 5e-7
     # atol: float = 5e-9
-    rtol = 1e-2  # Relaxed for speed
-    atol = 1e-5  # Relaxed for speed
+    rtol = 1e-3  # Relaxed for speed
+    atol = 1e-7  # Relaxed for speed
     n_floor: float = 1e-7
     dealias_23: bool = True
 
@@ -623,14 +623,24 @@ def run_once(tag="seed_mode"):
             with set_workers(NTHREADS):
                 sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time),
                                 (0.0, par.t_final), y0, t_eval=t_eval,
-                                method="DOP853", rtol=par.rtol, atol=par.atol,
-                                max_step=0.05, vectorized=False)#BDF
+                                method="BDF", rtol=par.rtol, atol=par.atol)
     else:
         with set_workers(NTHREADS):
             sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time),
                             (0.0, par.t_final), y0, t_eval=t_eval,
-                            method="DOP853", rtol=par.rtol, atol=par.atol,
-                            max_step=0.05, vectorized=False)#BDF
+                            method="BDF", rtol=par.rtol, atol=par.atol)
+
+
+    #             sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time),
+    #                             (0.0, par.t_final), y0, t_eval=t_eval,
+    #                             method="BDF", rtol=par.rtol, atol=par.atol,
+    #                             max_step=0.05, vectorized=False)#BDF
+    # else:
+    #     with set_workers(NTHREADS):
+    #         sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time),
+    #                         (0.0, par.t_final), y0, t_eval=t_eval,
+    #                         method="BDF", rtol=par.rtol, atol=par.atol,
+    #                         max_step=0.05, vectorized=False)#BDF
     
     total_wall_time = time.time() - start_wall_time
     print(f"\n[Simulation] Completed successfully!")

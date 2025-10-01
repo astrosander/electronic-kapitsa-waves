@@ -131,7 +131,7 @@ def plot_velocity_detection(data, u_d, tag="velocity_detection"):
     L = data['L']
     m = data['m']
     
-    idx_t1 = -7
+    idx_t1 = -2
     idx_t2 = -1
     
     n_t1 = n_t[:, idx_t1]
@@ -146,12 +146,14 @@ def plot_velocity_detection(data, u_d, tag="velocity_detection"):
     dn_t2 = n_t2 - np.mean(n_t2)
     
     n_shifts = len(n_t1)
-    shifts = np.arange(n_shifts) * dx
-    correlations = np.zeros(n_shifts)
+    shifts = np.arange(-n_shifts//2, n_shifts//2) * dx
+    correlations = np.zeros(len(shifts))
     
     for i, shift in enumerate(shifts):
-        x_shifted = (x + shift) % L
-        dn_t1_shifted = np.interp(x, x_shifted, dn_t1)
+        if shift >= 0:
+            dn_t1_shifted = np.roll(dn_t1, -int(shift/dx))
+        else:
+            dn_t1_shifted = np.roll(dn_t1, int(-shift/dx))
         correlations[i] = np.corrcoef(dn_t1_shifted, dn_t2)[0, 1]
     
     max_idx = np.argmax(correlations)
@@ -159,8 +161,10 @@ def plot_velocity_detection(data, u_d, tag="velocity_detection"):
     corr_max = correlations[max_idx]
     u_drift = shift_opt / (t2 - t1)
     
-    x_shifted = (x + shift_opt) % L
-    n_t1_shifted = np.interp(x, x_shifted, n_t1)
+    if shift_opt >= 0:
+        n_t1_shifted = np.roll(n_t1, -int(shift_opt/dx))
+    else:
+        n_t1_shifted = np.roll(n_t1, int(-shift_opt/dx))
     
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
     
