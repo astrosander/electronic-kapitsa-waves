@@ -200,12 +200,21 @@ def plot_velocity_detection(data, u_d, tag="velocity_detection"):
 
 def plot_velocity_evolution(data, u_d, tag="velocity_evolution"):
     n_t = data['n_t']
+    p_t = data['p_t']
     t = data['t']
     L = data['L']
     m = data['m']
+    meta = data['meta']
+    
+    m_par = meta.get('m', 1.0)
+    n_floor = meta.get('n_floor', 1e-7)
     
     x = np.linspace(0, L, n_t.shape[0], endpoint=False)
     dx = L / len(x)
+    
+    n_eff_t = np.maximum(n_t, n_floor)
+    v_t = p_t / (m_par * n_eff_t)
+    u_momentum_t = np.mean(v_t, axis=0)
     
     n_times = len(t)
     u_drift_t = np.zeros(n_times - 1)
@@ -239,7 +248,8 @@ def plot_velocity_evolution(data, u_d, tag="velocity_evolution"):
     
     t_mid = (t[:-1] + t[1:]) / 2
     plt.figure(figsize=(8, 5))
-    plt.plot(t_mid, u_drift_t, 'b-', linewidth=2, label='Measured $u_d$')
+    plt.plot(t_mid, -u_drift_t, 'b-', linewidth=2, label='Measured $u_d$ (shift method)')
+    plt.plot(t, u_momentum_t, 'r-', linewidth=2, label='$\\langle v \\rangle$ (momentum)')
     # plt.axhline(y=u_d, color='r', linestyle='--', linewidth=2, label=f'Target $u_d={u_d}$')
     plt.xlabel('$t$')
     plt.ylabel('$u_d$')
