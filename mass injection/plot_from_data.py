@@ -429,15 +429,15 @@ if __name__ == "__main__":
     
     u_d = data['meta'].get('u_d', 20.0)
     print(u_d)
-    plot_spacetime_lab(data)
-    plot_spacetime_comoving(data, u_d)
-    plot_snapshots(data)
-    plot_fft_compare(data)
-    plot_velocity_detection(data, u_d)
-    plot_velocity_evolution(data, u_d)
-    plot_velocity_field(data, u_d)
+    # plot_spacetime_lab(data)
+    # plot_spacetime_comoving(data, u_d)
+    # plot_snapshots(data)
+    # plot_fft_compare(data)
+    # plot_velocity_detection(data, u_d)
+    # plot_velocity_evolution(data, u_d)
+    # plot_velocity_field(data, u_d)
     
     # Multiple u_d panel
-    # plot_multiple_ud_panel()
+    plot_multiple_ud_panel()
     
     print("All plots generated!")
