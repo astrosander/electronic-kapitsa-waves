@@ -381,6 +381,81 @@ def plot_velocity_field(data, u_d, tag="velocity_field"):
         v_max = np.max(v_slice)
         print(f"  t={t_val:.2f}: <v>={v_mean:.3f}, σ_v={v_std:.3f}, v_range=[{v_min:.3f}, {v_max:.3f}]")
 
+def plot_velocity_vs_ud(data_files, tag="velocity_vs_ud"):
+    """Plot measured velocity (spatial shifting) vs target u_d at t=t_final"""
+    u_d_values = []
+    measured_velocities = []
+    
+    for filename, u_d in data_files:
+        try:
+            data = load_data(filename)
+            n_t = data['n_t']
+            t = data['t']
+            L = data['L']
+            
+            # Use last two time points for velocity calculation
+            idx_t1 = -2
+            idx_t2 = -1
+            
+            n_t1 = n_t[:, idx_t1]
+            n_t2 = n_t[:, idx_t2]
+            t1 = t[idx_t1]
+            t2 = t[idx_t2]
+            
+            x = np.linspace(0, L, len(n_t1), endpoint=False)
+            dx = L / len(n_t1)
+            
+            # Detrend the data
+            dn_t1 = n_t1 - np.mean(n_t1)
+            dn_t2 = n_t2 - np.mean(n_t2)
+            
+            # Calculate correlation for different shifts
+            n_shifts = len(n_t1)
+            shifts = np.arange(-n_shifts//2, n_shifts//2) * dx
+            correlations = np.zeros(len(shifts))
+            
+            for i, shift in enumerate(shifts):
+                if shift >= 0:
+                    dn_t1_shifted = np.roll(dn_t1, -int(shift/dx))
+                else:
+                    dn_t1_shifted = np.roll(dn_t1, int(-shift/dx))
+                correlations[i] = np.corrcoef(dn_t1_shifted, dn_t2)[0, 1]
+            
+            # Find optimal shift
+            max_idx = np.argmax(correlations)
+            shift_opt = shifts[max_idx]
+            u_drift = shift_opt / (t2 - t1)
+            
+            u_d_values.append(abs(u_d))
+            measured_velocities.append(u_drift)
+            
+        except Exception as e:
+            continue
+    
+    if not u_d_values:
+        return
+    
+    # Convert to numpy arrays
+    u_d_values = np.array(u_d_values)
+    measured_velocities = np.array(measured_velocities)
+    
+    # Create simple plot
+    plt.figure(figsize=(8, 6))
+    plt.plot(u_d_values, np.abs(measured_velocities), 'bo-', linewidth=2, markersize=8)
+    # plt.plot(np.abs(u_d_values), np.abs(u_d_values), 'r--', linewidth=2)
+    plt.xlabel('$u_d$')
+    plt.ylabel('$u_d^{\\text{shifted}}$')
+    plt.grid(True, alpha=0.3)
+    
+    # Save the plot
+    os.makedirs("multiple_u_d", exist_ok=True)
+    plt.savefig(f"multiple_u_d/{tag}.png", dpi=160, bbox_inches='tight')
+    plt.savefig(f"multiple_u_d/{tag}.pdf", dpi=160, bbox_inches='tight')
+    plt.show()
+    plt.close()
+    
+    return u_d_values, measured_velocities
+
 def plot_multiple_ud_panel():
     u_d_values = [1.5, 2, 3, 3.5, 3.6, 3.75, 4, 5, 6, 7]
     filenames = [f"multiple_u_d/out_drift_ud{ud}/data_m01_ud{ud}.npz" for ud in u_d_values]
@@ -436,6 +511,11 @@ if __name__ == "__main__":
     # plot_velocity_detection(data, u_d)
     # plot_velocity_evolution(data, u_d)
     # plot_velocity_field(data, u_d)
+    
+    # Velocity vs u_d analysis
+    # u_d_values = [1.5, 2, 3, 3.5, 3.6, 3.75, 4, 5, 6, 7]
+    # data_files = [(f"multiple_u_d/out_drift_ud{ud}/data_m01_ud{ud}.npz", ud) for ud in u_d_values]
+    # plot_velocity_vs_ud(data_files)
     
     # Multiple u_d panel
     plot_multiple_ud_panel()

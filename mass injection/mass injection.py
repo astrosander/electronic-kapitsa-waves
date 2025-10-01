@@ -806,7 +806,7 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
 
 
 def run_multiple_ud():
-    u_d_values = [3]#[5, 6, 7]#[3,3.5,3.6]
+    u_d_values = [0.5,0.75,1.0,1.25,1.5]#3.5, 3.6, 3.75]#[5, 6, 7]#[3,3.5,3.6]
     
     for u_d in u_d_values:
         print(f"\n{'='*50}")
@@ -815,7 +815,7 @@ def run_multiple_ud():
         
         par.u_d = u_d
         par.outdir = f"multiple_u_d/out_drift_ud{u_d}"
-        par.t_final = 200.0
+        par.t_final = 500.0
         par.n_save = 200
         
         print(f"Parameters: u_d={par.u_d}, t_final={par.t_final}, Nx={par.Nx}")
