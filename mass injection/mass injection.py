@@ -76,9 +76,9 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 10e-3
+    seed_amp_n: float = 50e-3
     seed_mode: int = 1
-    seed_amp_p: float = 10e-3
+    seed_amp_p: float = 50e-3
 
     outdir: str = "out_drift"
     cmap: str = "inferno"
@@ -446,7 +446,7 @@ def initial_fields():
             kx2 = 2*np.pi*5 / par.L
             kx3 = 2*np.pi*8 / par.L
             kx4 = 2*np.pi*13 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)-np.cos(kx2 * x)+np.cos(kx3 * x)-np.cos(kx4 * x))
+            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x)+np.cos(kx3 * x)+np.cos(kx4 * x))
         if par.seed_mode == 3:
             kx1 = 2*np.pi*8 / par.L
             kx2 = 2*np.pi*13 / par.L
@@ -474,7 +474,7 @@ def initial_fields():
             kx2 = 2*np.pi*5 / par.L
             kx3 = 2*np.pi*8 / par.L
             kx4 = 2*np.pi*13 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)-np.cos(kx2 * x)+np.cos(kx3 * x)-np.cos(kx4 * x))
+            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x)+np.cos(kx3 * x)+np.cos(kx4 * x))
         if par.seed_mode == 3:
             kx1 = 2*np.pi*8 / par.L
             kx2 = 2*np.pi*13 / par.L
@@ -808,9 +808,10 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
 
 
 def run_multiple_ud():
-    u_d_values = [6.5, 6.75, 7.5, 8.0]#0.5, 0.75, 1.0, 1.25, 1.3, 1.4, 1.41, 1.415, 1.42, 1.45, 1.5, 1.75, 1.9, 2.0, 2.3, 2.49, 2.5, 2.6, 2.65, 2.7, 
+    u_d_values = [5.0, 6.0, 6.25, 6.5, 6.75, 7.5, 8.0]
     #3.5, 3.6, 3.75]#[5, 6, 7]#[3,3.5,3.6]
-    
+    #<=2.6:t=100
+    #<5.0:t=50
     for u_d in u_d_values:
         print(f"\n{'='*50}")
         print(f"Running simulation for u_d = {u_d}")
@@ -819,7 +820,7 @@ def run_multiple_ud():
         par.u_d = u_d
         par.outdir = f"multiple_u_d/out_drift_ud{u_d}"
         par.t_final = 10.0
-        par.n_save = 200
+        par.n_save = 2000
         
         print(f"Parameters: u_d={par.u_d}, t_final={par.t_final}, Nx={par.Nx}")
         
