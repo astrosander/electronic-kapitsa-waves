@@ -470,9 +470,11 @@ def initial_fields():
             kx2 = 2*np.pi*5 / par.L
             p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
         if par.seed_mode == 2:
-            kx1 = 2*np.pi*5 / par.L
-            kx2 = 2*np.pi*8 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+            kx1 = 2*np.pi*3 / par.L
+            kx2 = 2*np.pi*5 / par.L
+            kx3 = 2*np.pi*8 / par.L
+            kx4 = 2*np.pi*13 / par.L
+            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x)+np.cos(kx3 * x)+np.cos(kx4 * x))
         if par.seed_mode == 3:
             kx1 = 2*np.pi*8 / par.L
             kx2 = 2*np.pi*13 / par.L
@@ -806,7 +808,8 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
 
 
 def run_multiple_ud():
-    u_d_values = [2.49]#3.5, 3.6, 3.75]#[5, 6, 7]#[3,3.5,3.6]
+    u_d_values = [6.25, 6.5, 6.75, 7.5, 8.0]#0.5, 0.75, 1.0, 1.25, 1.3, 1.4, 1.41, 1.415, 1.42, 1.45, 1.5, 1.75, 1.9, 2.0, 2.3, 2.49, 2.5, 2.6, 2.65, 2.7, 2.75, 3.0, 3.0, 
+    #3.5, 3.6, 3.75]#[5, 6, 7]#[3,3.5,3.6]
     
     for u_d in u_d_values:
         print(f"\n{'='*50}")
@@ -815,8 +818,8 @@ def run_multiple_ud():
         
         par.u_d = u_d
         par.outdir = f"multiple_u_d/out_drift_ud{u_d}"
-        par.t_final = 100.0
-        par.n_save = 400
+        par.t_final = 10.0
+        par.n_save = 200
         
         print(f"Parameters: u_d={par.u_d}, t_final={par.t_final}, Nx={par.Nx}")
         
