@@ -76,9 +76,9 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 50e-3
+    seed_amp_n: float = 30e-3
     seed_mode: int = 1
-    seed_amp_p: float = 50e-3
+    seed_amp_p: float = 30e-3
 
     outdir: str = "out_drift"
     cmap: str = "inferno"
@@ -446,7 +446,7 @@ def initial_fields():
             kx2 = 2*np.pi*5 / par.L
             kx3 = 2*np.pi*8 / par.L
             kx4 = 2*np.pi*13 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)-np.cos(kx2 * x)+np.cos(kx3 * x)-np.cos(kx4 * x))
+            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x)+np.cos(kx3 * x)+np.cos(kx4 * x))
         if par.seed_mode == 3:
             kx1 = 2*np.pi*8 / par.L
             kx2 = 2*np.pi*13 / par.L
@@ -474,7 +474,7 @@ def initial_fields():
             kx2 = 2*np.pi*5 / par.L
             kx3 = 2*np.pi*8 / par.L
             kx4 = 2*np.pi*13 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)-np.cos(kx2 * x)+np.cos(kx3 * x)-np.cos(kx4 * x))
+            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x)+np.cos(kx3 * x)+np.cos(kx4 * x))
         if par.seed_mode == 3:
             kx1 = 2*np.pi*8 / par.L
             kx2 = 2*np.pi*13 / par.L
@@ -821,37 +821,34 @@ def run_multiple_ud():
     u_min = 1.4
     u_max = 8.0
     
-    # u_d_values = np.zeros(n_total)
+    u_d_values = np.zeros(n_total)
     
-    # # Segment 1: sqrt spacing in [1.4, 2.5] - density increases toward u_split
-    # # u = u_min + beta * sqrt(n)
-    # n1 = n_points[:n_split]
-    # beta1 = (u_split - u_min) / np.sqrt(n_split - 1) if n_split > 1 else 1.0
-    # u_d_values[:n_split] = u_min + beta1 * np.sqrt(n1)
+    # Segment 1: sqrt spacing in [1.4, 2.5] - density increases toward u_split
+    # u = u_min + beta * sqrt(n)
+    n1 = n_points[:n_split]
+    beta1 = (u_split - u_min) / np.sqrt(n_split - 1) if n_split > 1 else 1.0
+    u_d_values[:n_split] = u_min + beta1 * np.sqrt(n1)
     
-    # # Segment 2: quadratic spacing in [2.5, 8.0] - density decreases from u_split
-    # # u = u_split + alpha * n^2
-    # n2 = n_points[n_split:] - n_split
-    # alpha2 = (u_max - u_split) / (n_total - n_split - 1)**2 if (n_total - n_split) > 1 else 1.0
-    # u_d_values[n_split:] = u_split + alpha2 * n2**2
+    # Segment 2: quadratic spacing in [2.5, 8.0] - density decreases from u_split
+    # u = u_split + alpha * n^2
+    n2 = n_points[n_split:] - n_split
+    alpha2 = (u_max - u_split) / (n_total - n_split - 1)**2 if (n_total - n_split) > 1 else 1.0
+    u_d_values[n_split:] = u_split + alpha2 * n2**2
 
     
-    # print(f"[run_multiple_ud] Generated {len(u_d_values)} u_d values with max density near u_d={u_split}")
-    # print(f"[run_multiple_ud] Segment 1: {n_split} points in [{u_min:.2f}, {u_split:.2f}] using sqrt (β={beta1:.6f})")
-    # print(f"[run_multiple_ud] Segment 2: {n_total - n_split} points in [{u_split:.2f}, {u_max:.2f}] using quadratic (α={alpha2:.6f})")
-    # print(f"[run_multiple_ud] Range: [{u_d_values[0]:.4f}, {u_d_values[-1]:.4f}]")
-    # print(f"[run_multiple_ud] u_d values:\n{u_d_values}")
+    print(f"[run_multiple_ud] Generated {len(u_d_values)} u_d values with max density near u_d={u_split}")
+    print(f"[run_multiple_ud] Segment 1: {n_split} points in [{u_min:.2f}, {u_split:.2f}] using sqrt (β={beta1:.6f})")
+    print(f"[run_multiple_ud] Segment 2: {n_total - n_split} points in [{u_split:.2f}, {u_max:.2f}] using quadratic (α={alpha2:.6f})")
+    print(f"[run_multiple_ud] Range: [{u_d_values[0]:.4f}, {u_d_values[-1]:.4f}]")
+    print(f"[run_multiple_ud] u_d values:\n{u_d_values}")
     
-    u_d_values=[(2.14895+2.1201)/2, (2.20465+2.2315)/2]
-    print(u_d_values)
-    # [2.14895, 2.20465]
     # Print spacing to show density pattern
     spacing = np.diff(u_d_values)
     min_spacing_idx = np.argmin(spacing)
-    # print(f"\n[run_multiple_ud] Spacing analysis:")
-    # print(f"  Min spacing: Δu={spacing.min():.4f} at u_d≈{u_d_values[min_spacing_idx]:.3f} (highest density)")
-    # print(f"  Max spacing: Δu={spacing.max():.4f}")
-    # print(f"  Spacing around junction (n={n_split}): Δu={spacing[n_split-1]:.4f}")
+    print(f"\n[run_multiple_ud] Spacing analysis:")
+    print(f"  Min spacing: Δu={spacing.min():.4f} at u_d≈{u_d_values[min_spacing_idx]:.3f} (highest density)")
+    print(f"  Max spacing: Δu={spacing.max():.4f}")
+    print(f"  Spacing around junction (n={n_split}): Δu={spacing[n_split-1]:.4f}")
     
     for u_d in u_d_values:
         print(f"\n{'='*50}")

@@ -1,7 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import os
-import glob
 
 def load_data(filename):
     data = np.load(filename, allow_pickle=True)
@@ -14,70 +13,6 @@ def load_data(filename):
         'Nx': int(data['Nx']),
         'meta': data['meta'].item() if 'meta' in data else {}
     }
-
-def plot_spacetime_from_dir(dirname, u_d=None, cmap='inferno', t_range=None):
-    """Compact function to plot lab and comoving spacetime diagrams from a directory.
-    
-    Args:
-        dirname: Directory path (e.g., 'multiple_u_d/out_drift_ud2.1778')
-        u_d: Drift velocity for comoving frame (extracted from dirname if None)
-        cmap: Colormap name
-        t_range: Tuple (t_min, t_max) to filter time range, None for full range
-    """
-    # Find data file
-    data_files = glob.glob(f"{dirname}/data_*.npz")
-    if not data_files:
-        print(f"No data file found in {dirname}")
-        return
-    
-    # Load data 
-    data = load_data(data_files[0])
-    n_t, t, L = data['n_t'], data['t'], data['L']
-    
-    # Filter by time range if specified
-    if t_range is not None:
-        t_min, t_max = t_range
-        mask = (t >= t_min) & (t <= t_max)
-        n_t = n_t[:, mask]
-        t = t[mask]
-        print(f"Filtered time range: [{t.min():.2f}, {t.max():.2f}]")
-    
-    x = np.linspace(0, L, n_t.shape[0], endpoint=False)
-    extent = [x.min(), x.max(), t.min(), t.max()]
-    
-    # Extract u_d from dirname if not provided
-    if u_d is None:
-        import re
-        match = re.search(r'ud([\d.]+)', dirname)
-        u_d = float(match.group(1)) if match else 0.0
-    
-    # Plot lab frame
-    plt.figure(figsize=(9.6, 4.3))
-    plt.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, cmap=cmap)
-    plt.xlabel("x"); plt.ylabel("t"); plt.title(f"n(x,t) [lab] u_d={u_d:.4f}")
-    plt.colorbar(label="n"); plt.tight_layout()
-    plt.savefig(f"{dirname}/spacetime_lab_replot.png", dpi=160)
-    plt.savefig(f"{dirname}/spacetime_lab_replot.pdf", dpi=160)
-    print(f"Saved: {dirname}/spacetime_lab_replot.png")
-    plt.show()
-    plt.close()
-    
-    # Plot comoving frame
-    dx = x[1] - x[0]
-    n_co = np.empty_like(n_t)
-    for j, tj in enumerate(t):
-        shift = (u_d * tj) % L
-        s_idx = int(np.round(shift/dx)) % n_t.shape[0]
-        n_co[:, j] = np.roll(n_t[:, j], -s_idx)
-    
-    plt.figure(figsize=(9.6, 4.3))
-    plt.imshow(n_co.T, origin="lower", aspect="auto", extent=extent, cmap=cmap)
-    plt.xlabel("ξ = x - u_d t"); plt.ylabel("t"); plt.title(f"n(ξ,t) [comoving] u_d={u_d:.4f}")
-    plt.colorbar(label="n"); plt.tight_layout()
-    plt.savefig(f"{dirname}/spacetime_comoving_replot.png", dpi=160)
-    plt.savefig(f"{dirname}/spacetime_comoving_replot.pdf", dpi=160)
-    print(f"Saved: {dirname}/spacetime_comoving_replot.png")
-    plt.close()
 
 def _power_spectrum_1d(n_slice, L):
     N = n_slice.size
@@ -667,10 +602,6 @@ def find_available_simulations():
     return data_files
 
 if __name__ == "__main__":
-    # Quick spacetime plot from directory - COMPACT USAGE
-    # Plot only time range 50 < t < 100
-    # plot_spacetime_from_dir("multiple_u_d/out_drift_ud2.1778", t_range=(50, 100))
-    
     # Single file analysis
     filename = "out_drift/data_m01_m1_t10.npz"#"out_drift/data_m01_m1.npz"
     data = load_data(filename)
