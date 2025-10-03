@@ -626,6 +626,12 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
     # Organize data by label
     data_by_label = {label: {'u_d': [], 'u_true': [], 'n_pulses': [], 'frequency': []} for label in labels}
     
+    # Collect all data for interpolation
+    all_u_d = []
+    all_u_true = []
+    all_n_pulses = []
+    all_frequency = []
+    
     for data_label, u_d, data in all_data:
         n_t = data['n_t']
         t = data['t']
@@ -681,6 +687,12 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
         data_by_label[data_label]['u_true'].append(u_true)
         data_by_label[data_label]['n_pulses'].append(n_pulses)
         data_by_label[data_label]['frequency'].append(frequency)
+        
+        # Collect all data for interpolation
+        all_u_d.append(u_d)
+        all_u_true.append(u_true)
+        all_n_pulses.append(n_pulses)
+        all_frequency.append(frequency)
     
     # Create plots - more compact design similar to original velocity_vs_ud.png
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
@@ -723,6 +735,164 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
         # Plot 3: frequency vs u_d (points only, no lines, larger size)
         ax3.scatter(u_d_filtered, freq_filtered, marker=marker, color=color,
                    label=label, s=24, alpha=0.8)
+    
+    # Add smooth interpolation lines with specific ranges for each plot
+    if all_u_d:
+        from scipy.interpolate import UnivariateSpline
+        from scipy.ndimage import uniform_filter1d
+        
+        # Sort data for smooth line
+        sorted_indices = np.argsort(all_u_d)
+        u_d_sorted = np.array(all_u_d)[sorted_indices]
+        u_true_sorted = np.abs(np.array(all_u_true))[sorted_indices]  # Use absolute values
+        n_pulses_sorted = np.array(all_n_pulses)[sorted_indices]
+        freq_sorted = np.array(all_frequency)[sorted_indices]
+        
+        try:
+            # Plot 1: u_true vs u_d - interpolation for 2 < u_d < 8
+            mask1 = (u_d_sorted > 1.5) & (u_d_sorted < 8.0)
+            if np.sum(mask1) > 3:  # Need at least 4 points for spline
+                u_d_1 = u_d_sorted[mask1]
+                u_true_1 = u_true_sorted[mask1]
+                
+                # Use moving average for binning points at same u_d
+                u_d_unique = []
+                u_true_avg = []
+                tolerance = 0.01  # Group points within this tolerance
+                
+                i = 0
+                while i < len(u_d_1):
+                    # Find all points within tolerance
+                    mask_same = np.abs(u_d_1 - u_d_1[i]) < tolerance
+                    u_d_unique.append(np.mean(u_d_1[mask_same]))
+                    u_true_avg.append(np.mean(u_true_1[mask_same]))
+                    i = np.where(mask_same)[0][-1] + 1
+                
+                u_d_unique = np.array(u_d_unique)
+                u_true_avg = np.array(u_true_avg)
+                
+                if len(u_d_unique) > 3:
+                    # Much stronger smoothing to avoid fluctuations
+                    spline_u_true = UnivariateSpline(u_d_unique, u_true_avg, s=len(u_d_unique)*2.0, k=5)
+                    u_d_smooth_1 = np.linspace(u_d_unique.min(), u_d_unique.max(), 200)
+                    u_true_smooth = spline_u_true(u_d_smooth_1)
+                    ax1.plot(u_d_smooth_1, u_true_smooth, 'r-', linewidth=2.5, alpha=0.9, label='Mean trend', zorder=100)
+            
+            # Plot 2: n_pulses vs u_d - two separate interpolations
+            # First segment: 1.0 <= u_d <= 2.5
+            mask2a = (u_d_sorted >= 1.0) & (u_d_sorted <= 2.5)
+            if np.sum(mask2a) > 3:
+                u_d_2a = u_d_sorted[mask2a]
+                n_pulses_2a = n_pulses_sorted[mask2a]
+                
+                # Bin and average
+                u_d_unique_2a = []
+                n_pulses_avg_2a = []
+                i = 0
+                tolerance = 0.01
+                while i < len(u_d_2a):
+                    mask_same = np.abs(u_d_2a - u_d_2a[i]) < tolerance
+                    u_d_unique_2a.append(np.mean(u_d_2a[mask_same]))
+                    n_pulses_avg_2a.append(np.mean(n_pulses_2a[mask_same]))
+                    i = np.where(mask_same)[0][-1] + 1
+                
+                u_d_unique_2a = np.array(u_d_unique_2a)
+                n_pulses_avg_2a = np.array(n_pulses_avg_2a)
+                
+                if len(u_d_unique_2a) > 3:
+                    # Increased smoothing parameter to reduce fluctuations
+                    spline_n_pulses_a = UnivariateSpline(u_d_unique_2a, n_pulses_avg_2a, s=len(u_d_unique_2a)*1.5, k=5)
+                    u_d_smooth_2a = np.linspace(u_d_unique_2a.min(), u_d_unique_2a.max(), 200)
+                    n_pulses_smooth_a = spline_n_pulses_a(u_d_smooth_2a)
+                    ax2.plot(u_d_smooth_2a, n_pulses_smooth_a, 'r-', linewidth=2.5, alpha=0.9, label='Mean trend', zorder=100)
+            
+            # Second segment: 2.5 <= u_d <= 5.0
+            mask2b = (u_d_sorted >= 2.5) & (u_d_sorted <= 8.0)
+            if np.sum(mask2b) > 3:
+                u_d_2b = u_d_sorted[mask2b]
+                n_pulses_2b = n_pulses_sorted[mask2b]
+                
+                # Bin and average
+                u_d_unique_2b = []
+                n_pulses_avg_2b = []
+                i = 0
+                tolerance = 0.01
+                while i < len(u_d_2b):
+                    mask_same = np.abs(u_d_2b - u_d_2b[i]) < tolerance
+                    u_d_unique_2b.append(np.mean(u_d_2b[mask_same]))
+                    n_pulses_avg_2b.append(np.mean(n_pulses_2b[mask_same]))
+                    i = np.where(mask_same)[0][-1] + 1
+                
+                u_d_unique_2b = np.array(u_d_unique_2b)
+                n_pulses_avg_2b = np.array(n_pulses_avg_2b)
+                
+                if len(u_d_unique_2b) > 2:
+                    # Use very strong smoothing and lower degree to avoid multiple extrema
+                    # k=2 (quadratic) ensures at most one extremum
+                    spline_n_pulses_b = UnivariateSpline(u_d_unique_2b, n_pulses_avg_2b, s=len(u_d_unique_2b)*8.0, k=5)
+                    u_d_smooth_2b = np.linspace(u_d_unique_2b.min(), u_d_unique_2b.max(), 200)
+                    n_pulses_smooth_b = spline_n_pulses_b(u_d_smooth_2b)
+                    ax2.plot(u_d_smooth_2b, n_pulses_smooth_b, 'r-', linewidth=2.5, alpha=0.9, zorder=100)
+            
+            # Plot 3: frequency vs u_d - two separate interpolations
+            # First segment: 1.0 <= u_d <= 2.5
+            mask3a = (u_d_sorted >= 1.0) & (u_d_sorted <= 2.5)
+            if np.sum(mask3a) > 3:
+                u_d_3a = u_d_sorted[mask3a]
+                freq_3a = freq_sorted[mask3a]
+                
+                # Bin and average
+                u_d_unique_3a = []
+                freq_avg_3a = []
+                i = 0
+                tolerance = 0.01
+                while i < len(u_d_3a):
+                    mask_same = np.abs(u_d_3a - u_d_3a[i]) < tolerance
+                    u_d_unique_3a.append(np.mean(u_d_3a[mask_same]))
+                    freq_avg_3a.append(np.mean(freq_3a[mask_same]))
+                    i = np.where(mask_same)[0][-1] + 1
+                
+                u_d_unique_3a = np.array(u_d_unique_3a)
+                freq_avg_3a = np.array(freq_avg_3a)
+                
+                if len(u_d_unique_3a) > 3:
+                    spline_freq_a = UnivariateSpline(u_d_unique_3a, freq_avg_3a, s=len(u_d_unique_3a)*1.5, k=5)
+                    u_d_smooth_3a = np.linspace(u_d_unique_3a.min(), u_d_unique_3a.max(), 200)
+                    freq_smooth_a = spline_freq_a(u_d_smooth_3a)
+                    ax3.plot(u_d_smooth_3a, freq_smooth_a, 'r-', linewidth=2.5, alpha=0.9, label='Mean trend', zorder=100)
+            
+            # Second segment: 2.5 <= u_d <= 5.0
+            mask3b = (u_d_sorted >= 2.5) & (u_d_sorted <= 8.0)
+            if np.sum(mask3b) > 3:
+                u_d_3b = u_d_sorted[mask3b]
+                freq_3b = freq_sorted[mask3b]
+                
+                # Bin and average
+                u_d_unique_3b = []
+                freq_avg_3b = []
+                i = 0
+                tolerance = 0.01
+                while i < len(u_d_3b):
+                    mask_same = np.abs(u_d_3b - u_d_3b[i]) < tolerance
+                    u_d_unique_3b.append(np.mean(u_d_3b[mask_same]))
+                    freq_avg_3b.append(np.mean(freq_3b[mask_same]))
+                    i = np.where(mask_same)[0][-1] + 1
+                
+                u_d_unique_3b = np.array(u_d_unique_3b)
+                freq_avg_3b = np.array(freq_avg_3b)
+                
+                if len(u_d_unique_3b) > 2:
+                    # Use very strong smoothing and lower degree to avoid multiple extrema
+                    # k=2 (quadratic) ensures at most one extremum
+                    spline_freq_b = UnivariateSpline(u_d_unique_3b, freq_avg_3b, s=len(u_d_unique_3b)*8.0, k=5)
+                    u_d_smooth_3b = np.linspace(u_d_unique_3b.min(), u_d_unique_3b.max(), 200)
+                    freq_smooth_b = spline_freq_b(u_d_smooth_3b)
+                    ax3.plot(u_d_smooth_3b, freq_smooth_b, 'r-', linewidth=2.5, alpha=0.9, zorder=100)
+            
+        except Exception as e:
+            print(f"Warning: Could not create smooth lines: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Plot 1: u_true vs u_d (exact labels from original)
     ax1.set_xlabel('$u_d$')
