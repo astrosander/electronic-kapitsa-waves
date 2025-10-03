@@ -17,7 +17,7 @@ L = 10.0#314.15936/1.5
 
 u_star = 0.37671861
 
-u_values = [20]#np.arange(0.40, 0.41, 0.1)#np.append(np.arange(0.4, 0.46, 0.01), u_star)
+u_values = np.arange(0.0, 8.1, 0.5)  # Range from 0.0 to 8.0 with step 0.5
 
 print(u_values)
 for u in u_values:
@@ -38,17 +38,17 @@ for u in u_values:
         omega1[i1] = (-1j * gamma + k * Pp + 1j * np.sqrt(Delta)) / 2 - 1j * eta_p * k**2
         omega2[i1] = (-1j * gamma + k * Pp - 1j * np.sqrt(Delta)) / 2 - 1j * eta_p * k**2
 
-    # Highlight u_star
+    # Highlight u_star and use colormap for other values
     lw = 2.5 if np.isclose(u, u_star) else 1.0
     label = f'$u_\\ast = {u:.2f}$' if np.isclose(u, u_star) else f'u = {u:.2f}'
-    color = 'k' if np.isclose(u, u_star) else None
+    color = 'k' if np.isclose(u, u_star) else plt.cm.viridis(u / 8.0)  # Use viridis colormap
     ax.plot(k_out, np.imag(omega1), label=label, linewidth=lw, color=color)
     
     for i in range(1, 11):
         k_intersect = i * 2 * np.pi / L
         if kmin <= k_intersect <= kmax:
             omega1_intersect = np.interp(k_intersect, k_out, np.imag(omega1))
-            ax.plot(k_intersect, omega1_intersect, 'ro', markersize=2, alpha=0.8)
+            # ax.plot(k_intersect, omega1_intersect, 'ro', markersize=2, alpha=0.8)
     
     # ax.plot(k_out, np.imag(omega2), linewidth=lw, color=color)
 
@@ -62,18 +62,20 @@ for u in u_values:
             fontsize=10,
             color='black'
         )
+
+# Calculate k_max for the last curve (u=8.0)
 mask = k_out >= 0
 k_right = k_out[mask]
 im1_right = np.imag(omega1)[mask]
 k_max_right = k_right[np.argmax(im1_right)]
-ax.axvline(k_max_right, color="blue", linestyle="--", linewidth=1.2,
-           label=f"max at k={k_max_right:.3f}")
+# ax.axvline(k_max_right, color="blue", linestyle="--", linewidth=1.2,
+#            label=f"max at k={k_max_right:.3f}")
 
 print(L)
 
 for i in range(1, 6):
     k_line = i * 2 * np.pi / L
-    ax.axvline(k_line, color="red", linestyle="--", linewidth=0.5, alpha=0.8, label=f"$k = {i}\\pi/{L:.0f}$" if i == 1 else "")
+    # ax.axvline(k_line, color="red", linestyle="--", linewidth=0.5, alpha=0.8, label=f"$k = {i}\\pi/{L:.0f}$" if i == 1 else "")
     print(k_line)
 
 k_line = 2 * np.pi / L
@@ -92,7 +94,23 @@ ax.set_xlabel('Wavenumber k')
 ax.set_ylabel('Instability increment')
 # ax.set_ylim([-5, 5])
 # ax.set_xlim([-20, 20])
-ax.legend(title='Drift velocity (u)')
+
+# Create a custom legend with selected curves
+selected_curves = [0.0, 2.0, 4.0, 6.0, 8.0]
+legend_elements = []
+for u in selected_curves:
+    if u in u_values:
+        idx = np.where(u_values == u)[0][0]
+        color = 'k' if np.isclose(u, u_star) else plt.cm.viridis(u / 8.0)
+        legend_elements.append(plt.Line2D([0], [0], color=color, linewidth=2, label=f'u = {u:.1f}'))
+
+ax.legend(handles=legend_elements, title='Drift velocity (u)', loc='upper right')
 ax.set_title('Instability increments vs Wavenumber')
+
+# Add colorbar
+sm = plt.cm.ScalarMappable(cmap=plt.cm.viridis, norm=plt.Normalize(vmin=0, vmax=8))
+sm.set_array([])
+cbar = plt.colorbar(sm, ax=ax)
+cbar.set_label('Drift velocity (u)')
 
 plt.tight_layout(); plt.savefig(f"linear_instability_increment.pdf", dpi=160); plt.savefig(f"linear_instability_increment.png", dpi=160); plt.show()#plt.close()
