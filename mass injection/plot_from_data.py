@@ -557,6 +557,307 @@ def plot_multiple_ud_panel(data_files=None):
     plt.show()
     plt.close()
 
+def load_multi_dataset(base_dirs, labels=None):
+    """Load data from multiple base directories for comparison.
+    
+    Args:
+        base_dirs: List of base directory paths
+        labels: Optional list of labels for each dataset
+        
+    Returns:
+        list: [(label, u_d, data_dict), ...] structure
+    """
+    import re
+    combined_data = []
+    
+    if labels is None:
+        labels = [os.path.basename(d) for d in base_dirs]
+    
+    for base_dir, label in zip(base_dirs, labels):
+        print(f"\nScanning {label}...")
+        
+        for item in os.listdir(base_dir):
+            if item.startswith("out_drift_ud"):
+                subdir = os.path.join(base_dir, item)
+                if not os.path.isdir(subdir):
+                    continue
+                    
+                # Extract u_d from directory name
+                match = re.search(r'ud([\d.]+)', item)
+                if not match:
+                    continue
+                u_d = float(match.group(1))
+                
+                # Find data file
+                data_files = [f for f in os.listdir(subdir) if f.startswith("data_") and f.endswith(".npz")]
+                if not data_files:
+                    continue
+                    
+                filepath = os.path.join(subdir, data_files[0])
+                try:
+                    data = load_data(filepath)
+                    combined_data.append((label, u_d, data))
+                    print(f"  Loaded u_d={u_d:.4f}")
+                except Exception as e:
+                    print(f"  Error loading {filepath}: {e}")
+    
+    return combined_data
+
+def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d"):
+    """Plot u_true, n_pulses, and frequency for combined datasets.
+    
+    Args:
+        base_dirs: List of base directory paths
+        labels: Optional custom labels for each dataset
+        outdir: Output directory for plots
+    """
+    from scipy.signal import find_peaks
+    
+    if labels is None:
+        labels = [os.path.basename(d) for d in base_dirs]
+    
+    # Load all data
+    all_data = load_multi_dataset(base_dirs, labels)
+    
+    if not all_data:
+        print("No data found!")
+        return
+    
+    # Organize data by label
+    data_by_label = {label: {'u_d': [], 'u_true': [], 'n_pulses': [], 'frequency': []} for label in labels}
+    
+    for data_label, u_d, data in all_data:
+        n_t = data['n_t']
+        t = data['t']
+        L = data['L']
+        
+        # Calculate u_true using spatial correlation
+        idx_t1 = -2
+        idx_t2 = -1
+        
+        n_t1 = n_t[:, idx_t1]
+        n_t2 = n_t[:, idx_t2]
+        t1 = t[idx_t1]
+        t2 = t[idx_t2]
+        
+        dx = L / len(n_t1)
+        
+        # Detrend the data
+        dn_t1 = n_t1 - np.mean(n_t1)
+        dn_t2 = n_t2 - np.mean(n_t2)
+        
+        # Calculate correlation for different shifts
+        n_shifts = len(n_t1)
+        shifts = np.arange(-n_shifts//2, n_shifts//2) * dx
+        correlations = np.zeros(len(shifts))
+        
+        for i, shift in enumerate(shifts):
+            if shift >= 0:
+                dn_t1_shifted = np.roll(dn_t1, -int(shift/dx))
+            else:
+                dn_t1_shifted = np.roll(dn_t1, int(-shift/dx))
+            correlations[i] = np.corrcoef(dn_t1_shifted, dn_t2)[0, 1]
+        
+        # Find optimal shift
+        max_idx = np.argmax(correlations)
+        shift_opt = shifts[max_idx]
+        u_true = shift_opt / (t2 - t1)
+        
+        # Calculate density of pulses (count peaks in final density profile)
+        n_final = n_t[:, -1]
+        n_mean = np.mean(n_final)
+        n_std = np.std(n_final)
+        
+        # Find peaks (local maxima above threshold)
+        threshold = n_mean + 0.5 * n_std
+        peaks, _ = find_peaks(n_final, height=threshold, distance=5)
+        N_pulses = len(peaks)
+        n_pulses = N_pulses / L
+        
+        # Calculate frequency
+        frequency = abs(u_true) * n_pulses
+        
+        data_by_label[data_label]['u_d'].append(u_d)
+        data_by_label[data_label]['u_true'].append(u_true)
+        data_by_label[data_label]['n_pulses'].append(n_pulses)
+        data_by_label[data_label]['frequency'].append(frequency)
+    
+    # Create plots - more compact design similar to original velocity_vs_ud.png
+    fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
+    
+    colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#FF7F00']
+    markers = ['o', 's', '^', 'D', 'v']
+    
+    for idx, label in enumerate(labels):
+        if not data_by_label[label]['u_d']:
+            continue
+        
+        # Filter for u_d > 1.4
+        u_d_arr = np.array(data_by_label[label]['u_d'])
+        u_true_arr = np.array(data_by_label[label]['u_true'])
+        n_pulses_arr = np.array(data_by_label[label]['n_pulses'])
+        freq_arr = np.array(data_by_label[label]['frequency'])
+        
+        mask = u_d_arr > 1.41
+        
+        if not np.any(mask):
+            continue
+        
+        u_d_filtered = u_d_arr[mask]
+        u_true_filtered = u_true_arr[mask]
+        n_pulses_filtered = n_pulses_arr[mask]
+        freq_filtered = freq_arr[mask]
+        
+        color = colors[idx % len(colors)]
+        marker = markers[idx % len(markers)]
+        
+        # Plot 1: u_true vs u_d (similar to original)
+        ax1.plot(u_d_filtered, np.abs(u_true_filtered), marker=marker, color=color,
+                 label=label, linewidth=2, markersize=6, alpha=0.8)
+        
+        # Plot 2: n_pulses vs u_d (similar to original)
+        ax2.plot(u_d_filtered, n_pulses_filtered, marker=marker, color=color,
+                 label=label, linewidth=2, markersize=6, alpha=0.8)
+        
+        # Plot 3: frequency vs u_d (similar to original)
+        ax3.plot(u_d_filtered, freq_filtered, marker=marker, color=color,
+                 label=label, linewidth=2, markersize=6, alpha=0.8)
+    
+    # Plot 1: u_true vs u_d (exact labels from original)
+    ax1.plot([], [], 'bo-', linewidth=2, markersize=8, label='_nolegend_')  # Dummy for style
+    ax1.set_xlabel('$u_d$')
+    ax1.set_ylabel('$u_{\\text{true}}$')
+    ax1.set_title('$u_{\\text{true}}$ vs $u_d$')
+    ax1.legend(fontsize=9, ncol=1, loc='best')
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot 2: n_pulses vs u_d (exact labels from original)
+    ax2.plot([], [], 'ro-', linewidth=2, markersize=8, label='_nolegend_')  # Dummy for style
+    ax2.set_xlabel('$u_d$')
+    ax2.set_ylabel('$n_{\\text{pulses}} = N/L$')
+    ax2.set_title('$n_{\\text{pulses}}$ vs $u_d$')
+    ax2.legend(fontsize=9, ncol=1, loc='best')
+    ax2.grid(True, alpha=0.3)
+    
+    # Plot 3: frequency vs u_d (exact labels from original)
+    ax3.plot([], [], 'go-', linewidth=2, markersize=8, label='_nolegend_')  # Dummy for style
+    ax3.set_xlabel('$u_d$')
+    ax3.set_ylabel('$f = u_{\\text{true}} \\cdot n_{\\text{pulses}}$')
+    ax3.set_title('$f$ vs $u_d$')
+    ax3.legend(fontsize=9, ncol=1, loc='best')
+    ax3.grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    os.makedirs(outdir, exist_ok=True)
+    plt.savefig(f"{outdir}/velocity_vs_ud_combined.png", dpi=200, bbox_inches='tight')
+    plt.savefig(f"{outdir}/velocity_vs_ud_combined.pdf", dpi=200, bbox_inches='tight')
+    print(f"\nSaved velocity analysis to {outdir}/velocity_vs_ud_combined.png")
+    plt.show()
+    plt.close()
+    
+    return data_by_label
+
+def plot_combined_comparison(base_dirs, labels=None, outdir="multiple_u_d"):
+    """Compare results across multiple parameter sets.
+    
+    Args:
+        base_dirs: List of base directory paths
+        labels: Optional custom labels for each dataset
+        outdir: Output directory for combined plots
+    """
+    if labels is None:
+        labels = [os.path.basename(d) for d in base_dirs]
+    
+    # Load all data
+    all_data = load_multi_dataset(base_dirs, labels)
+    
+    if not all_data:
+        print("No data found!")
+        return
+    
+    print(f"\nTotal data points loaded: {len(all_data)}")
+    
+    # Organize data by label
+    data_by_label = {label: {'u_d': [], 'u_measured': [], 'amplitude': []} for label in labels}
+    
+    for data_label, u_d, data in all_data:
+        n_t = data['n_t']
+        p_t = data['p_t']
+        
+        # Calculate measured velocity (from momentum)
+        n_eff = np.maximum(n_t, 1e-7)
+        v_t = p_t / n_eff
+        u_measured = np.mean(v_t[:, -1])
+        
+        # Calculate max amplitude
+        nbar = np.mean(n_t[:, -1])
+        max_amp = np.max(n_t[:, -1]) - nbar
+        
+        data_by_label[data_label]['u_d'].append(u_d)
+        data_by_label[data_label]['u_measured'].append(u_measured)
+        data_by_label[data_label]['amplitude'].append(max_amp)
+    
+    # Prepare plots
+    fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True)
+    
+    colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#FF7F00']
+    markers = ['o', 's', '^', 'D', 'v']
+    
+    all_u_d = []
+    
+    for idx, label in enumerate(labels):
+        if not data_by_label[label]['u_d']:
+            print(f"Warning: No data for {label}")
+            continue
+            
+        u_d_list = data_by_label[label]['u_d']
+        u_measured_list = data_by_label[label]['u_measured']
+        max_amplitude_list = data_by_label[label]['amplitude']
+        
+        all_u_d.extend(u_d_list)
+        
+        color = colors[idx % len(colors)]
+        marker = markers[idx % len(markers)]
+        
+        print(f"\nPlotting {label}: {len(u_d_list)} points")
+        print(f"  u_d range: [{min(u_d_list):.2f}, {max(u_d_list):.2f}]")
+        
+        # Plot velocity comparison with visible points
+        axes[0].plot(u_d_list, u_measured_list, marker=marker, color=color, 
+                     label=label, linewidth=1.5, markersize=8, markeredgewidth=1.5,
+                     markeredgecolor='white', alpha=0.9, linestyle='-')
+        
+        # Plot amplitude with visible points
+        axes[1].plot(u_d_list, max_amplitude_list, marker=marker, color=color,
+                     label=label, linewidth=1.5, markersize=8, markeredgewidth=1.5,
+                     markeredgecolor='white', alpha=0.9, linestyle='-')
+    
+    # Add diagonal line for reference in velocity plot
+    if all_u_d:
+        u_min, u_max = min(all_u_d), max(all_u_d)
+        axes[0].plot([u_min, u_max], [u_min, u_max], 
+                     'k--', alpha=0.4, linewidth=2, label='$u_{measured} = u_d$')
+    
+    axes[0].set_ylabel('Measured velocity $\\langle u \\rangle$', fontsize=12)
+    axes[0].legend(fontsize=10, ncol=1, loc='best', framealpha=0.9)
+    axes[0].grid(True, alpha=0.3)
+    axes[0].set_title('Velocity and Amplitude Comparison', fontsize=13, fontweight='bold')
+    
+    axes[1].set_xlabel('Target drift velocity $u_d$', fontsize=12)
+    axes[1].set_ylabel('Max amplitude $\\Delta n_{max}$', fontsize=12)
+    axes[1].legend(fontsize=10, ncol=1, loc='best', framealpha=0.9)
+    axes[1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    os.makedirs(outdir, exist_ok=True)
+    plt.savefig(f"{outdir}/combined_comparison.png", dpi=200, bbox_inches='tight')
+    plt.savefig(f"{outdir}/combined_comparison.pdf", dpi=200, bbox_inches='tight')
+    print(f"\nSaved combined comparison to {outdir}/combined_comparison.png")
+    plt.show()
+    plt.close()
+    
+    return all_data
+
 def find_available_simulations():
     """Automatically find all available simulation files in out_drift_ud* subdirectories"""
     data_files = []
@@ -602,27 +903,43 @@ def find_available_simulations():
     return data_files
 
 if __name__ == "__main__":
-    # Single file analysis
-    filename = "out_drift/data_m01_m1_t10.npz"#"out_drift/data_m01_m1.npz"
-    data = load_data(filename)
+    # Compare results from three different parameter sets
+    base_dirs = [
+        "multiple_u_d/delta n=delta p=0.03(cos3x+cos5x+cos8x+cos13x)",
+        "multiple_u_d/delta n=delta p=0.05(cos3x+cos5x+cos8x+cos13x)",
+        "multiple_u_d/quadratic;delta n=delta p=0.05(cos3x+cos5x+cos8x+cos13x)"
+    ]
     
-    u_d = data['meta'].get('u_d', 20.0)
-    print(u_d)
-    # plot_spacetime_lab(data)
-    # plot_spacetime_comoving(data, u_d)
-    # plot_snapshots(data)
-    # plot_fft_compare(data)
-    # plot_velocity_detection(data, u_d)
-    # plot_velocity_evolution(data, u_d)
-    # plot_velocity_field(data, u_d)
+    custom_labels = [
+        "δn,δp = 0.03",
+        "δn,δp = 0.05 (uniform)",
+        "δn,δp = 0.05 (quadratic)"
+    ]
     
-    # Automatically find and analyze all available simulations
-    data_files = find_available_simulations()
-    if data_files:
-        plot_velocity_vs_ud(data_files)
-        # Multiple u_d panel
-        plot_multiple_ud_panel(data_files)
-    else:
-        print("No simulation files found!")
+    print("=" * 60)
+    print("VELOCITY ANALYSIS: Multiple Parameter Sets")
+    print("=" * 60)
     
-    print("All plots generated!")
+    # Plot velocity, pulse density, and frequency
+    print("Generating velocity analysis (u_true, n_pulses, frequency)...")
+    velocity_data = plot_combined_velocity_analysis(base_dirs, labels=custom_labels)
+    
+    print("\n" + "=" * 60)
+    print(f"Analysis complete! Generated velocity_vs_ud_combined.png")
+    print("=" * 60)
+    
+    # # Single file analysis (commented out)
+    # filename = "out_drift/data_m01_m1_t10.npz"
+    # data = load_data(filename)
+    # u_d = data['meta'].get('u_d', 20.0)
+    # print(u_d)
+    
+    # # Automatically find and analyze all available simulations (commented out)
+    # data_files = find_available_simulations()
+    # if data_files:
+    #     plot_velocity_vs_ud(data_files)
+    #     plot_multiple_ud_panel(data_files)
+    # else:
+    #     print("No simulation files found!")
+    
+    print("\nAll plots generated!")
