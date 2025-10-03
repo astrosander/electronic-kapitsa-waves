@@ -685,8 +685,10 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
     # Create plots - more compact design similar to original velocity_vs_ud.png
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
     
-    colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3', '#FF7F00']
-    markers = ['o', 's', '^', 'D', 'v']
+    # Same color for all datasets, different marker shapes
+    color = 'black'  # Single color for all datasets
+    markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h', 
+               'H', '+', 'x', 'X', '|']
     
     for idx, label in enumerate(labels):
         if not data_by_label[label]['u_d']:
@@ -708,43 +710,39 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
         n_pulses_filtered = n_pulses_arr[mask]
         freq_filtered = freq_arr[mask]
         
-        color = colors[idx % len(colors)]
         marker = markers[idx % len(markers)]
         
-        # Plot 1: u_true vs u_d (similar to original)
-        ax1.plot(u_d_filtered, np.abs(u_true_filtered), marker=marker, color=color,
-                 label=label, linewidth=2, markersize=6, alpha=0.8)
+        # Plot 1: u_true vs u_d (points only, no lines, larger size)
+        ax1.scatter(u_d_filtered, np.abs(u_true_filtered), marker=marker, color=color,
+                   label=label, s=24, alpha=0.8)
         
-        # Plot 2: n_pulses vs u_d (similar to original)
-        ax2.plot(u_d_filtered, n_pulses_filtered, marker=marker, color=color,
-                 label=label, linewidth=2, markersize=6, alpha=0.8)
+        # Plot 2: n_pulses vs u_d (points only, no lines, larger size)
+        ax2.scatter(u_d_filtered, n_pulses_filtered, marker=marker, color=color,
+                   label=label, s=24, alpha=0.8)
         
-        # Plot 3: frequency vs u_d (similar to original)
-        ax3.plot(u_d_filtered, freq_filtered, marker=marker, color=color,
-                 label=label, linewidth=2, markersize=6, alpha=0.8)
+        # Plot 3: frequency vs u_d (points only, no lines, larger size)
+        ax3.scatter(u_d_filtered, freq_filtered, marker=marker, color=color,
+                   label=label, s=24, alpha=0.8)
     
     # Plot 1: u_true vs u_d (exact labels from original)
-    ax1.plot([], [], 'bo-', linewidth=2, markersize=8, label='_nolegend_')  # Dummy for style
     ax1.set_xlabel('$u_d$')
     ax1.set_ylabel('$u_{\\text{true}}$')
     ax1.set_title('$u_{\\text{true}}$ vs $u_d$')
-    ax1.legend(fontsize=9, ncol=1, loc='best')
+    ax1.legend(fontsize=8, ncol=2, loc='best', framealpha=0.9)
     ax1.grid(True, alpha=0.3)
     
     # Plot 2: n_pulses vs u_d (exact labels from original)
-    ax2.plot([], [], 'ro-', linewidth=2, markersize=8, label='_nolegend_')  # Dummy for style
     ax2.set_xlabel('$u_d$')
     ax2.set_ylabel('$n_{\\text{pulses}} = N/L$')
     ax2.set_title('$n_{\\text{pulses}}$ vs $u_d$')
-    ax2.legend(fontsize=9, ncol=1, loc='best')
+    ax2.legend(fontsize=8, ncol=2, loc='best', framealpha=0.9)
     ax2.grid(True, alpha=0.3)
     
     # Plot 3: frequency vs u_d (exact labels from original)
-    ax3.plot([], [], 'go-', linewidth=2, markersize=8, label='_nolegend_')  # Dummy for style
     ax3.set_xlabel('$u_d$')
     ax3.set_ylabel('$f = u_{\\text{true}} \\cdot n_{\\text{pulses}}$')
     ax3.set_title('$f$ vs $u_d$')
-    ax3.legend(fontsize=9, ncol=1, loc='best')
+    ax3.legend(fontsize=8, ncol=2, loc='best', framealpha=0.9)
     ax3.grid(True, alpha=0.3)
     
     plt.tight_layout()
