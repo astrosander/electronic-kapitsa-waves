@@ -849,7 +849,9 @@ def run_multiple_ud():
     print(f"  Min spacing: Δu={spacing.min():.4f} at u_d≈{u_d_values[min_spacing_idx]:.3f} (highest density)")
     print(f"  Max spacing: Δu={spacing.max():.4f}")
     print(f"  Spacing around junction (n={n_split}): Δu={spacing[n_split-1]:.4f}")
-    
+
+    u_d_values=[1.5249, 1.5501, 1.6501, 1.7251]#[1.025,1.075,1.125,1.175,1.225,1.275,1.325,1.375,1.425,1.475,1.525,1.575,1.625,1.675,1.725,1.775,1.825,1.875,1.925,1.975]
+
     for u_d in u_d_values:
         print(f"\n{'='*50}")
         print(f"Running simulation for u_d = {u_d:.4f}")

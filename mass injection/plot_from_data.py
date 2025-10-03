@@ -461,7 +461,7 @@ def plot_velocity_vs_ud(data_files, tag="velocity_vs_ud"):
     frequency_values = np.array(frequency_values)
     
     # Filter for u_d > 1.4
-    mask = u_d_values > 1.41
+    mask = u_d_values > 0#1.41
     u_d_filtered = u_d_values[mask]
     u_true_filtered = u_true_values[mask]
     n_pulses_filtered = n_pulses_values[mask]
@@ -687,7 +687,7 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
     
     # Same color for all datasets, different marker shapes
     color = 'black'  # Single color for all datasets
-    markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h', 
+    markers = ['o', 's', '^', '*', 'v', '<', '>', 'p', '*', 'h', 
                'H', '+', 'x', 'X', '|']
     
     for idx, label in enumerate(labels):
@@ -700,7 +700,7 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
         n_pulses_arr = np.array(data_by_label[label]['n_pulses'])
         freq_arr = np.array(data_by_label[label]['frequency'])
         
-        mask = u_d_arr > 1.41
+        mask = u_d_arr > 0#1.41
         
         if not np.any(mask):
             continue
@@ -919,8 +919,8 @@ if __name__ == "__main__":
     print("=" * 60)
     
     # Plot velocity, pulse density, and frequency
-    print("Generating velocity analysis (u_true, n_pulses, frequency)...")
-    velocity_data = plot_combined_velocity_analysis(base_dirs, labels=custom_labels)
+    # print("Generating velocity analysis (u_true, n_pulses, frequency)...")
+    # velocity_data = plot_combined_velocity_analysis(base_dirs, labels=custom_labels)
     
     print("\n" + "=" * 60)
     print(f"Analysis complete! Generated velocity_vs_ud_combined.png")
@@ -932,12 +932,12 @@ if __name__ == "__main__":
     # u_d = data['meta'].get('u_d', 20.0)
     # print(u_d)
     
-    # # Automatically find and analyze all available simulations (commented out)
-    # data_files = find_available_simulations()
-    # if data_files:
-    #     plot_velocity_vs_ud(data_files)
-    #     plot_multiple_ud_panel(data_files)
-    # else:
-    #     print("No simulation files found!")
+    # Automatically find and analyze all available simulations (commented out)
+    data_files = find_available_simulations()
+    if data_files:
+        # plot_velocity_vs_ud(data_files)
+        plot_multiple_ud_panel(data_files)
+    else:
+        print("No simulation files found!")
     
     print("\nAll plots generated!")
