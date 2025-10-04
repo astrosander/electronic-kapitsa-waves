@@ -217,17 +217,30 @@ def plot_velocity_evolution(data, u_d, tag="velocity_evolution"):
     u_momentum_t = np.mean(v_t, axis=0)
     
     n_times = len(t)
-    dt_skip = 1
+    dt_skip = 3
 
     valid_indices = []
     u_drift_values = []
     t_mid_values = []
-    
+    n_peaks_values = []
+    amplitude_values = []
+    print(n_times)
     for i in range(0, n_times - dt_skip, dt_skip):
+        print(i)
+        # if i<1000:
+        #     break
         n_t1 = n_t[:, i]
         n_t2 = n_t[:, i + dt_skip]
         t1 = t[i]
         t2 = t[i + dt_skip]
+        
+        # Calculate number of peaks in n_t1
+        from scipy.signal import find_peaks
+        peaks, _ = find_peaks(n_t1, height=np.mean(n_t1), distance=5)
+        n_peaks = len(peaks)
+        
+        # Calculate amplitude (delta n = n_max - n_min)
+        amplitude = np.max(n_t1) - np.min(n_t1)
         
         dn_t1 = n_t1 - np.mean(n_t1)
         dn_t2 = n_t2 - np.mean(n_t2)
@@ -250,19 +263,40 @@ def plot_velocity_evolution(data, u_d, tag="velocity_evolution"):
         
         u_drift_values.append(abs(u_drift))
         t_mid_values.append((t1 + t2) / 2)
+        n_peaks_values.append(n_peaks)
+        amplitude_values.append(amplitude)
     
     u_drift_t = np.array(u_drift_values)
     t_mid = np.array(t_mid_values)
-    plt.figure(figsize=(8, 5))
-    print(u_drift_t[:-1], u_momentum_t[:-1])
-    plt.plot(t_mid, u_drift_t, 'b-', linewidth=2, label='Measured $u_d$ (shift method)')
-    plt.plot(t, u_momentum_t, 'r-', linewidth=2, label='$\\langle v \\rangle$ (momentum)')
-    # plt.axhline(y=u_d, color='r', linestyle='--', linewidth=2, label=f'Target $u_d={u_d}$')
-    plt.xlabel('$t$')
-    plt.ylabel('$u_d$')
-    plt.title('Velocity Evolution')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+    n_peaks_t = np.array(n_peaks_values)
+    amplitude_t = np.array(amplitude_values)
+    
+    # Create subplots for all three quantities
+    fig, (ax1, ax2, ax3) = plt.subplots(3, 1, figsize=(10, 12))
+    
+    # Plot 1: Velocity evolution
+    ax1.plot(t_mid, u_drift_t, 'b-', linewidth=2, label='Measured $u_d$ (shift method)')
+    ax1.plot(t, u_momentum_t, 'r-', linewidth=2, label='$\\langle v \\rangle$ (momentum)')
+    ax1.set_xlabel('$t$')
+    ax1.set_ylabel('$u_d$')
+    ax1.set_title('Velocity Evolution')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # Plot 2: Number of peaks evolution
+    ax2.plot(t_mid, n_peaks_t, 'g-', linewidth=2, marker='o', markersize=3)
+    ax2.set_xlabel('$t$')
+    ax2.set_ylabel('Number of Peaks')
+    ax2.set_title('Number of Peaks Evolution')
+    ax2.grid(True, alpha=0.3)
+    
+    # Plot 3: Amplitude evolution (delta n = n_max - n_min)
+    ax3.plot(t_mid, amplitude_t, 'm-', linewidth=2, marker='s', markersize=3)
+    ax3.set_xlabel('$t$')
+    ax3.set_ylabel('Amplitude $\\Delta n = n_{max} - n_{min}$')
+    ax3.set_title('Amplitude Evolution')
+    ax3.grid(True, alpha=0.3)
+    
     plt.tight_layout()
     
     outdir = data['meta'].get('outdir', 'out_drift')
@@ -270,6 +304,12 @@ def plot_velocity_evolution(data, u_d, tag="velocity_evolution"):
     plt.savefig(f"{outdir}/{tag}_m{m}.png", dpi=160, bbox_inches='tight')
     plt.show()
     plt.close()
+    
+    # Print summary statistics
+    print(f"\nSummary for u_d = {u_d}:")
+    print(f"  Number of peaks: {np.min(n_peaks_t)} to {np.max(n_peaks_t)} (mean: {np.mean(n_peaks_t):.1f})")
+    print(f"  Amplitude range: {np.min(amplitude_t):.6f} to {np.max(amplitude_t):.6f}")
+    print(f"  Velocity range: {np.min(u_drift_t):.4f} to {np.max(u_drift_t):.4f}")
 
 def plot_velocity_field(data, u_d, tag="velocity_field"):
     """Plot v(x) = p(x)/n(x) alongside p(x) and n(x) at different time snapshots"""
@@ -925,6 +965,129 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
     
     return data_by_label
 
+def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
+    """Plot delta n (n_max - n_min) vs u_d for combined datasets.
+    
+    Args:
+        base_dirs: List of base directory paths
+        labels: Optional custom labels for each dataset
+        outdir: Output directory for plots
+    """
+    if labels is None:
+        labels = [os.path.basename(d) for d in base_dirs]
+    
+    # Load all data
+    all_data = load_multi_dataset(base_dirs, labels)
+    
+    if not all_data:
+        print("No data found!")
+        return
+    
+    # Organize data by label
+    data_by_label = {label: {'u_d': [], 'delta_n': []} for label in labels}
+    
+    # Collect all data for interpolation
+    all_u_d = []
+    all_delta_n = []
+    
+    for data_label, u_d, data in all_data:
+        n_t = data['n_t']
+        t = data['t']
+        
+        # Calculate delta n = n_max - n_min for the final time step
+        n_final = n_t[:, -1]  # Last time step
+        delta_n = np.max(n_final) - np.min(n_final)
+        
+        data_by_label[data_label]['u_d'].append(u_d)
+        data_by_label[data_label]['delta_n'].append(delta_n)
+        
+        # Collect all data for interpolation
+        all_u_d.append(u_d)
+        all_delta_n.append(delta_n)
+    
+    # Create plot - same style as plot_combined_velocity_analysis
+    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    
+    # Same color for all datasets, different marker shapes
+    color = 'black'  # Single color for all datasets
+    markers = ['o', 's', '^', '*', 'v', '<', '>', 'p', '*', 'h', 
+               'H', '+', 'x', 'X', '|']
+    
+    for idx, label in enumerate(labels):
+        if not data_by_label[label]['u_d']:
+            continue
+        
+        # Filter for u_d <= 10
+        u_d_arr = np.array(data_by_label[label]['u_d'])
+        delta_n_arr = np.array(data_by_label[label]['delta_n'])
+        
+        mask = u_d_arr <= 10.0
+        
+        if not np.any(mask):
+            continue
+        
+        u_d_filtered = u_d_arr[mask]
+        delta_n_filtered = delta_n_arr[mask]
+        
+        marker = markers[idx % len(markers)]
+        
+        # Plot points only, no lines, larger size
+        ax.scatter(u_d_filtered, delta_n_filtered, marker=marker, color=color,
+                  label=label, s=24, alpha=0.8)
+    
+    # Add smooth interpolation line
+    if all_u_d:
+        from scipy.interpolate import UnivariateSpline
+        from scipy.ndimage import uniform_filter1d
+        
+        # Sort data for smooth line
+        sorted_indices = np.argsort(all_u_d)
+        u_d_sorted = np.array(all_u_d)[sorted_indices]
+        delta_n_sorted = np.array(all_delta_n)[sorted_indices]
+        
+        # Filter for u_d <= 10
+        mask = u_d_sorted <= 10.0
+        u_d_sorted = u_d_sorted[mask]
+        delta_n_sorted = delta_n_sorted[mask]
+        
+        try:
+            # Interpolation for u_d > 2.74
+            mask_interp = (u_d_sorted > 2.68) & (u_d_sorted <= 10.0)
+            if np.sum(mask_interp) > 2.7:  # Need at least 4 points for spline
+                u_d_interp = u_d_sorted[mask_interp]
+                delta_n_interp = delta_n_sorted[mask_interp]
+                
+                # Create smooth interpolation
+                spline = UnivariateSpline(u_d_interp, delta_n_interp, s=0.1)
+                u_d_smooth = np.linspace(u_d_interp.min(), u_d_interp.max(), 100)
+                delta_n_smooth = spline(u_d_smooth)
+                
+                # Apply additional smoothing
+                delta_n_smooth = uniform_filter1d(delta_n_smooth, size=3)
+                
+                ax.plot(u_d_smooth, delta_n_smooth, 'r-', linewidth=2, alpha=0.7, label='Smooth fit')
+        except:
+            pass  # Skip interpolation if it fails
+    
+    # Add vertical line at u* = 2.74
+    ax.axvline(x=2.74, color='blue', linestyle='--', linewidth=1, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
+    
+    ax.set_xlabel('$u_d$', fontsize=12)
+    ax.set_ylabel('$n_{\\rm max} - n_{\\rm min}$', fontsize=12)
+    ax.legend(fontsize=10, ncol=1, loc='best', framealpha=0.9)
+    ax.grid(True, alpha=0.3)
+    # ax.set_xlim(0.5, 8)
+    
+    plt.tight_layout()
+    os.makedirs(outdir, exist_ok=True)
+    plt.savefig(f"{outdir}/delta_n_vs_ud.png", dpi=200, bbox_inches='tight')
+    plt.savefig(f"{outdir}/delta_n_vs_ud.pdf", dpi=200, bbox_inches='tight')
+    print(f"\nSaved delta n vs u_d plot to {outdir}/delta_n_vs_ud.png")
+    plt.show()
+    plt.close()
+    
+    return data_by_label
+
 def plot_combined_comparison(base_dirs, labels=None, outdir="multiple_u_d"):
     """Compare results across multiple parameter sets.
     
@@ -1096,17 +1259,22 @@ if __name__ == "__main__":
     print(f"Analysis complete! Generated velocity_vs_ud_combined.png")
     print("=" * 60)
     
-    # # Single file analysis (commented out)
-    # filename = "out_drift/data_m01_m1_t10.npz"
-    # data = load_data(filename)
-    # u_d = data['meta'].get('u_d', 20.0)
-    # print(u_d)
+    # Load data and plot velocity evolution
+    filename = "multiple_u_d/out_drift_ud18.0000/data_m01_ud18.0.npz"
+    data = load_data(filename)
+    plot_velocity_evolution(data, 18.0)
+
+
+
+    # Single file analysis (moved to separate file)
+    # Use plot_u_true_vs_time.py for u_true vs time analysis
     
     # Automatically find and analyze all available simulations (commented out)
     data_files = find_available_simulations()
     if data_files:
         # plot_velocity_vs_ud(data_files)
-        plot_multiple_ud_panel(data_files)
+        # plot_multiple_ud_panel(data_files)
+        pass
     else:
         print("No simulation files found!")
     
