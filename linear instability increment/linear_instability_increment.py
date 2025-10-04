@@ -7,8 +7,8 @@ eta_n = 0.5
 n = 0.2
 w = 5.0
 gamma0 = 2.5
-kmin = -3.5
-kmax = 3.5
+kmin = -8
+kmax = 8
 N = 20000
 Lambda = -(1 / w + 1 / n) * np.exp(-n / w)
 fig, ax = plt.subplots()
@@ -33,10 +33,12 @@ for u in u_values:
         Gamma_n = -(gamma / w)
         Lambda = (Gamma_n - gamma / n) * p
 
-        Delta = (gamma + 1j * k * Pp) ** 2 + 4j * k * Lambda - 4 * k**2 * Pn
+        # Fixed: use G_tilde with diffusion and subtract Dn*k^2
+        G_tilde = gamma + (eta_p - eta_n) * k**2
+        Delta = (G_tilde + 1j * k * Pp) ** 2 + 4j * k * Lambda - 4 * k**2 * Pn
 
-        omega1[i1] = (-1j * gamma + k * Pp + 1j * np.sqrt(Delta)) / 2 - 1j * eta_p * k**2
-        omega2[i1] = (-1j * gamma + k * Pp - 1j * np.sqrt(Delta)) / 2 - 1j * eta_p * k**2
+        omega1[i1] = (-1j * G_tilde + k * Pp + 1j * np.sqrt(Delta)) / 2 - 1j * eta_n * k**2
+        omega2[i1] = (-1j * G_tilde + k * Pp - 1j * np.sqrt(Delta)) / 2 - 1j * eta_n * k**2
 
     # Highlight u_star and use colormap for other values
     lw = 2.5 if np.isclose(u, u_star) else 1.0
