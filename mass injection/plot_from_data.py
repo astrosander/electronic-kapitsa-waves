@@ -746,13 +746,13 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
         if not data_by_label[label]['u_d']:
             continue
         
-        # Filter for u_d > 1.4
+        # Filter for u_d > 0 and u_d < 10
         u_d_arr = np.array(data_by_label[label]['u_d'])
         u_true_arr = np.array(data_by_label[label]['u_true'])
         n_pulses_arr = np.array(data_by_label[label]['n_pulses'])
         freq_arr = np.array(data_by_label[label]['frequency'])
         
-        mask = u_d_arr > 0#1.41
+        mask = (u_d_arr > 0) & (u_d_arr < 10.0)
         
         if not np.any(mask):
             continue
@@ -789,8 +789,8 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
         freq_sorted = np.array(all_frequency)[sorted_indices]
         
         try:
-            # Plot 1: u_true vs u_d - interpolation for 2 < u_d < 8
-            mask1 = (u_d_sorted > 1.5) & (u_d_sorted < 8.0)
+            # Plot 1: u_true vs u_d - interpolation for 1.5 < u_d < 10
+            mask1 = (u_d_sorted > 1.5) & (u_d_sorted < 10.0)
             if np.sum(mask1) > 3:  # Need at least 4 points for spline
                 u_d_1 = u_d_sorted[mask1]
                 u_true_1 = u_true_sorted[mask1]
@@ -820,7 +820,7 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
             
             # Plot 2: n_pulses vs u_d - two separate interpolations
             # First segment: 1.0 <= u_d <= 2.5
-            mask2a = (u_d_sorted >= 1.0) & (u_d_sorted <= 2.5)
+            mask2a = (u_d_sorted >= 1.0) & (u_d_sorted <= 2.4)
             if np.sum(mask2a) > 3:
                 u_d_2a = u_d_sorted[mask2a]
                 n_pulses_2a = n_pulses_sorted[mask2a]
@@ -846,8 +846,8 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
                     n_pulses_smooth_a = spline_n_pulses_a(u_d_smooth_2a)
                     ax2.plot(u_d_smooth_2a, n_pulses_smooth_a, 'r-', linewidth=2.5, alpha=0.9, label='Mean trend', zorder=100)
             
-            # Second segment: 2.5 <= u_d <= 5.0
-            mask2b = (u_d_sorted >= 2.5) & (u_d_sorted <= 8.0)
+            # Second segment: 2.5 <= u_d < 10
+            mask2b = (u_d_sorted >= 2.5) & (u_d_sorted < 10.0)
             if np.sum(mask2b) > 3:
                 u_d_2b = u_d_sorted[mask2b]
                 n_pulses_2b = n_pulses_sorted[mask2b]
@@ -876,7 +876,7 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
             
             # Plot 3: frequency vs u_d - two separate interpolations
             # First segment: 1.0 <= u_d <= 2.5
-            mask3a = (u_d_sorted >= 1.0) & (u_d_sorted <= 2.5)
+            mask3a = (u_d_sorted >= 1.0) & (u_d_sorted <= 2.4)
             if np.sum(mask3a) > 3:
                 u_d_3a = u_d_sorted[mask3a]
                 freq_3a = freq_sorted[mask3a]
@@ -901,8 +901,8 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
                     freq_smooth_a = spline_freq_a(u_d_smooth_3a)
                     ax3.plot(u_d_smooth_3a, freq_smooth_a, 'r-', linewidth=2.5, alpha=0.9, label='Mean trend', zorder=100)
             
-            # Second segment: 2.5 <= u_d <= 5.0
-            mask3b = (u_d_sorted >= 2.5) & (u_d_sorted <= 8.0)
+            # Second segment: 2.5 <= u_d < 10
+            mask3b = (u_d_sorted >= 2.5) & (u_d_sorted < 10.0)
             if np.sum(mask3b) > 3:
                 u_d_3b = u_d_sorted[mask3b]
                 freq_3b = freq_sorted[mask3b]
@@ -940,6 +940,7 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
     ax1.set_title('$u_{\\text{true}}$ vs $u_d$')
     ax1.legend(fontsize=8, ncol=2, loc='best', framealpha=0.9)
     ax1.grid(True, alpha=0.3)
+    ax1.axvline(x=2.74, color='blue', linestyle='--', linewidth=1, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
     
     # Plot 2: n_pulses vs u_d (exact labels from original)
     ax2.set_xlabel('$u_d$')
@@ -947,6 +948,7 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
     ax2.set_title('$n_{\\text{pulses}}$ vs $u_d$')
     ax2.legend(fontsize=8, ncol=2, loc='best', framealpha=0.9)
     ax2.grid(True, alpha=0.3)
+    ax2.axvline(x=2.74, color='blue', linestyle='--', linewidth=1, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
     
     # Plot 3: frequency vs u_d (exact labels from original)
     ax3.set_xlabel('$u_d$')
@@ -954,6 +956,7 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
     ax3.set_title('$f$ vs $u_d$')
     ax3.legend(fontsize=8, ncol=2, loc='best', framealpha=0.9)
     ax3.grid(True, alpha=0.3)
+    ax3.axvline(x=2.74, color='blue', linestyle='--', linewidth=1, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
     
     plt.tight_layout()
     os.makedirs(outdir, exist_ok=True)
