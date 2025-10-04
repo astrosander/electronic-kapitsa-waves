@@ -1065,12 +1065,12 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
                 # Apply additional smoothing
                 delta_n_smooth = uniform_filter1d(delta_n_smooth, size=3)
                 
-                ax.plot(u_d_smooth, delta_n_smooth, 'r-', linewidth=2, alpha=0.7, label='Smooth fit')
+                ax.plot(u_d_smooth, delta_n_smooth, 'r-', linewidth=2, alpha=0.7, label='Fit')
         except:
             pass  # Skip interpolation if it fails
     
     # Add vertical line at u* = 2.74
-    ax.axvline(x=2.74, color='blue', linestyle='--', linewidth=1, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
+    ax.axvline(x=2.74, color='blue', linestyle='--', linewidth=2.0, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
     
     ax.set_xlabel('$u_d$', fontsize=12)
     ax.set_ylabel('$n_{\\rm max} - n_{\\rm min}$', fontsize=12)
