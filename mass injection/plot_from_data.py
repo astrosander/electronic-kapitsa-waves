@@ -1033,10 +1033,20 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
         delta_n_filtered = delta_n_arr[mask]
         
         marker = markers[idx % len(markers)]
-        
+
+        # ax.scatter(u_d_filtered, delta_n_filtered, marker=marker,
+        #           label=label, s=24, alpha=0.8)
+
         # Plot points only, no lines, larger size
-        ax.scatter(u_d_filtered, delta_n_filtered, marker=marker, color=color,
-                  label=label, s=24, alpha=0.8)
+        if "25" in label:
+            ax.scatter(u_d_filtered, delta_n_filtered, marker=marker, color="magenta",
+                      label=label, s=24, alpha=0.8)
+        elif "100" in label:
+            ax.scatter(u_d_filtered, delta_n_filtered, marker=marker, color="orange",
+                      label=label, s=24, alpha=0.8)
+        else:
+            ax.scatter(u_d_filtered, delta_n_filtered, marker=marker, color="black",
+                      label=label, s=24, alpha=0.8)
     
     # Add smooth interpolation line
     if all_u_d:
@@ -1196,17 +1206,18 @@ def find_available_simulations():
     """Automatically find all available simulation files in out_drift_ud* subdirectories"""
     data_files = []
     
+    folder_name = "multiple_u_d"
     # Search in multiple_u_d/out_drift_ud* subdirectories
-    if os.path.exists("multiple_u_d"):
-        for item in os.listdir("multiple_u_d"):
-            if item.startswith("out_drift_ud") and os.path.isdir(os.path.join("multiple_u_d", item)):
+    if os.path.exists(folder_name):
+        for item in os.listdir(folder_name):
+            if item.startswith("out_drift_ud") and os.path.isdir(os.path.join(folder_name, item)):
                 # Extract u_d from directory name
                 try:
                     u_d_str = item.replace("out_drift_ud", "")
                     u_d = float(u_d_str)
                     
                     # Look for data file in this subdirectory
-                    subdir_path = os.path.join("multiple_u_d", item)
+                    subdir_path = os.path.join(folder_name, item)
                     for file in os.listdir(subdir_path):
                         if file.startswith("data_m01_ud") and file.endswith(".npz"):
                             filepath = os.path.join(subdir_path, file)
@@ -1263,9 +1274,9 @@ if __name__ == "__main__":
     print("=" * 60)
     
     # Load data and plot velocity evolution
-    filename = "multiple_u_d/out_drift_ud18.0000/data_m01_ud18.0.npz"
-    data = load_data(filename)
-    plot_velocity_evolution(data, 18.0)
+    # filename = "multiple_u_d/out_drift_ud18.0000/data_m01_ud18.0.npz"
+    # data = load_data(filename)
+    # plot_velocity_evolution(data, 18.0)
 
 
 
@@ -1276,7 +1287,7 @@ if __name__ == "__main__":
     data_files = find_available_simulations()
     if data_files:
         # plot_velocity_vs_ud(data_files)
-        # plot_multiple_ud_panel(data_files)
+        plot_multiple_ud_panel(data_files)
         pass
     else:
         print("No simulation files found!")
