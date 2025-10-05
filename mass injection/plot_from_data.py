@@ -742,41 +742,8 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
     markers = ['o', 's', '^', '*', 'v', '<', '>', 'p', '*', 'h', 
                'H', '+', 'x', 'X', '|']
     
-    for idx, label in enumerate(labels):
-        if not data_by_label[label]['u_d']:
-            continue
-        
-        # Filter for u_d > 0 and u_d < 10
-        u_d_arr = np.array(data_by_label[label]['u_d'])
-        u_true_arr = np.array(data_by_label[label]['u_true'])
-        n_pulses_arr = np.array(data_by_label[label]['n_pulses'])
-        freq_arr = np.array(data_by_label[label]['frequency'])
-        
-        mask = (u_d_arr > 0) & (u_d_arr < 10.0)
-        
-        if not np.any(mask):
-            continue
-        
-        u_d_filtered = u_d_arr[mask]
-        u_true_filtered = u_true_arr[mask]
-        n_pulses_filtered = n_pulses_arr[mask]
-        freq_filtered = freq_arr[mask]
-        
-        marker = markers[idx % len(markers)]
-        
-        # Plot 1: u_true vs u_d (points only, no lines, larger size)
-        ax1.scatter(u_d_filtered, np.abs(u_true_filtered), marker=marker, color=color,
-                   label=label, s=24, alpha=0.8)
-        
-        # Plot 2: n_pulses vs u_d (points only, no lines, larger size)
-        ax2.scatter(u_d_filtered, n_pulses_filtered, marker=marker, color=color,
-                   label=label, s=24, alpha=0.8)
-        
-        # Plot 3: frequency vs u_d (points only, no lines, larger size)
-        ax3.scatter(u_d_filtered, freq_filtered, marker=marker, color=color,
-                   label=label, s=24, alpha=0.8)
-    
     # Add smooth interpolation lines with specific ranges for each plot
+    # Plot this FIRST so it appears below the data points
     if all_u_d:
         from scipy.interpolate import UnivariateSpline
         from scipy.ndimage import uniform_filter1d
@@ -934,6 +901,41 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
             import traceback
             traceback.print_exc()
     
+    # Plot data points AFTER the interpolation so they appear on top
+    for idx, label in enumerate(labels):
+        if not data_by_label[label]['u_d']:
+            continue
+        
+        # Filter for u_d > 0 and u_d < 10
+        u_d_arr = np.array(data_by_label[label]['u_d'])
+        u_true_arr = np.array(data_by_label[label]['u_true'])
+        n_pulses_arr = np.array(data_by_label[label]['n_pulses'])
+        freq_arr = np.array(data_by_label[label]['frequency'])
+        
+        mask = (u_d_arr > 0) & (u_d_arr < 10.0)
+        
+        if not np.any(mask):
+            continue
+        
+        u_d_filtered = u_d_arr[mask]
+        u_true_filtered = u_true_arr[mask]
+        n_pulses_filtered = n_pulses_arr[mask]
+        freq_filtered = freq_arr[mask]
+        
+        marker = markers[idx % len(markers)]
+        
+        # Plot 1: u_true vs u_d (points only, no lines, larger size)
+        ax1.scatter(u_d_filtered, np.abs(u_true_filtered), marker=marker, color=color,
+                   label=label, s=24, alpha=0.8)
+        
+        # Plot 2: n_pulses vs u_d (points only, no lines, larger size)
+        ax2.scatter(u_d_filtered, n_pulses_filtered, marker=marker, color=color,
+                   label=label, s=24, alpha=0.8)
+        
+        # Plot 3: frequency vs u_d (points only, no lines, larger size)
+        ax3.scatter(u_d_filtered, freq_filtered, marker=marker, color=color,
+                   label=label, s=24, alpha=0.8)
+    
     # Plot 1: u_true vs u_d (exact labels from original)
     ax1.set_xlabel('$u_d$')
     ax1.set_ylabel('$u_{\\text{true}}$')
@@ -1016,6 +1018,54 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
     markers = ['o', 's', '^', '*', 'v', '<', '>', 'p', '*', 'h', 
                'H', '+', 'x', 'X', '|']
     
+    # Add square-root fit based on SH-type model: delta_n ~ a * (u_d - u_c)^(1/2)
+    # Plot this FIRST so it appears below the data points
+    if all_u_d:
+        from scipy.optimize import curve_fit
+        
+        # Sort data for smooth line
+        sorted_indices = np.argsort(all_u_d)
+        u_d_sorted = np.array(all_u_d)[sorted_indices]
+        delta_n_sorted = np.array(all_delta_n)[sorted_indices]
+        
+        # Filter for u_d <= 10
+        mask = u_d_sorted <= 10.0
+        u_d_sorted = u_d_sorted[mask]
+        delta_n_sorted = delta_n_sorted[mask]
+        
+        try:
+            # Fit to sqrt function: delta_n = a * sqrt(u_d - u_c) for u_d > u_c
+            u_c = 2.74  # Critical u_d value (onset of instability)
+            mask_fit = (u_d_sorted > u_c) & (u_d_sorted <= 4.5)
+            if np.sum(mask_fit) > 3:  # Need at least 4 points for fitting
+                u_d_fit = u_d_sorted[mask_fit]
+                delta_n_fit = delta_n_sorted[mask_fit]
+                
+                # Define sqrt model function
+                def sqrt_model(u_d, a):
+                    return a * np.sqrt(u_d - u_c)
+                
+                # Fit the model
+                popt, pcov = curve_fit(sqrt_model, u_d_fit, delta_n_fit, p0=[1.0])
+                a_fit = popt[0]
+                
+                # Generate smooth curve
+                u_d_smooth = np.linspace(u_c, u_d_fit.max(), 200)
+                delta_n_smooth = sqrt_model(u_d_smooth, a_fit)
+                
+                ax.plot(u_d_smooth, delta_n_smooth, 'r-', linewidth=1.5, alpha=0.9, 
+                        label=f'$\\Delta n = {a_fit:.3f} \\sqrt{{u_d - 2.74}}$')
+                
+                print(f"\nSquare-root fit results:")
+                print(f"  Fit parameter: a = {a_fit:.4f}")
+                print(f"  Model: Δn = {a_fit:.4f} * sqrt(u_d - 2.74)")
+                print(f"  Standard error: {np.sqrt(pcov[0,0]):.4f}")
+        except Exception as e:
+            print(f"Warning: Could not fit sqrt model: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Plot data points AFTER the approximation so they appear on top
     for idx, label in enumerate(labels):
         if not data_by_label[label]['u_d']:
             continue
@@ -1034,65 +1084,19 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
         
         marker = markers[idx % len(markers)]
 
-        # ax.scatter(u_d_filtered, delta_n_filtered, marker=marker,
-        #           label=label, s=24, alpha=0.8)
+        ax.scatter(u_d_filtered, delta_n_filtered, marker=marker,
+                  label=label, s=24, alpha=0.8)
 
         # Plot points only, no lines, larger size
-        if "25" in label:
-            ax.scatter(u_d_filtered, delta_n_filtered, marker=marker, color="magenta",
-                      label=label, s=24, alpha=0.8)
-        elif "100" in label:
-            ax.scatter(u_d_filtered, delta_n_filtered, marker=marker, color="orange",
-                      label=label, s=24, alpha=0.8)
-        else:
-            ax.scatter(u_d_filtered, delta_n_filtered, marker=marker, color="black",
-                      label=label, s=24, alpha=0.8)
-    
-    # Add square-root fit based on SH-type model: delta_n ~ a * (u_d - u_c)^(1/2)
-    if all_u_d:
-        from scipy.optimize import curve_fit
-        
-        # Sort data for smooth line
-        sorted_indices = np.argsort(all_u_d)
-        u_d_sorted = np.array(all_u_d)[sorted_indices]
-        delta_n_sorted = np.array(all_delta_n)[sorted_indices]
-        
-        # Filter for u_d <= 10
-        mask = u_d_sorted <= 10.0
-        u_d_sorted = u_d_sorted[mask]
-        delta_n_sorted = delta_n_sorted[mask]
-        
-        try:
-            # Fit to sqrt function: delta_n = a * sqrt(u_d - u_c) for u_d > u_c
-            u_c = 2.74  # Critical u_d value (onset of instability)
-            mask_fit = (u_d_sorted > u_c) & (u_d_sorted <= 10.0)
-            if np.sum(mask_fit) > 3:  # Need at least 4 points for fitting
-                u_d_fit = u_d_sorted[mask_fit]
-                delta_n_fit = delta_n_sorted[mask_fit]
-                
-                # Define sqrt model function
-                def sqrt_model(u_d, a):
-                    return a * np.sqrt(u_d - u_c)
-                
-                # Fit the model
-                popt, pcov = curve_fit(sqrt_model, u_d_fit, delta_n_fit, p0=[1.0])
-                a_fit = popt[0]
-                
-                # Generate smooth curve
-                u_d_smooth = np.linspace(u_c, u_d_fit.max(), 200)
-                delta_n_smooth = sqrt_model(u_d_smooth, a_fit)
-                
-                ax.plot(u_d_smooth, delta_n_smooth, 'r-', linewidth=2.5, alpha=0.9, 
-                        label=f'$\\Delta n = {a_fit:.3f} \\sqrt{{u_d - 2.74}}$')
-                
-                print(f"\nSquare-root fit results:")
-                print(f"  Fit parameter: a = {a_fit:.4f}")
-                print(f"  Model: Δn = {a_fit:.4f} * sqrt(u_d - 2.74)")
-                print(f"  Standard error: {np.sqrt(pcov[0,0]):.4f}")
-        except Exception as e:
-            print(f"Warning: Could not fit sqrt model: {e}")
-            import traceback
-            traceback.print_exc()
+        # if "25" in label:
+        #     ax.scatter(u_d_filtered, delta_n_filtered, marker=marker, color="magenta",
+        #               label=label, s=24, alpha=0.8)
+        # elif "100" in label:
+        #     ax.scatter(u_d_filtered, delta_n_filtered, marker=marker, color="orange",
+        #               label=label, s=24, alpha=0.8)
+        # else:
+        #     ax.scatter(u_d_filtered, delta_n_filtered, marker=marker, color="black",
+        #               label=label, s=24, alpha=0.8)
     
     # Add vertical line at u* = 2.74
     ax.axvline(x=2.74, color='blue', linestyle='--', linewidth=2.0, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
@@ -1115,24 +1119,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
     # Create inset axes for zoom
     ax_inset = fig.add_axes([0.15, 0.6, 0.25, 0.25])  # [left, bottom, width, height]
     
-    # Plot the same data in the inset (show all data, let axis limits handle the zoom)
-    for idx, label in enumerate(labels):
-        if not data_by_label[label]['u_d']:
-            continue
-        
-        u_d_arr = np.array(data_by_label[label]['u_d'])
-        delta_n_arr = np.array(data_by_label[label]['delta_n'])
-        
-        marker = markers[idx % len(markers)]
-        
-        if "25" in label:
-            ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, color="magenta", s=20, alpha=0.8)
-        elif "100" in label:
-            ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, color="orange", s=20, alpha=0.8)
-        else:
-            ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, color="black", s=20, alpha=0.8)
-    
-    # Add square-root fit to inset if available
+    # Add square-root fit to inset if available (plot FIRST so it appears below data points)
     if all_u_d:
         try:
             from scipy.optimize import curve_fit
@@ -1162,8 +1149,28 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
                 if np.any(mask_zoom_fit):
                     ax_inset.plot(u_d_zoom_fit[mask_zoom_fit], delta_n_zoom_fit[mask_zoom_fit], 
                                 'r-', linewidth=1.5, alpha=0.9)
-        except:
-            pass
+        except Exception as e:
+            pass  # Silent fail for inset
+    
+    # Plot the same data in the inset (show all data, let axis limits handle the zoom)
+    # Plot data points AFTER the approximation so they appear on top
+    for idx, label in enumerate(labels):
+        if not data_by_label[label]['u_d']:
+            continue
+        
+        u_d_arr = np.array(data_by_label[label]['u_d'])
+        delta_n_arr = np.array(data_by_label[label]['delta_n'])
+        
+        marker = markers[idx % len(markers)]
+        
+        ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, s=20, alpha=0.8)
+
+        # if "25" in label:
+        #     ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, color="magenta", s=20, alpha=0.8)
+        # elif "100" in label:
+        #     ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, color="orange", s=20, alpha=0.8)
+        # else:
+        #     ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, color="black", s=20, alpha=0.8)
     
     # Add reference lines in inset
     ax_inset.axvline(x=2.74, color='blue', linestyle='--', linewidth=1.0, alpha=0.8)
@@ -1191,6 +1198,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
     os.makedirs(outdir, exist_ok=True)
     plt.savefig(f"{outdir}/delta_n_vs_ud.png", dpi=200, bbox_inches='tight')
     plt.savefig(f"{outdir}/delta_n_vs_ud.pdf", dpi=200, bbox_inches='tight')
+    plt.savefig(f"{outdir}/delta_n_vs_ud.svg", dpi=200, bbox_inches='tight')
     print(f"\nSaved delta n vs u_d plot to {outdir}/delta_n_vs_ud.png")
     plt.show()
     plt.close()
