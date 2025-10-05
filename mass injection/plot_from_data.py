@@ -1048,10 +1048,9 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
             ax.scatter(u_d_filtered, delta_n_filtered, marker=marker, color="black",
                       label=label, s=24, alpha=0.8)
     
-    # Add smooth interpolation line
+    # Add square-root fit based on SH-type model: delta_n ~ a * (u_d - u_c)^(1/2)
     if all_u_d:
-        from scipy.interpolate import UnivariateSpline
-        from scipy.ndimage import uniform_filter1d
+        from scipy.optimize import curve_fit
         
         # Sort data for smooth line
         sorted_indices = np.argsort(all_u_d)
@@ -1064,26 +1063,123 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
         delta_n_sorted = delta_n_sorted[mask]
         
         try:
-            # Interpolation for u_d > 2.74
-            mask_interp = (u_d_sorted > 2.68) & (u_d_sorted <= 10.0)
-            if np.sum(mask_interp) > 2.7:  # Need at least 4 points for spline
-                u_d_interp = u_d_sorted[mask_interp]
-                delta_n_interp = delta_n_sorted[mask_interp]
+            # Fit to sqrt function: delta_n = a * sqrt(u_d - u_c) for u_d > u_c
+            u_c = 2.74  # Critical u_d value (onset of instability)
+            mask_fit = (u_d_sorted > u_c) & (u_d_sorted <= 10.0)
+            if np.sum(mask_fit) > 3:  # Need at least 4 points for fitting
+                u_d_fit = u_d_sorted[mask_fit]
+                delta_n_fit = delta_n_sorted[mask_fit]
                 
-                # Create smooth interpolation
-                spline = UnivariateSpline(u_d_interp, delta_n_interp, s=0.1)
-                u_d_smooth = np.linspace(u_d_interp.min(), u_d_interp.max(), 100)
-                delta_n_smooth = spline(u_d_smooth)
+                # Define sqrt model function
+                def sqrt_model(u_d, a):
+                    return a * np.sqrt(u_d - u_c)
                 
-                # Apply additional smoothing
-                delta_n_smooth = uniform_filter1d(delta_n_smooth, size=3)
+                # Fit the model
+                popt, pcov = curve_fit(sqrt_model, u_d_fit, delta_n_fit, p0=[1.0])
+                a_fit = popt[0]
                 
-                ax.plot(u_d_smooth, delta_n_smooth, 'r-', linewidth=2, alpha=0.7, label='Fit')
-        except:
-            pass  # Skip interpolation if it fails
+                # Generate smooth curve
+                u_d_smooth = np.linspace(u_c, u_d_fit.max(), 200)
+                delta_n_smooth = sqrt_model(u_d_smooth, a_fit)
+                
+                ax.plot(u_d_smooth, delta_n_smooth, 'r-', linewidth=2.5, alpha=0.9, 
+                        label=f'$\\Delta n = {a_fit:.3f} \\sqrt{{u_d - 2.74}}$')
+                
+                print(f"\nSquare-root fit results:")
+                print(f"  Fit parameter: a = {a_fit:.4f}")
+                print(f"  Model: Δn = {a_fit:.4f} * sqrt(u_d - 2.74)")
+                print(f"  Standard error: {np.sqrt(pcov[0,0]):.4f}")
+        except Exception as e:
+            print(f"Warning: Could not fit sqrt model: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Add vertical line at u* = 2.74
     ax.axvline(x=2.74, color='blue', linestyle='--', linewidth=2.0, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
+    ax.axhline(y=0.0, color='black', linestyle='--', linewidth=1.0, alpha=0.8)
+
+    # Add zoomed inset around the critical region
+    from matplotlib.patches import Rectangle
+    
+    # Define zoom region
+    zoom_xlim = (2.4, 2.9)
+    zoom_ylim = (-0.005, 0.030)
+    
+    # Add rectangle to indicate zoom region
+    rect = Rectangle((zoom_xlim[0], zoom_ylim[0]), 
+                    zoom_xlim[1] - zoom_xlim[0], 
+                    zoom_ylim[1] - zoom_ylim[0],
+                    edgecolor="red", facecolor="none", linewidth=1.0, linestyle='--')
+    ax.add_patch(rect)
+    
+    # Create inset axes for zoom
+    ax_inset = fig.add_axes([0.15, 0.6, 0.25, 0.25])  # [left, bottom, width, height]
+    
+    # Plot the same data in the inset (show all data, let axis limits handle the zoom)
+    for idx, label in enumerate(labels):
+        if not data_by_label[label]['u_d']:
+            continue
+        
+        u_d_arr = np.array(data_by_label[label]['u_d'])
+        delta_n_arr = np.array(data_by_label[label]['delta_n'])
+        
+        marker = markers[idx % len(markers)]
+        
+        if "25" in label:
+            ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, color="magenta", s=20, alpha=0.8)
+        elif "100" in label:
+            ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, color="orange", s=20, alpha=0.8)
+        else:
+            ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, color="black", s=20, alpha=0.8)
+    
+    # Add square-root fit to inset if available
+    if all_u_d:
+        try:
+            from scipy.optimize import curve_fit
+            
+            sorted_indices = np.argsort(all_u_d)
+            u_d_sorted = np.array(all_u_d)[sorted_indices]
+            delta_n_sorted = np.array(all_delta_n)[sorted_indices]
+            
+            u_c = 2.74
+            mask_fit = (u_d_sorted > u_c) & (u_d_sorted <= 10.0)
+            if np.sum(mask_fit) > 3:
+                u_d_fit = u_d_sorted[mask_fit]
+                delta_n_fit = delta_n_sorted[mask_fit]
+                
+                def sqrt_model(u_d, a):
+                    return a * np.sqrt(u_d - u_c)
+                
+                popt, pcov = curve_fit(sqrt_model, u_d_fit, delta_n_fit, p0=[1.0])
+                a_fit = popt[0]
+                
+                # Plot fit in zoom region
+                u_d_zoom_fit = np.linspace(max(u_c, zoom_xlim[0]), zoom_xlim[1], 100)
+                delta_n_zoom_fit = sqrt_model(u_d_zoom_fit, a_fit)
+                
+                # Only plot if within zoom y-limits
+                mask_zoom_fit = (delta_n_zoom_fit >= zoom_ylim[0]) & (delta_n_zoom_fit <= zoom_ylim[1])
+                if np.any(mask_zoom_fit):
+                    ax_inset.plot(u_d_zoom_fit[mask_zoom_fit], delta_n_zoom_fit[mask_zoom_fit], 
+                                'r-', linewidth=1.5, alpha=0.9)
+        except:
+            pass
+    
+    # Add reference lines in inset
+    ax_inset.axvline(x=2.74, color='blue', linestyle='--', linewidth=1.0, alpha=0.8)
+    ax_inset.axhline(y=0.0, color='black', linestyle='--', linewidth=1.0, alpha=0.8)
+    
+    # Set inset properties
+    ax_inset.set_xlim(zoom_xlim)
+    ax_inset.set_ylim(zoom_ylim)
+    ax_inset.set_xticks([])
+    ax_inset.set_yticks([])
+    ax_inset.set_title("Critical region", fontsize=9)
+    ax_inset.grid(True, alpha=0.3)
+    
+    # Style inset spines
+    for spine in ax_inset.spines.values():
+        spine.set_linewidth(0.8)
     
     ax.set_xlabel('$u_d$', fontsize=12)
     ax.set_ylabel('$n_{\\rm max} - n_{\\rm min}$', fontsize=12)
