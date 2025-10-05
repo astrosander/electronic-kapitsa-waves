@@ -66,13 +66,13 @@ class P:
     nbar_sigma: float = 120.0
 
     L: float = 10.0
-    Nx: int = 812#1512#2524#1024
+    Nx: int = 1600#2048#1218#1512#2524#1024
     t_final: float = 10.0
-    n_save: int = 200#200#200  # Reduced for speed
+    n_save: int = 2000  #200#200  # Reduced for speed
     # rtol: float = 5e-7
     # atol: float = 5e-9
-    rtol = 1e-3  # Relaxed for speed
-    atol = 1e-7  # Relaxed for speed
+    rtol = 1e-9  # Relaxed for speed
+    atol = 1e-14  # Relaxed for speed
     n_floor: float = 1e-7
     dealias_23: bool = True
 
@@ -850,8 +850,8 @@ def run_multiple_ud():
     print(f"  Max spacing: Δu={spacing.max():.4f}")
     print(f"  Spacing around junction (n={n_split}): Δu={spacing[n_split-1]:.4f}")
 
-    u_d_values=[1.5249, 1.5501, 1.6501, 1.7251]#[1.025,1.075,1.125,1.175,1.225,1.275,1.325,1.375,1.425,1.475,1.525,1.575,1.625,1.675,1.725,1.775,1.825,1.875,1.925,1.975]
-
+    u_d_values = np.arange(2.6, 2.8, 0.05)#[1.025,1.075,1.125,1.175,1.225,1.275,1.325,1.375,1.425,1.475,1.525,1.575,1.625,1.675,1.725,1.775,1.825,1.875,1.925,1.975]
+    print(u_d_values)
     for u_d in u_d_values:
         print(f"\n{'='*50}")
         print(f"Running simulation for u_d = {u_d:.4f}")
@@ -862,9 +862,9 @@ def run_multiple_ud():
         
         # Set t_final based on u_d value
         if 1.4 <= u_d <= 2.6:
-            par.t_final = 100.0
+            par.t_final = 100.0/10
         elif 2.6 < u_d < 5.0:
-            par.t_final = 50.0
+            par.t_final = 50.0/10
         else:  # u_d >= 5.0
             par.t_final = 10.0
         
