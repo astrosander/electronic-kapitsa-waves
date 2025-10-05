@@ -12,7 +12,7 @@ if __name__ == "__main__":
         # "multiple_u_d/Nt=20000;rtol = 1e-9;atol = 1e-14",
         # "multiple_u_d/Nx=812;n_save=200;rtol = 1e-3;atol = 1e-7",
         # "multiple_u_d/Nx=812;n_save=200;rtol = 1e-6;atol = 1e-9",
-        # "multiple_u_d/",  
+        # "multiple_u_d/Nx=1212;n_save=200;rtol = 1e-6;atol = 1e-9;t_final=100;50",  
         # "multiple_u_d/delta n=delta p=cos3x-cos5x+cos8x-cos13x",
     ]
     
