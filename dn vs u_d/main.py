@@ -60,6 +60,15 @@ class P:
     sigma_J: float = 2.0**1/2#6.0
     x0: float = 5.0
     source_model: str = "as_given"
+    
+    # Localized dissipation perturbation parameters
+    lambda_diss: float = 0.0  # Amplitude of dissipation perturbation (can be positive or negative)
+    sigma_diss: float = 2.0   # Width of dissipation perturbation
+    
+    # Time-independent Gaussian density perturbation
+    lambda_gauss: float = 0.0  # Amplitude of Gaussian density perturbation
+    sigma_gauss: float = 2.0   # Width of Gaussian density perturbation
+    x0_gauss: float = 5.0      # Center of Gaussian density perturbation
 
     use_nbar_gaussian: bool = False
     nbar_amp: float = 0.0
@@ -80,7 +89,7 @@ class P:
     seed_mode: int = 1
     seed_amp_p: float = 30e-3
 
-    outdir: str = "out_drift"
+    outdir: str = "out_drift/small_dissipation_perturbation"
     cmap: str = "inferno"
 
 par = P()
@@ -113,6 +122,19 @@ _nz_mask = (k2 != 0)
 
 def Gamma(n):
     return par.Gamma0 * np.exp(-np.maximum(n, par.n_floor)/par.w)
+
+def Gamma_spatial(n):
+    """
+    Spatially-dependent damping coefficient with localized perturbation.
+    Gamma_eff(x,n) = Gamma(n) + lambda_diss * exp(-(x-x0)^2/(2*sigma_diss^2))
+    """
+    Gamma_base = Gamma(n)
+    if par.lambda_diss != 0.0:
+        d = periodic_delta(x, par.x0, par.L)
+        perturbation = par.lambda_diss * np.exp(-0.5 * (d / par.sigma_diss)**2)
+        return Gamma_base + perturbation
+    else:
+        return Gamma_base
 
 def Pi0(n):
     return 0.5 * par.U * n**2
@@ -366,11 +388,20 @@ def plot_period_detection(n_initial, n_final, t_initial, t_final, L, u_momentum,
     return u_drift, shift_opt, corr_max
 
 def nbar_profile():
+    nbar_base = np.full_like(x, par.nbar0)
+    
+    # Add time-independent Gaussian perturbation
+    if par.lambda_gauss != 0.0:
+        d_gauss = periodic_delta(x, par.x0_gauss, par.L)
+        gauss_pert = par.lambda_gauss * np.exp(-0.5*(d_gauss/par.sigma_gauss)**2)
+        nbar_base += gauss_pert
+    
+    # Add original Gaussian profile if enabled
     if par.use_nbar_gaussian and par.nbar_amp != 0.0:
         d = periodic_delta(x, par.x0, par.L)
-        return par.nbar0 + par.nbar_amp * np.exp(-0.5*(d/par.nbar_sigma)**2)
-    else:
-        return np.full_like(x, par.nbar0)
+        nbar_base += par.nbar_amp * np.exp(-0.5*(d/par.nbar_sigma)**2)
+    
+    return nbar_base
 
 def pbar_profile(nbar):
     return par.m * nbar * par.u_d
@@ -426,7 +457,8 @@ def rhs(t, y, E_base):
         phi = phi_from_n(n_eff, nbar)
         force_Phi = n_eff * Dx(phi)
 
-    dp_dt = -Gamma(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p)
+    # Use spatially-dependent damping with localized perturbation
+    dp_dt = -Gamma_spatial(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p)
     dp_dt = filter_23(dp_dt)
 
     return np.concatenate([dn_dt, dp_dt])
@@ -611,6 +643,18 @@ def run_once(tag="seed_mode"):
 
     print(f"[Simulation] E_base={E_base}")
     #E_base = 15.0
+    
+    if par.lambda_diss != 0.0:
+        print(f"[Simulation] Localized dissipation: lambda_diss={par.lambda_diss}, sigma_diss={par.sigma_diss}, x0={par.x0}")
+        print(f"[Simulation]   (adds {par.lambda_diss:+.3f}*exp(-(x-{par.x0})^2/(2*{par.sigma_diss}^2)) to Gamma)")
+    else:
+        print(f"[Simulation] No localized dissipation perturbation (lambda_diss=0)")
+    
+    if par.lambda_gauss != 0.0:
+        print(f"[Simulation] Time-independent Gaussian: lambda_gauss={par.lambda_gauss}, sigma_gauss={par.sigma_gauss}, x0_gauss={par.x0_gauss}")
+        print(f"[Simulation]   (adds {par.lambda_gauss:+.3f}*exp(-(x-{par.x0_gauss})^2/(2*{par.sigma_gauss}^2)) to nbar)")
+    else:
+        print(f"[Simulation] No time-independent Gaussian perturbation (lambda_gauss=0)")
 
     y0 = np.concatenate([n0, p0])
     t_eval = np.linspace(0.0, par.t_final, par.n_save)
@@ -850,7 +894,7 @@ def run_multiple_ud():
     print(f"  Max spacing: Δu={spacing.max():.4f}")
     print(f"  Spacing around junction (n={n_split}): Δu={spacing[n_split-1]:.4f}")
 
-    u_d_values = np.arange(2.8, 3.0, 0.05)#[1.025,1.075,1.125,1.175,1.225,1.275,1.325,1.375,1.425,1.475,1.525,1.575,1.625,1.675,1.725,1.775,1.825,1.875,1.925,1.975]
+    u_d_values = np.arange(7.0, 8.0, 0.2)#[1.025,1.075,1.125,1.175,1.225,1.275,1.325,1.375,1.425,1.475,1.525,1.575,1.625,1.675,1.725,1.775,1.825,1.875,1.925,1.975]
     print(u_d_values)
     for u_d in u_d_values:
         print(f"\n{'='*50}")
@@ -858,15 +902,16 @@ def run_multiple_ud():
         print(f"{'='*50}")
         
         par.u_d = u_d
-        par.outdir = f"multiple_u_d/out_drift_ud{u_d:.4f}"
-        
+        par.outdir = f"multiple_u_d/gaussian_dissipation_perturbation(lambda={par.lambda_diss}, sigma={par.sigma_diss}, seed_amp_n={par.seed_amp_n}, seed_amp_p={par.seed_amp_p})/out_drift_ud{u_d:.4f}"
+        print(par.outdir)
         # Set t_final based on u_d value
-        if 1.4 <= u_d <= 3.0:
-            par.t_final = 50.0
-        elif 3.0 < u_d < 5.0:
-            par.t_final = 50.0/4
-        else:  # u_d >= 5.0
-            par.t_final = 10.0
+        par.t_final = 2*10/u_d
+        # if 1.4 <= u_d <= 3.0:
+        #     par.t_final = 2*10/u_d#50.0/5
+        # elif 3.0 < u_d < 5.0:
+        #     par.t_final = 2*10/u_d#50.0/10
+        # else:  # u_d >= 5.0
+        #     par.t_final = 2*10/u_d#10.0/5
         
         par.n_save = 200
         
@@ -889,4 +934,34 @@ def run_multiple_ud():
 
 if __name__ == "__main__":
     # run_all_modes_snapshots(tag="seed_modes_1to5")
+    
+    # Example: Test localized dissipation perturbation
+    # To test increased dissipation at x=x0:
+    par.lambda_diss = 1.0      # Positive = increased damping
+    par.sigma_diss =  -1.0       # Width of perturbation
+    par.x0 = 5.0               # Location of perturbation
+    
+    par.seed_amp_n = 0.0
+    par.seed_amp_p = 0.0
+    
+    par.Nx = 812
+
+
+    # Ensure NO potential perturbations are active (except time-independent Gaussian)
+    par.use_nbar_gaussian = False
+    par.nbar_amp = 0.0
+    par.include_poisson = False
+    
+    # Enable time-independent Gaussian perturbation
+    par.lambda_gauss = 0.1      # Small positive density bump
+    par.sigma_gauss = 2.0       # Width of Gaussian
+    par.x0_gauss = 5.0          # Center at x=5.0
+    
+    #   run_once(tag="increased_dissipation")
     run_multiple_ud()
+
+    #
+    # To test decreased dissipation (can drive instabilities):
+    #   par.lambda_diss = -0.5     # Negative = decreased damping
+    #   par.sigma_diss = 2.0
+    #   run_once(tag="decreased_dissipation")
