@@ -546,54 +546,336 @@ def plot_velocity_vs_ud(data_files, tag="velocity_vs_ud"):
     
     return u_d_values, u_true_values, n_pulses_values, frequency_values
 
-def plot_multiple_ud_panel(data_files=None):
-    """Plot density profiles for multiple u_d values"""
+def plot_multiple_ud_panel(data_files=None, base_dirs=None, labels=None, max_rows=None):
+    """Plot density profiles panels.
+    
+    Modes:
+      - Single column (default): pass data_files or none to auto-discover in one dir.
+      - Multi-column (requested): pass base_dirs (list) and optional labels; columns per base_dir.
+    """
+    # Helper: scan a base_dir for u_d->filepath mapping
+    def scan_dir(dir_path):
+        import re
+        mapping = {}
+        if not os.path.isdir(dir_path):
+            return mapping
+        for item in os.listdir(dir_path):
+            if item.startswith("out_drift_ud"):
+                subdir = os.path.join(dir_path, item)
+                if not os.path.isdir(subdir):
+                    continue
+                m = re.search(r'ud([\d.]+)', item)
+                if not m:
+                    continue
+                try:
+                    u_d_val = float(m.group(1))
+                except ValueError:
+                    continue
+                # pick first data_*.npz
+                files = [f for f in os.listdir(subdir) if f.startswith("data_") and f.endswith(".npz")]
+                if files:
+                    mapping[u_d_val] = os.path.join(subdir, files[0])
+        return mapping
+
+    if base_dirs is None:
+        # Single column fallback
+        if data_files is None:
+            data_files = find_available_simulations()
+        if not data_files:
+            print("No data files found for panel plot!")
+            return
+        if max_rows is not None:
+            data_files = data_files[:max_rows]
+        n_files = len(data_files)
+        fig, axes = plt.subplots(n_files, 1, figsize=(8.0, 2*n_files))
+        if n_files == 1:
+            axes = [axes]
+        for i, (filename, u_d) in enumerate(data_files):
+            try:
+                data = load_data(filename)
+                n_t = data['n_t']
+                L = data['L']
+                x = np.linspace(0, L, n_t.shape[0], endpoint=False)
+                
+                # n_final = n_t[:, -1]
+                # axes[i].plot(x, n_final, 'b-', linewidth=1.3)
+                
+                # Average over last 20% of time points
+                n_avg = np.mean(n_t[:, -max(1, n_t.shape[1]//5):], axis=1)
+                axes[i].plot(x, n_avg, 'b-', linewidth=1.3)
+                axes[i].text(0.02, 0.95, f'$u_d={u_d}$', transform=axes[i].transAxes,
+                             fontsize=9, va='top',
+                             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                axes[i].grid(True, alpha=0.3)
+                axes[i].set_xlim(0, L)
+                axes[i].tick_params(labelsize=8)
+                if i == n_files - 1:
+                    axes[i].set_xlabel('$x$', fontsize=11)
+            except Exception as e:
+                print(f"Error loading {filename}: {e}")
+                axes[i].text(0.5, 0.5, f'Error loading u_d={u_d}', transform=axes[i].transAxes, ha='center', va='center')
+        plt.subplots_adjust(hspace=0.1, top=0.95)
+        os.makedirs("multiple_u_d", exist_ok=True)
+        plt.savefig("multiple_u_d/final_profiles_panel.png", dpi=160, bbox_inches='tight')
+        plt.savefig("multiple_u_d/final_profiles_panel.svg", dpi=160, bbox_inches='tight')
+        plt.show()
+        plt.close()
+        return
+
+    # Multi-column grid
+    if labels is None:
+        labels = [os.path.basename(d.rstrip('/\\')) or d for d in base_dirs]
+    n_cols = len(base_dirs)
+    dir_maps = [scan_dir(d) for d in base_dirs]
+    # Union of all u_d values
+    all_ud = sorted(set().union(*[set(m.keys()) for m in dir_maps]))
+    if max_rows is not None:
+        all_ud = all_ud[:max_rows]
+    n_rows = len(all_ud)
+    if n_rows == 0:
+        print("No data files found across provided base_dirs for panel plot!")
+        return
+    # Wider figure per column, compact per row
+    fig_width = max(4.8 * n_cols, 8.0)
+    fig_height = max(1.6 * n_rows, 3.2)
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        figsize=(fig_width, fig_height),
+        squeeze=False, sharex=False, sharey=True
+    )
+    for r, u_d in enumerate(all_ud):
+        for c, (label, dmap) in enumerate(zip(labels, dir_maps)):
+            ax = axes[r][c]
+            filepath = dmap.get(u_d)
+            if filepath is None:
+                ax.text(0.5, 0.5, 'No data', ha='center', va='center')
+                ax.axis('off')
+                continue
+            try:
+                data = load_data(filepath)
+                n_t = data['n_t']
+                L = data['L']
+                x = np.linspace(0, L, n_t.shape[0], endpoint=False)
+                # n_final = n_t[:, -1]
+                # ax.plot(x, n_final, lw=1.2)
+
+                # Average over last 20% of time points
+                n_avg = np.mean(n_t[:, -max(1, n_t.shape[1]//5):], axis=1)
+                ax.plot(x, n_avg, lw=1.2)
+                ax.grid(True, alpha=0.25)
+                ax.set_xlim(0, L)
+            except Exception as e:
+                print(f"Error loading {filepath}: {e}")
+                ax.text(0.5, 0.5, 'Error', ha='center', va='center')
+                ax.axis('off')
+                continue
+            if c == 0:
+                ax.set_ylabel(f"$u_d={u_d:g}$", fontsize=9)
+            if r == n_rows - 1:
+                ax.set_xlabel('$x$', fontsize=10)
+            if r == 0:
+                ax.set_title(label, fontsize=10)
+            ax.tick_params(labelsize=8)
+    # Use available space with minimal gaps
+    fig.subplots_adjust(left=0.06, right=0.995, top=0.97, bottom=0.06,
+                        wspace=0.18, hspace=0.06)
+    os.makedirs("multiple_u_d", exist_ok=True)
+    plt.savefig("multiple_u_d/final_profiles_panel_grid_n.png", dpi=180, bbox_inches='tight')
+    plt.savefig("multiple_u_d/final_profiles_panel_grid_n.pdf", dpi=180, bbox_inches='tight')
+    plt.show()
+    plt.close()
+
+def plot_multiple_ud_panel_p(data_files=None, base_dirs=None, labels=None, max_rows=None):
+    """Plot momentum profiles panels (final time). Supports multiple columns for base_dirs."""
+    def scan_dir(dir_path):
+        import re
+        mapping = {}
+        if not os.path.isdir(dir_path):
+            return mapping
+        for item in os.listdir(dir_path):
+            if item.startswith("out_drift_ud"):
+                subdir = os.path.join(dir_path, item)
+                if not os.path.isdir(subdir):
+                    continue
+                m = re.search(r'ud([\d.]+)', item)
+                if not m:
+                    continue
+                try:
+                    u_d_val = float(m.group(1))
+                except ValueError:
+                    continue
+                files = [f for f in os.listdir(subdir) if f.startswith("data_") and f.endswith(".npz")]
+                if files:
+                    mapping[u_d_val] = os.path.join(subdir, files[0])
+        return mapping
+
+    if base_dirs is None:
+        if data_files is None:
+            data_files = find_available_simulations()
+        if not data_files:
+            print("No data files found for momentum panel plot!")
+            return
+        if max_rows is not None:
+            data_files = data_files[:max_rows]
+        n_files = len(data_files)
+        fig, axes = plt.subplots(n_files, 1, figsize=(8.0, 2*n_files))
+        if n_files == 1:
+            axes = [axes]
+        for i, (filename, u_d) in enumerate(data_files):
+            try:
+                data = load_data(filename)
+                p_t = data['p_t']
+                L = data['L']
+                # x = np.linspace(0, L, p_t.shape[0], endpoint=False)
+                # p_final = p_t[:, -1]
+                # axes[i].plot(x, p_final, 'r-', linewidth=1.3)
+                # Average over last 20% of time points
+                p_avg = np.mean(p_t[:, -max(1, p_t.shape[1]//5):], axis=1)
+                axes[i].plot(x, p_avg, 'r-', linewidth=1.3)
+                axes[i].text(0.02, 0.95, f'$u_d={u_d}$', transform=axes[i].transAxes,
+                             fontsize=9, va='top',
+                             bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                axes[i].grid(True, alpha=0.3)
+                axes[i].set_xlim(0, L)
+                axes[i].tick_params(labelsize=8)
+                if i == n_files - 1:
+                    axes[i].set_xlabel('$x$', fontsize=11)
+            except Exception as e:
+                print(f"Error loading {filename}: {e}")
+                axes[i].text(0.5, 0.5, f'Error loading u_d={u_d}', transform=axes[i].transAxes, ha='center', va='center')
+        plt.subplots_adjust(hspace=0.1, top=0.95)
+        os.makedirs("multiple_u_d", exist_ok=True)
+        plt.savefig("multiple_u_d/final_profiles_panel_p.png", dpi=160, bbox_inches='tight')
+        plt.savefig("multiple_u_d/final_profiles_panel_p.svg", dpi=160, bbox_inches='tight')
+        plt.show()
+        plt.close()
+        return
+
+    if labels is None:
+        labels = [os.path.basename(d.rstrip('/\\')) or d for d in base_dirs]
+    n_cols = len(base_dirs)
+    dir_maps = [scan_dir(d) for d in base_dirs]
+    all_ud = sorted(set().union(*[set(m.keys()) for m in dir_maps]))
+    if max_rows is not None:
+        all_ud = all_ud[:max_rows]
+    n_rows = len(all_ud)
+    if n_rows == 0:
+        print("No data files found across provided base_dirs for momentum panel plot!")
+        return
+    # Wider figure per column, compact per row
+    fig_width = max(4.8 * n_cols, 8.0)
+    fig_height = max(1.6 * n_rows, 3.2)
+    fig, axes = plt.subplots(
+        n_rows, n_cols,
+        figsize=(fig_width, fig_height),
+        squeeze=False, sharex=False, sharey=True
+    )
+    for r, u_d in enumerate(all_ud):
+        for c, (label, dmap) in enumerate(zip(labels, dir_maps)):
+            ax = axes[r][c]
+            filepath = dmap.get(u_d)
+            if filepath is None:
+                ax.text(0.5, 0.5, 'No data', ha='center', va='center')
+                ax.axis('off')
+                continue
+            try:
+                data = load_data(filepath)
+                p_t = data['p_t']
+                L = data['L']
+                x = np.linspace(0, L, p_t.shape[0], endpoint=False)
+                # p_final = p_t[:, -1]
+                # ax.plot(x, p_final, lw=1.2, color='C1')
+
+
+                # Average over last 20% of time points
+                p_avg = np.mean(p_t[:, -max(1, p_t.shape[1]//5):], axis=1)
+                ax.plot(x, p_avg, lw=1.2, color='C1')
+                ax.grid(True, alpha=0.25)
+                ax.set_xlim(0, L)
+            except Exception as e:
+                print(f"Error loading {filepath}: {e}")
+                ax.text(0.5, 0.5, 'Error', ha='center', va='center')
+                ax.axis('off')
+                continue
+            if c == 0:
+                ax.set_ylabel(f"$u_d={u_d:g}$", fontsize=9)
+            if r == n_rows - 1:
+                ax.set_xlabel('$x$', fontsize=10)
+            if r == 0:
+                ax.set_title(label, fontsize=10)
+            ax.tick_params(labelsize=8)
+    # Use available space with minimal gaps
+    fig.subplots_adjust(left=0.06, right=0.995, top=0.97, bottom=0.06,
+                        wspace=0.18, hspace=0.06)
+    os.makedirs("multiple_u_d", exist_ok=True)
+    plt.savefig("multiple_u_d/final_profiles_panel_grid_p.png", dpi=180, bbox_inches='tight')
+    plt.savefig("multiple_u_d/final_profiles_panel_grid_p.pdf", dpi=180, bbox_inches='tight')
+    plt.show()
+    plt.close()
+
+def plot_overlay_final_profiles_n(data_files=None):
+    """Overlay final n(x) for all u_d on a single axes."""
     if data_files is None:
         data_files = find_available_simulations()
-    
     if not data_files:
-        print("No data files found for panel plot!")
+        print("No data files found for overlay plot (n)!")
         return
     
-    # Limit to first 10 files for readability
-    data_files = data_files#[:20]
-    n_files = len(data_files)
-    
-    fig, axes = plt.subplots(n_files, 1, figsize=(len(data_files), 2*n_files))
-    if n_files == 1:
-        axes = [axes]
-    
-    for i, (filename, u_d) in enumerate(data_files):
+    plt.figure(figsize=(9.0, 4.0))
+    for filename, u_d in data_files:
         try:
             data = load_data(filename)
             n_t = data['n_t']
-            t = data['t']
             L = data['L']
-            
             x = np.linspace(0, L, n_t.shape[0], endpoint=False)
             n_final = n_t[:, -1]
-            
-            axes[i].plot(x, n_final, 'b-', linewidth=1.5)
-            axes[i].text(0.02, 0.95, f'$u_d={u_d}$', transform=axes[i].transAxes, 
-                        fontsize=10, verticalalignment='top', 
-                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-            axes[i].grid(True, alpha=0.3)
-            axes[i].set_xlim(0, L)
-            axes[i].tick_params(labelsize=8)
-            
-            if i == n_files - 1:
-                axes[i].set_xlabel('$x$', fontsize=12)
-            
+            plt.plot(x, n_final, lw=1.2, label=f"u_d={u_d:g}")
         except Exception as e:
             print(f"Error loading {filename}: {e}")
-            axes[i].text(0.5, 0.5, f'Error loading u_d={u_d}', 
-                        transform=axes[i].transAxes, ha='center', va='center')
+            continue
     
-    plt.subplots_adjust(hspace=0.1, top=0.95)
-    
+    plt.xlabel('$x$')
+    plt.ylabel('$n(x, t_{\\rm final})$')
+    plt.title('Final density profiles across $u_d$')
+    plt.grid(True, alpha=0.3)
+    plt.legend(ncol=3, fontsize=8, frameon=False)
     os.makedirs("multiple_u_d", exist_ok=True)
-    plt.savefig("multiple_u_d/final_profiles_panel.png", dpi=160, bbox_inches='tight')
-    plt.savefig("multiple_u_d/final_profiles_panel.svg", dpi=160, bbox_inches='tight')
+    plt.tight_layout()
+    plt.savefig("multiple_u_d/final_profiles_overlay_n.png", dpi=180, bbox_inches='tight')
+    plt.savefig("multiple_u_d/final_profiles_overlay_n.pdf", dpi=180, bbox_inches='tight')
+    plt.show()
+    plt.close()
+
+def plot_overlay_final_profiles_p(data_files=None):
+    """Overlay final p(x) for all u_d on a single axes."""
+    if data_files is None:
+        data_files = find_available_simulations()
+    if not data_files:
+        print("No data files found for overlay plot (p)!")
+        return
+    
+    plt.figure(figsize=(9.0, 4.0))
+    for filename, u_d in data_files:
+        try:
+            data = load_data(filename)
+            p_t = data['p_t']
+            L = data['L']
+            x = np.linspace(0, L, p_t.shape[0], endpoint=False)
+            p_final = p_t[:, -1]
+            plt.plot(x, p_final, lw=1.2, label=f"u_d={u_d:g}")
+        except Exception as e:
+            print(f"Error loading {filename}: {e}")
+            continue
+    
+    plt.xlabel('$x$')
+    plt.ylabel('$p(x, t_{\\rm final})$')
+    plt.title('Final momentum profiles across $u_d$')
+    plt.grid(True, alpha=0.3)
+    plt.legend(ncol=3, fontsize=8, frameon=False)
+    os.makedirs("multiple_u_d", exist_ok=True)
+    plt.tight_layout()
+    plt.savefig("multiple_u_d/final_profiles_overlay_p.png", dpi=180, bbox_inches='tight')
+    plt.savefig("multiple_u_d/final_profiles_overlay_p.pdf", dpi=180, bbox_inches='tight')
     plt.show()
     plt.close()
 
@@ -1011,7 +1293,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
         all_delta_n.append(delta_n)
     
     # Create plot - same style as plot_combined_velocity_analysis
-    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    fig, ax = plt.subplots(1, 1, figsize=(12,9))
     
     # Same color for all datasets, different marker shapes
     color = 'black'  # Single color for all datasets
@@ -1054,7 +1336,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
                 delta_n_smooth = sqrt_model(u_d_smooth, a_fit)
                 
                 ax.plot(u_d_smooth, delta_n_smooth, 'r-', linewidth=1.5, alpha=0.9, 
-                        label=f'$\\Delta n = {a_fit:.3f} \\sqrt{{u_d - 2.74}}$')
+                        label=f'${a_fit:.3f} \\sqrt{{u_d - 2.74}}$')
                 
                 print(f"\nSquare-root fit results:")
                 print(f"  Fit parameter: a = {a_fit:.4f}")
@@ -1110,14 +1392,14 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
     zoom_ylim = (-0.005, 0.030)
     
     # Add rectangle to indicate zoom region
-    rect = Rectangle((zoom_xlim[0], zoom_ylim[0]), 
-                    zoom_xlim[1] - zoom_xlim[0], 
-                    zoom_ylim[1] - zoom_ylim[0],
-                    edgecolor="red", facecolor="none", linewidth=1.0, linestyle='--')
-    ax.add_patch(rect)
+    # rect = Rectangle((zoom_xlim[0], zoom_ylim[0]), 
+    #                 zoom_xlim[1] - zoom_xlim[0], 
+    #                 zoom_ylim[1] - zoom_ylim[0],
+    #                 edgecolor="red", facecolor="none", linewidth=1.0, linestyle='--')
+    # ax.add_patch(rect)
     
     # Create inset axes for zoom
-    ax_inset = fig.add_axes([0.15, 0.6, 0.25, 0.25])  # [left, bottom, width, height]
+    # ax_inset = fig.add_axes([0.15, 0.6, 0.25, 0.25])  # [left, bottom, width, height]
     
     # Add square-root fit to inset if available (plot FIRST so it appears below data points)
     if all_u_d:
@@ -1145,25 +1427,25 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
                 delta_n_zoom_fit = sqrt_model(u_d_zoom_fit, a_fit)
                 
                 # Only plot if within zoom y-limits
-                mask_zoom_fit = (delta_n_zoom_fit >= zoom_ylim[0]) & (delta_n_zoom_fit <= zoom_ylim[1])
-                if np.any(mask_zoom_fit):
-                    ax_inset.plot(u_d_zoom_fit[mask_zoom_fit], delta_n_zoom_fit[mask_zoom_fit], 
-                                'r-', linewidth=1.5, alpha=0.9)
+                # mask_zoom_fit = (delta_n_zoom_fit >= zoom_ylim[0]) & (delta_n_zoom_fit <= zoom_ylim[1])
+                # if np.any(mask_zoom_fit):
+                #     ax_inset.plot(u_d_zoom_fit[mask_zoom_fit], delta_n_zoom_fit[mask_zoom_fit], 
+                #                 'r-', linewidth=1.5, alpha=0.9)
         except Exception as e:
             pass  # Silent fail for inset
     
     # Plot the same data in the inset (show all data, let axis limits handle the zoom)
     # Plot data points AFTER the approximation so they appear on top
-    for idx, label in enumerate(labels):
-        if not data_by_label[label]['u_d']:
-            continue
+    # for idx, label in enumerate(labels):
+    #     if not data_by_label[label]['u_d']:
+    #         continue
         
-        u_d_arr = np.array(data_by_label[label]['u_d'])
-        delta_n_arr = np.array(data_by_label[label]['delta_n'])
+    #     u_d_arr = np.array(data_by_label[label]['u_d'])
+    #     delta_n_arr = np.array(data_by_label[label]['delta_n'])
         
-        marker = markers[idx % len(markers)]
+    #     marker = markers[idx % len(markers)]
         
-        ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, s=20, alpha=0.8)
+    #     ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, s=20, alpha=0.8)
 
         # if "25" in label:
         #     ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, color="magenta", s=20, alpha=0.8)
@@ -1173,20 +1455,20 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
         #     ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, color="black", s=20, alpha=0.8)
     
     # Add reference lines in inset
-    ax_inset.axvline(x=2.74, color='blue', linestyle='--', linewidth=1.0, alpha=0.8)
-    ax_inset.axhline(y=0.0, color='black', linestyle='--', linewidth=1.0, alpha=0.8)
+    # ax_inset.axvline(x=2.74, color='blue', linestyle='--', linewidth=1.0, alpha=0.8)
+    # ax_inset.axhline(y=0.0, color='black', linestyle='--', linewidth=1.0, alpha=0.8)
     
     # Set inset properties
-    ax_inset.set_xlim(zoom_xlim)
-    ax_inset.set_ylim(zoom_ylim)
-    ax_inset.set_xticks([])
-    ax_inset.set_yticks([])
-    ax_inset.set_title("Critical region", fontsize=9)
-    ax_inset.grid(True, alpha=0.3)
+    # ax_inset.set_xlim(zoom_xlim)
+    # ax_inset.set_ylim(zoom_ylim)
+    # ax_inset.set_xticks([])
+    # ax_inset.set_yticks([])
+    # ax_inset.set_title("Critical region", fontsize=9)
+    # ax_inset.grid(True, alpha=0.3)
     
     # Style inset spines
-    for spine in ax_inset.spines.values():
-        spine.set_linewidth(0.8)
+    # for spine in ax_inset.spines.values():
+    #     spine.set_linewidth(0.8)
     
     ax.set_xlabel('$u_d$', fontsize=12)
     ax.set_ylabel('$n_{\\rm max} - n_{\\rm min}$', fontsize=12)

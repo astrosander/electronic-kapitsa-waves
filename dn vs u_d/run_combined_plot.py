@@ -1,39 +1,67 @@
 #!/usr/bin/env python3
 """Run velocity analysis for multiple parameter sets."""
 
-from plot_from_data import plot_combined_velocity_analysis, plot_delta_n_vs_ud
+from plot_from_data import (
+    plot_combined_velocity_analysis,
+    plot_delta_n_vs_ud,
+    plot_multiple_ud_panel,
+    plot_multiple_ud_panel_p,
+    plot_overlay_final_profiles_n,
+    plot_overlay_final_profiles_p,
+)
 
 if __name__ == "__main__":
     base_dirs = [
-        "../mass injection/multiple_u_d/delta n=delta p=0.03(cos3x+cos5x+cos8x+cos13x)",
-        "../mass injection/multiple_u_d/delta n=delta p=0.05(cos3x+cos5x+cos8x+cos13x)",
-        "../mass injection/multiple_u_d/quadratic;delta n=delta p=0.05(cos3x+cos5x+cos8x+cos13x)",
-        # "multiple_u_d/delta n=delta p=0.03(cos3x+cos5x+cos8x+cos13x); lin u_d2",
-        # "multiple_u_d/Nt=20000;rtol = 1e-9;atol = 1e-14",
-        # "multiple_u_d/Nx=812;n_save=200;rtol = 1e-3;atol = 1e-7",
-        # "multiple_u_d/Nx=812;n_save=200;rtol = 1e-6;atol = 1e-9",
-        # "multiple_u_d/Nx=1212;n_save=200;rtol = 1e-6;atol = 1e-9;t_final=100;50",  
-        # "multiple_u_d/delta n=delta p=cos3x-cos5x+cos8x-cos13x",
+        "multiple_u_d/gaussian_dissipation_perturbation(lambda=1.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)",
+        # "multiple_u_d",
+        # "multiple_u_d/dissipation_perturbation",
+        # "multiple_u_d/medium_dissipation_perturbation",
+        # "multiple_u_d/small_dissipation_perturbation",
+        # "multiple_u_d/dissipation_perturbation(lambda=1.0, sigma=2.0, seed_amp_n=0.0, seed_amp_p=0.0)",
+        # "multiple_u_d/medium_dissipation_perturbation(lambda=0.5, sigma=1.0, seed_amp_n=0.0, seed_amp_p=0.0)",
+        # "multiple_u_d/small_dissipation_perturbation(lambda=0.25, sigma=0.5, seed_amp_n=0.0, seed_amp_p=0.0)",
+        # "multiple_u_d/dissipation_perturbation(lambda=2.0, sigma=1.0, seed_amp_n=0.0, seed_amp_p=0.0)",
+        # "multiple_u_d/dissipation_perturbation(lambda=3.0, sigma=1.0, seed_amp_n=0.0, seed_amp_p=0.0)",
+        # "multiple_u_d/dissipation_perturbation(lambda=4.0, sigma=1.0, seed_amp_n=0.0, seed_amp_p=0.0)",
+        # "multiple_u_d/dissipation_perturbation(lambda=1.0, sigma=2.0, seed_amp_n=0.0, seed_amp_p=0.0)",
+        # "multiple_u_d/dissipation_perturbation(lambda=1.0, sigma=4.0, seed_amp_n=0.0, seed_amp_p=0.0)",
+        # "multiple_u_d/dissipation_perturbation(lambda=1.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)",
+        # "multiple_u_d/dissipation_perturbation(lambda=1.0, sigma=-2.0, seed_amp_n=0.0, seed_amp_p=0.0)",
     ]
     
     # custom_labels=base_dirs
 
     custom_labels = [
-        "$\\delta n,\\delta p = 0.03$",
-            "$\\delta n,\\delta p = 0.05$ non-unif.",
-            "$\\delta n,\\delta p = 0.05$ quad.",
-        # "$\\delta n,\\delta p = 0.03$, lin. $u_d<2$",
-        # "$t_{\\rm final} = 25$",
-        # "$t_{\\rm final} = 100$",
-        # "sin(3x)",
-        # "$N_t=20000$",
-        # "$N_x=1600$",
-        # "$N_x=1600$",
-        # "$cur$",
-        # "$$",
-        # "cos3x+cos5x+cos8x+cos13x",
-        # "cos3x-cos5x+cos8x-cos13x",
+        "$\\delta n, \\delta p = 0.03$",
+        "$\\lambda=1.0, \\sigma=2.0$",
+        "$\\lambda=0.5, \\sigma=1.0$",
+        "$\\lambda=0.25, \\sigma=0.5$",
+        "$\\lambda=2.0, \\sigma=1.0$",
+        "$\\lambda=3.0, \\sigma=1.0$",
+        "$\\lambda=4.0, \\sigma=1.0$",
+        "$\\lambda=1.0, \\sigma=2.0$",
+        "$\\lambda=1.0, \\sigma=4.0$",
+        "$\\lambda=1.0, \\sigma=-1.0$",
+        "$\\lambda=1.0, \\sigma=-2.0$",
     ]
+
+    # custom_labels = [
+    #     "$\\lambda=0, \\sigma=0.0, (\\delta n, \\delta p = 0.03)$",
+    #     "$\\lambda=1.0, \\sigma=2.0, (\\delta n, \\delta p = 0.03)$",
+    #     "$\\lambda=0.5, \\sigma=1.0, (\\delta n, \\delta p = 0.03)$",
+    #     "$\\lambda=0.25, \\sigma=0.5, (\\delta n, \\delta p = 0.03)$",
+    #     "$\\lambda=1.0, \\sigma=2.0, (\\delta n, \\delta p = 0.0)$",
+    #     "$\\lambda=0.5, \\sigma=1.0, (\\delta n, \\delta p = 0.0)$",
+    #     "$\\lambda=0.25, \\sigma=0.5, (\\delta n, \\delta p = 0.0)$",
+    #     "$\\lambda=2.0, \\sigma=1.0, (\\delta n, \\delta p = 0.0)$",
+    #     "$\\lambda=3.0, \\sigma=1.0, (\\delta n, \\delta p = 0.0)$",
+    #     "$\\lambda=4.0, \\sigma=1.0, (\\delta n, \\delta p = 0.0)$",
+    #     "$\\lambda=1.0, \\sigma=2.0, (\\delta n, \\delta p = 0.0)$",
+    #     "$\\lambda=1.0, \\sigma=4.0, (\\delta n, \\delta p = 0.0)$",
+    #     "$\\lambda=1.0, \\sigma=-1.0, (\\delta n, \\delta p = 0.0)$",
+    #     "$\\lambda=1.0, \\sigma=-2.0, (\\delta n, \\delta p = 0.0)$",
+    # ]
+    
     
     print("=" * 60)
     print("VELOCITY ANALYSIS: Multiple Parameter Sets")
@@ -45,11 +73,19 @@ if __name__ == "__main__":
     
     # Plot delta n vs u_d
     print("\nGenerating delta n vs u_d plot...")
-    delta_n_data = plot_delta_n_vs_ud(base_dirs, labels=custom_labels)
+    # delta_n_data = plot_delta_n_vs_ud(base_dirs, labels=custom_labels)
+    
+    # Panel plots of final n(x) and p(x) with columns per base_dir
+    print("\nGenerating multi-column panel of final n(x) across u_d and datasets...")
+    plot_multiple_ud_panel(base_dirs=base_dirs, labels=custom_labels)
+    print("Generating multi-column panel of final p(x) across u_d and datasets...")
+    # plot_multiple_ud_panel_p(base_dirs=base_dirs, labels=custom_labels)
     
     print("\n" + "=" * 60)
     print("Analysis complete! Generated:")
     print("- velocity_vs_ud_combined.png")
     print("- delta_n_vs_ud.png")
+    print("- final_profiles_panel_grid_n.png (n panel, columns per dataset)")
+    print("- final_profiles_panel_grid_p.png (p panel, columns per dataset)")
     print("=" * 60)
 
