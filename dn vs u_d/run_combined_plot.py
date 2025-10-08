@@ -12,11 +12,15 @@ from plot_from_data import (
 
 if __name__ == "__main__":
     base_dirs = [
-        "multiple_u_d/gaussian_dissipation_perturbation(lambda=1.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)",
-        # "multiple_u_d",
+        "multiple_u_d/",
+        # "multiple_u_d/no_inhomogeneity(lambda=0.0, sigma=-1.0, seed_amp_n=0.01, seed_amp_p=0.01)",
+        # "multiple_u_d/no_inhomogeneity(lambda=0.0, sigma=-1.0, seed_amp_n=0.03, seed_amp_p=0.03)",
+        # "multiple_u_d/no_inhomogeneity(lambda=0.0, sigma=-1.0, seed_amp_n=0.05, seed_amp_p=0.05)",
+        # "multiple_u_d/no_inhomogeneity(lambda=0.0, sigma=-1.0, seed_amp_n=0.07, seed_amp_p=0.07)",
         # "multiple_u_d/dissipation_perturbation",
         # "multiple_u_d/medium_dissipation_perturbation",
         # "multiple_u_d/small_dissipation_perturbation",
+
         # "multiple_u_d/dissipation_perturbation(lambda=1.0, sigma=2.0, seed_amp_n=0.0, seed_amp_p=0.0)",
         # "multiple_u_d/medium_dissipation_perturbation(lambda=0.5, sigma=1.0, seed_amp_n=0.0, seed_amp_p=0.0)",
         # "multiple_u_d/small_dissipation_perturbation(lambda=0.25, sigma=0.5, seed_amp_n=0.0, seed_amp_p=0.0)",
@@ -24,7 +28,7 @@ if __name__ == "__main__":
         # "multiple_u_d/dissipation_perturbation(lambda=3.0, sigma=1.0, seed_amp_n=0.0, seed_amp_p=0.0)",
         # "multiple_u_d/dissipation_perturbation(lambda=4.0, sigma=1.0, seed_amp_n=0.0, seed_amp_p=0.0)",
         # "multiple_u_d/dissipation_perturbation(lambda=1.0, sigma=2.0, seed_amp_n=0.0, seed_amp_p=0.0)",
-        # "multiple_u_d/dissipation_perturbation(lambda=1.0, sigma=4.0, seed_amp_n=0.0, seed_amp_p=0.0)",
+        # "multiple_u_d/dissipation_perturbation(lambda=1.0, sigma=4.0, seed_amp_n=0.0, seed_amp_p=0.0)",   
         # "multiple_u_d/dissipation_perturbation(lambda=1.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)",
         # "multiple_u_d/dissipation_perturbation(lambda=1.0, sigma=-2.0, seed_amp_n=0.0, seed_amp_p=0.0)",
     ]
@@ -33,18 +37,20 @@ if __name__ == "__main__":
 
     custom_labels = [
         "$\\delta n, \\delta p = 0.03$",
-        "$\\lambda=1.0, \\sigma=2.0$",
-        "$\\lambda=0.5, \\sigma=1.0$",
-        "$\\lambda=0.25, \\sigma=0.5$",
-        "$\\lambda=2.0, \\sigma=1.0$",
-        "$\\lambda=3.0, \\sigma=1.0$",
-        "$\\lambda=4.0, \\sigma=1.0$",
-        "$\\lambda=1.0, \\sigma=2.0$",
-        "$\\lambda=1.0, \\sigma=4.0$",
-        "$\\lambda=1.0, \\sigma=-1.0$",
-        "$\\lambda=1.0, \\sigma=-2.0$",
-    ]
+        # "$\\delta n, \\delta p = 0.01$",
+        # "$\\delta n, \\delta p = 0.03$",
+        # "$\\delta n, \\delta p = 0.05$",
+        # "$\\delta n, \\delta p = 0.07$",
 
+        # "$\\lambda=2.0, \\sigma=1.0$",
+        # "$\\lambda=3.0, \\sigma=1.0$",
+        # "$\\lambda=4.0, \\sigma=1.0$",
+        # "$\\lambda=1.0, \\sigma=2.0$",
+        # "$\\lambda=1.0, \\sigma=4.0$",
+        # "$\\lambda=1.0, \\sigma=-1.0$",
+        # "$\\lambda=1.0, \\sigma=-2.0$",
+    ]
+    # custom_labels=base_dirs
     # custom_labels = [
     #     "$\\lambda=0, \\sigma=0.0, (\\delta n, \\delta p = 0.03)$",
     #     "$\\lambda=1.0, \\sigma=2.0, (\\delta n, \\delta p = 0.03)$",
@@ -69,15 +75,15 @@ if __name__ == "__main__":
     
     # Plot velocity analysis (u_true, n_pulses, frequency)
     print("Generating velocity analysis (u_true, n_pulses, frequency)...")
-    # velocity_data = plot_combined_velocity_analysis(base_dirs, labels=custom_labels)
+    velocity_data = plot_combined_velocity_analysis(base_dirs, labels=custom_labels)
     
     # Plot delta n vs u_d
     print("\nGenerating delta n vs u_d plot...")
-    # delta_n_data = plot_delta_n_vs_ud(base_dirs, labels=custom_labels)
+    delta_n_data = plot_delta_n_vs_ud(base_dirs, labels=custom_labels)
     
     # Panel plots of final n(x) and p(x) with columns per base_dir
     print("\nGenerating multi-column panel of final n(x) across u_d and datasets...")
-    plot_multiple_ud_panel(base_dirs=base_dirs, labels=custom_labels)
+    # plot_multiple_ud_panel(base_dirs=base_dirs, labels=custom_labels)
     print("Generating multi-column panel of final p(x) across u_d and datasets...")
     # plot_multiple_ud_panel_p(base_dirs=base_dirs, labels=custom_labels)
     
