@@ -94,31 +94,49 @@ class P:
 
 par = P()
 
-x = np.linspace(0.0, par.L, par.Nx, endpoint=False)
-dx = x[1] - x[0]
-k = 2*np.pi*fftfreq(par.Nx, d=dx)
-ik = 1j*k
-k2 = k**2
+# Global arrays will be created dynamically based on current par.Nx
+x = None
+dx = None
+k = None
+ik = None
+k2 = None
 
 # Pre-compile FFT operations for speed
 _fft_cache = {}
 
+def _update_global_arrays():
+    """Update global arrays based on current par.Nx"""
+    global x, dx, k, ik, k2, _kc, _nz_mask
+    x = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+    dx = x[1] - x[0]
+    k = 2*np.pi*fftfreq(par.Nx, d=dx)
+    ik = 1j*k
+    k2 = k**2
+    _kc = par.Nx//3
+    _nz_mask = (k2 != 0)
+
 def Dx(f):  
+    # Ensure arrays are up to date
+    if k is None or len(k) != len(f):
+        _update_global_arrays()
     return (ifft(ik * fft(f, workers=NTHREADS), workers=NTHREADS)).real
 
 def Dxx(f): 
+    # Ensure arrays are up to date
+    if k2 is None or len(k2) != len(f):
+        _update_global_arrays()
     return (ifft((-k2) * fft(f, workers=NTHREADS), workers=NTHREADS)).real
 
 def filter_23(f):
     if not par.dealias_23: return f
     fh = fft(f, workers=NTHREADS)
-    kc = par.Nx//3
+    kc = len(f)//3  # Use actual array length instead of par.Nx
     fh[kc:-kc] = 0.0
     return (ifft(fh, workers=NTHREADS)).real
 
-# Pre-calculate constants for speed
-_kc = par.Nx//3
-_nz_mask = (k2 != 0)
+# Pre-calculate constants for speed (will be updated dynamically)
+_kc = None
+_nz_mask = None
 
 def Gamma(n):
     return par.Gamma0 * np.exp(-np.maximum(n, par.n_floor)/par.w)
@@ -130,7 +148,9 @@ def Gamma_spatial(n):
     """
     Gamma_base = Gamma(n)
     if par.lambda_diss != 0.0:
-        d = periodic_delta(x, par.x0, par.L)
+        # Use the same spatial grid as the input n array
+        x_local = np.linspace(0.0, par.L, len(n), endpoint=False)
+        d = periodic_delta(x_local, par.x0, par.L)
         perturbation = par.lambda_diss * np.exp(-0.5 * (d / par.sigma_diss)**2)
         return Gamma_base + perturbation
     else:
@@ -388,17 +408,25 @@ def plot_period_detection(n_initial, n_final, t_initial, t_final, L, u_momentum,
     return u_drift, shift_opt, corr_max
 
 def nbar_profile():
-    nbar_base = np.full_like(x, par.nbar0)
+    # Create spatial grid with current Nx
+    x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+    
+    # For seed_mode == 2, use uniform background without any Gaussian perturbations
+    if par.seed_mode == 2:
+        return np.full_like(x_local, par.nbar0)
+    
+    # For other modes, keep original logic with potential Gaussian perturbations
+    nbar_base = np.full_like(x_local, par.nbar0)
     
     # Add time-independent Gaussian perturbation
     if par.lambda_gauss != 0.0:
-        d_gauss = periodic_delta(x, par.x0_gauss, par.L)
+        d_gauss = periodic_delta(x_local, par.x0_gauss, par.L)
         gauss_pert = par.lambda_gauss * np.exp(-0.5*(d_gauss/par.sigma_gauss)**2)
         nbar_base += gauss_pert
     
     # Add original Gaussian profile if enabled
     if par.use_nbar_gaussian and par.nbar_amp != 0.0:
-        d = periodic_delta(x, par.x0, par.L)
+        d = periodic_delta(x_local, par.x0, par.L)
         nbar_base += par.nbar_amp * np.exp(-0.5*(d/par.nbar_sigma)**2)
     
     return nbar_base
@@ -407,11 +435,13 @@ def pbar_profile(nbar):
     return par.m * nbar * par.u_d
 
 def J_profile():
-    d = periodic_delta(x, par.x0, par.L)
+    x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+    d = periodic_delta(x_local, par.x0, par.L)
     return par.J0 * np.exp(-0.5*(d/par.sigma_J)**2)
 
 def gamma_from_J(Jx): 
-    return np.trapz(Jx, x)/par.L
+    x_local = np.linspace(0.0, par.L, len(Jx), endpoint=False)
+    return np.trapz(Jx, x_local)/par.L
 
 def S_injection(n, nbar, Jx, gamma):
     if par.source_model == "as_given":
@@ -464,67 +494,83 @@ def rhs(t, y, E_base):
     return np.concatenate([dn_dt, dp_dt])
 
 def initial_fields():
-    nbar = nbar_profile()
-    pbar = pbar_profile(nbar)
+    # Create spatial grid with current Nx
+    x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+    
+    # Get uniform background profiles (no Gaussian perturbations)
+    nbar = np.full_like(x_local, par.nbar0)  # Uniform background density
+    pbar = par.m * nbar * par.u_d            # Uniform background momentum
+    
+    # Initialize with background values
     n0 = nbar.copy()
     p0 = pbar.copy()
-    if par.seed_amp_n != 0.0 and par.seed_mode != 0:
+    
+    # Add cosine perturbations as delta n and delta p for seed_mode == 2
+    if par.seed_mode == 2 and (par.seed_amp_n != 0.0 or par.seed_amp_p != 0.0):
+        # Define wave numbers for seed_mode == 2
+        kx1 = 2*np.pi*3 / par.L
+        kx2 = 2*np.pi*5 / par.L
+        kx3 = 2*np.pi*8 / par.L
+        kx4 = 2*np.pi*13 / par.L
+        
+        # Create cosine perturbation using local x grid
+        cosine_perturbation = np.cos(kx1 * x_local) + np.cos(kx2 * x_local) + np.cos(kx3 * x_local) + np.cos(kx4 * x_local)
+        
+        # Add delta n perturbation
+        if par.seed_amp_n != 0.0:
+            delta_n = par.seed_amp_n * cosine_perturbation
+            n0 = nbar + delta_n
+        
+        # Add delta p perturbation  
+        if par.seed_amp_p != 0.0:
+            delta_p = par.seed_amp_p * cosine_perturbation
+            p0 = pbar + delta_p
+    
+    # Handle other seed modes (keeping original logic for compatibility)
+    elif par.seed_amp_n != 0.0 and par.seed_mode != 0 and par.seed_mode != 2:
         if par.seed_mode == 1:
             kx1 = 2*np.pi*3 / par.L
             kx2 = 2*np.pi*5 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 2:
-            kx1 = 2*np.pi*3 / par.L
-            kx2 = 2*np.pi*5 / par.L
-            kx3 = 2*np.pi*8 / par.L
-            kx4 = 2*np.pi*13 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x)+np.cos(kx3 * x)+np.cos(kx4 * x))
+            n0 += par.seed_amp_n * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
         if par.seed_mode == 3:
             kx1 = 2*np.pi*8 / par.L
             kx2 = 2*np.pi*13 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
+            n0 += par.seed_amp_n * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
         if par.seed_mode == 4:
             kx1 = 2*np.pi*13 / par.L
             kx2 = 2*np.pi*21 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
+            n0 += par.seed_amp_n * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
         if par.seed_mode == 5:
             kx1 = 2*np.pi*21 / par.L
             kx2 = 2*np.pi*34 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
+            n0 += par.seed_amp_n * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
         if par.seed_mode == 6:
             kx1 = 2*np.pi*34 / par.L
             kx2 = 2*np.pi*55 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x)+np.cos(kx2 * x))
+            n0 += par.seed_amp_n * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
 
-    if par.seed_amp_p != 0.0 and par.seed_mode != 0:
+    if par.seed_amp_p != 0.0 and par.seed_mode != 0 and par.seed_mode != 2:
         if par.seed_mode == 1:
             kx1 = 2*np.pi*3 / par.L
             kx2 = 2*np.pi*5 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        if par.seed_mode == 2:
-            kx1 = 2*np.pi*3 / par.L
-            kx2 = 2*np.pi*5 / par.L
-            kx3 = 2*np.pi*8 / par.L
-            kx4 = 2*np.pi*13 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x)+np.cos(kx3 * x)+np.cos(kx4 * x))
+            p0 += par.seed_amp_p * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
         if par.seed_mode == 3:
             kx1 = 2*np.pi*8 / par.L
             kx2 = 2*np.pi*13 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+            p0 += par.seed_amp_p * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
         if par.seed_mode == 4:
             kx1 = 2*np.pi*13 / par.L
             kx2 = 2*np.pi*21 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+            p0 += par.seed_amp_p * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
         if par.seed_mode == 5:
             kx1 = 2*np.pi*21 / par.L
             kx2 = 2*np.pi*34 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
+            p0 += par.seed_amp_p * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
         if par.seed_mode == 6:
             kx1 = 2*np.pi*34 / par.L
             kx2 = 2*np.pi*55 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x)+np.cos(kx2 * x))
-        # kx = 2*np.pi*par.seed_mode / par.L
-        # p0 += par.seed_amp_p * np.cos(kx * x)
+            p0 += par.seed_amp_p * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
+    
     return n0, p0
 
 def save_final_spectra(m, t, n_t, p_t, L, tag=""):
@@ -724,7 +770,11 @@ def run_once(tag="seed_mode"):
     plot_period_detection(n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], 
                          par.L, u_momentum_final, par.u_d, tag=tag)
 
-    extent=[x.min(), x.max(), sol.t.min(), sol.t.max()]
+    # Create local spatial grid for plotting
+    x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+    dx_local = x_local[1] - x_local[0]
+    
+    extent=[x_local.min(), x_local.max(), sol.t.min(), sol.t.max()]
     plt.figure(figsize=(9.6,4.3))
     plt.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, cmap=par.cmap)
     plt.xlabel("x"); plt.ylabel("t"); plt.title(f"n(x,t)  [lab]  {tag}")
@@ -737,11 +787,11 @@ def run_once(tag="seed_mode"):
     n_co = np.empty_like(n_t)
     for j, tj in enumerate(sol.t):
         shift = (par.u_d * tj) % par.L
-        s_idx = int(np.round(shift/dx)) % par.Nx
+        s_idx = int(np.round(shift/dx_local)) % par.Nx
         n_co[:, j] = np.roll(n_t[:, j], -s_idx)
     plt.figure(figsize=(9.6,4.3))
     plt.imshow(n_co.T, origin="lower", aspect="auto",
-               extent=[x.min(), x.max(), sol.t.min(), sol.t.max()], cmap=par.cmap)
+               extent=[x_local.min(), x_local.max(), sol.t.min(), sol.t.max()], cmap=par.cmap)
     plt.xlabel("ξ = x - u_d t"); plt.ylabel("t"); plt.title(f"n(ξ,t)  [co-moving u_d={par.u_d}]  {tag}")
     plt.colorbar(label="n"); plt.tight_layout()
     plt.savefig(f"{par.outdir}/spacetime_n_comoving_{tag}.png", dpi=160); plt.close()
@@ -749,7 +799,7 @@ def run_once(tag="seed_mode"):
     plt.figure(figsize=(9.6,3.4))
     for frac in [0.0, 1.0]:
         j = int(frac*(len(sol.t)-1))
-        plt.plot(x, n_t[:,j], label=f"t={sol.t[j]:.1f}")
+        plt.plot(x_local, n_t[:,j], label=f"t={sol.t[j]:.1f}")
     plt.legend(); plt.xlabel("x"); plt.ylabel("n"); plt.title(f"Density snapshots  {tag}")
     plt.text(0.5, 0.08, f"Dp={par.Dp}, Dn={par.Dn}, m={par.seed_mode}", color="red",
          fontsize=12, ha="right", va="top", transform=plt.gca().transAxes)
@@ -894,7 +944,7 @@ def run_multiple_ud():
     print(f"  Max spacing: Δu={spacing.max():.4f}")
     print(f"  Spacing around junction (n={n_split}): Δu={spacing[n_split-1]:.4f}")
 
-    u_d_values = np.arange(7.0, 8.0, 0.2)#[1.025,1.075,1.125,1.175,1.225,1.275,1.325,1.375,1.425,1.475,1.525,1.575,1.625,1.675,1.725,1.775,1.825,1.875,1.925,1.975]
+    u_d_values = [15.8]#[13.0]#np.arange(15.8, 16.0, 0.2)#[1.025,1.075,1.125,1.175,1.225,1.275,1.325,1.375,1.425,1.475,1.525,1.575,1.625,1.675,1.725,1.775,1.825,1.875,1.925,1.975]
     print(u_d_values)
     for u_d in u_d_values:
         print(f"\n{'='*50}")
@@ -902,10 +952,10 @@ def run_multiple_ud():
         print(f"{'='*50}")
         
         par.u_d = u_d
-        par.outdir = f"multiple_u_d/gaussian_dissipation_perturbation(lambda={par.lambda_diss}, sigma={par.sigma_diss}, seed_amp_n={par.seed_amp_n}, seed_amp_p={par.seed_amp_p})/out_drift_ud{u_d:.4f}"
+        par.outdir = f"multiple_u_d/no_inhomogeneity(lambda={par.lambda_diss}, sigma={par.sigma_diss}, seed_amp_n={par.seed_amp_n}, seed_amp_p={par.seed_amp_p})/out_drift_ud{u_d:.4f}"
         print(par.outdir)
         # Set t_final based on u_d value
-        par.t_final = 2*10/u_d
+        par.t_final = 10*10/u_d
         # if 1.4 <= u_d <= 3.0:
         #     par.t_final = 2*10/u_d#50.0/5
         # elif 3.0 < u_d < 5.0:
@@ -937,25 +987,25 @@ if __name__ == "__main__":
     
     # Example: Test localized dissipation perturbation
     # To test increased dissipation at x=x0:
-    par.lambda_diss = 1.0      # Positive = increased damping
+    par.lambda_diss = 0.0      # Positive = increased damping
     par.sigma_diss =  -1.0       # Width of perturbation
     par.x0 = 5.0               # Location of perturbation
     
-    par.seed_amp_n = 0.0
-    par.seed_amp_p = 0.0
+    # Set seed_mode to 2 for delta n and delta p cosine perturbations
+    par.seed_mode = 2
+    par.seed_amp_n = 0.01
+    par.seed_amp_p = 0.01
     
-    par.Nx = 812
+    par.Nx = 1212#812
 
 
-    # Ensure NO potential perturbations are active (except time-independent Gaussian)
+    # Ensure NO potential perturbations are active for seed_mode == 2
     par.use_nbar_gaussian = False
     par.nbar_amp = 0.0
     par.include_poisson = False
-    
-    # Enable time-independent Gaussian perturbation
-    par.lambda_gauss = 0.1      # Small positive density bump
-    par.sigma_gauss = 2.0       # Width of Gaussian
-    par.x0_gauss = 5.0          # Center at x=5.0
+    par.lambda_gauss = 0.0      # Disable time-independent Gaussian perturbation
+    par.sigma_gauss = 2.0       # Width of Gaussian (not used when lambda_gauss=0)
+    par.x0_gauss = 5.0          # Center at x=5.0 (not used when lambda_gauss=0)
     
     #   run_once(tag="increased_dissipation")
     run_multiple_ud()
