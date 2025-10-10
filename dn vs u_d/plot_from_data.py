@@ -23,6 +23,62 @@ def _power_spectrum_1d(n_slice, L):
     kpos = 2*np.pi*m / L
     return kpos[1:], P[1:N//2+1]
 
+def calculate_N_from_fourier(n_profile, L):
+    """
+    Calculate n_pulses from the Fourier spectrum of n(x) at t=t_final.
+    
+    This function:
+    1. Takes the FFT of the density profile
+    2. Finds the dominant wavenumber k_dominant
+    3. Calculates N = k_dominant * L / (2π)
+    4. Converts to density: n_pulses = N / L
+    
+    Parameters:
+    -----------
+    n_profile : array
+        Density profile n(x) at t=t_final
+    L : float
+        Domain length
+        
+    Returns:
+    --------
+    n_pulses_fourier : float
+        Pulse density calculated from Fourier spectrum (N/L)
+    k_dominant : float
+        Dominant wavenumber
+    k_spectrum : array
+        Wavenumber array
+    power_spectrum : array
+        Power spectrum
+    """
+    # Remove mean to focus on fluctuations
+    n_fluct = n_profile - np.mean(n_profile)
+    
+    # Take FFT
+    n_hat = np.fft.fft(n_fluct)
+    power_spectrum = np.abs(n_hat)**2
+    
+    # Create wavenumber array
+    N = len(n_profile)
+    k = 2 * np.pi * np.fft.fftfreq(N, d=L/N)
+    
+    # Only consider positive wavenumbers
+    k_pos = k[1:N//2+1]
+    power_pos = power_spectrum[1:N//2+1]
+    
+    # Find dominant wavenumber (excluding k=0)
+    if len(k_pos) > 0:
+        dominant_idx = np.argmax(power_pos)
+        k_dominant = k_pos[dominant_idx]
+        N_fourier = k_dominant * L / (2 * np.pi)
+        n_pulses_fourier = N_fourier / L  # Convert to density
+    else:
+        k_dominant = 0.0
+        N_fourier = 0.0
+        n_pulses_fourier = 0.0
+    
+    return n_pulses_fourier, k_dominant, k_pos, power_pos
+
 def plot_spacetime_lab(data, tag="spacetime_lab"):
     n_t = data['n_t']
     t = data['t']
@@ -133,7 +189,6 @@ def plot_velocity_detection(data, u_d, tag="velocity_detection"):
     
     idx_t1 = -2
     idx_t2 = -1
-    
     n_t1 = n_t[:, idx_t1]
     n_t2 = n_t[:, idx_t2]
     t1 = t[idx_t1]
@@ -475,7 +530,7 @@ def plot_velocity_vs_ud(data_files, tag="velocity_vs_ud"):
             
             # Find peaks (local maxima above threshold)
             from scipy.signal import find_peaks
-            threshold = n_mean + 0.5 * n_std
+            threshold = n_mean + 0.1 * n_std
             peaks, _ = find_peaks(n_final, height=threshold, distance=5)
             N_pulses = len(peaks)
             n_pulses = N_pulses / L
@@ -564,14 +619,19 @@ def plot_multiple_ud_panel(data_files=None, base_dirs=None, labels=None, max_row
                 subdir = os.path.join(dir_path, item)
                 if not os.path.isdir(subdir):
                     continue
-                m = re.search(r'ud([\d.]+)', item)
-                if not m:
-                    continue
+                
+                # Handle both old and new directory name formats
+                u_d_str = item.replace("out_drift_ud", "")
+                # Handle new format: out_drift_ud4p6000 -> 4p6000 -> 4.6000
+                if "p" in u_d_str:
+                    u_d_str = u_d_str.replace("p", ".")
+                
                 try:
-                    u_d_val = float(m.group(1))
+                    u_d_val = float(u_d_str)
                 except ValueError:
                     continue
-                # pick first data_*.npz
+                
+                # pick first data_*.npz (support both old and new formats)
                 files = [f for f in os.listdir(subdir) if f.startswith("data_") and f.endswith(".npz")]
                 if files:
                     mapping[u_d_val] = os.path.join(subdir, files[0])
@@ -597,12 +657,9 @@ def plot_multiple_ud_panel(data_files=None, base_dirs=None, labels=None, max_row
                 L = data['L']
                 x = np.linspace(0, L, n_t.shape[0], endpoint=False)
                 
-                # n_final = n_t[:, -1]
-                # axes[i].plot(x, n_final, 'b-', linewidth=1.3)
-                
-                # Average over last 20% of time points
-                n_avg = np.mean(n_t[:, -max(1, n_t.shape[1]//5):], axis=1)
-                axes[i].plot(x, n_avg, 'b-', linewidth=1.3)
+                # Use final time step (no time averaging)
+                n_final = n_t[:, -1]
+                axes[i].plot(x, n_final, 'b-', linewidth=1.3)
                 axes[i].text(0.02, 0.95, f'$u_d={u_d}$', transform=axes[i].transAxes,
                              fontsize=9, va='top',
                              bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
@@ -656,12 +713,9 @@ def plot_multiple_ud_panel(data_files=None, base_dirs=None, labels=None, max_row
                 n_t = data['n_t']
                 L = data['L']
                 x = np.linspace(0, L, n_t.shape[0], endpoint=False)
-                # n_final = n_t[:, -1]
-                # ax.plot(x, n_final, lw=1.2)
-
-                # Average over last 20% of time points
-                n_avg = np.mean(n_t[:, -max(1, n_t.shape[1]//5):], axis=1)
-                ax.plot(x, n_avg, lw=1.2)
+                # Use final time step (no time averaging)
+                n_final = n_t[:, -1]
+                ax.plot(x, n_final, lw=1.2)
                 ax.grid(True, alpha=0.25)
                 ax.set_xlim(0, L)
             except Exception as e:
@@ -697,13 +751,19 @@ def plot_multiple_ud_panel_p(data_files=None, base_dirs=None, labels=None, max_r
                 subdir = os.path.join(dir_path, item)
                 if not os.path.isdir(subdir):
                     continue
-                m = re.search(r'ud([\d.]+)', item)
-                if not m:
-                    continue
+                
+                # Handle both old and new directory name formats
+                u_d_str = item.replace("out_drift_ud", "")
+                # Handle new format: out_drift_ud4p6000 -> 4p6000 -> 4.6000
+                if "p" in u_d_str:
+                    u_d_str = u_d_str.replace("p", ".")
+                
                 try:
-                    u_d_val = float(m.group(1))
+                    u_d_val = float(u_d_str)
                 except ValueError:
                     continue
+                
+                # pick first data_*.npz (support both old and new formats)
                 files = [f for f in os.listdir(subdir) if f.startswith("data_") and f.endswith(".npz")]
                 if files:
                     mapping[u_d_val] = os.path.join(subdir, files[0])
@@ -904,13 +964,18 @@ def load_multi_dataset(base_dirs, labels=None):
                 if not os.path.isdir(subdir):
                     continue
                     
-                # Extract u_d from directory name
-                match = re.search(r'ud([\d.]+)', item)
-                if not match:
-                    continue
-                u_d = float(match.group(1))
+                # Extract u_d from directory name (handle both old and new formats)
+                u_d_str = item.replace("out_drift_ud", "")
+                # Handle new format: out_drift_ud4p6000 -> 4p6000 -> 4.6000
+                if "p" in u_d_str:
+                    u_d_str = u_d_str.replace("p", ".")
                 
-                # Find data file
+                try:
+                    u_d = float(u_d_str)
+                except ValueError:
+                    continue
+                
+                # Find data file (support both old and new formats)
                 data_files = [f for f in os.listdir(subdir) if f.startswith("data_") and f.endswith(".npz")]
                 if not data_files:
                     continue
@@ -946,13 +1011,15 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
         return
     
     # Organize data by label
-    data_by_label = {label: {'u_d': [], 'u_true': [], 'n_pulses': [], 'frequency': []} for label in labels}
+    data_by_label = {label: {'u_d': [], 'u_true': [], 'n_pulses': [], 'frequency': [], 'delta_n': [], 'N_fourier': []} for label in labels}
     
     # Collect all data for interpolation
     all_u_d = []
     all_u_true = []
     all_n_pulses = []
     all_frequency = []
+    all_delta_n = []
+    all_N_fourier = []
     
     # Critical velocity u* = 2.74
     u_star = 2.74
@@ -971,6 +1038,8 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
         idx_t1 = -2
         idx_t2 = -1
         
+        print("len: ", len(n_t[1]))
+
         n_t1 = n_t[:, idx_t1]
         n_t2 = n_t[:, idx_t2]
         t1 = t[idx_t1]
@@ -1005,26 +1074,65 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
         n_std = np.std(n_final)
         
         # Find peaks (local maxima above threshold)
-        threshold = n_mean + 0.5 * n_std
+        threshold = n_mean + 0.1 * n_std
         peaks, _ = find_peaks(n_final, height=threshold, distance=5)
         N_pulses = len(peaks)
         n_pulses = N_pulses / L
         
+        # Calculate delta_n using peak/valley count method
+        if len(peaks) > 0:
+            # Find valleys (minima) between peaks
+            valleys, _ = find_peaks(-n_final, distance=5)  # Find minima by inverting the signal
+            
+            # Filter valleys to be between peaks (in the valleys)
+            if len(valleys) > 0:
+                # Keep only valleys that are between peaks
+                valid_valleys = []
+                for valley in valleys:
+                    # Check if this valley is between any two peaks
+                    for i in range(len(peaks)-1):
+                        if peaks[i] < valley < peaks[i+1]:
+                            valid_valleys.append(valley)
+                            break
+                    # Also check if valley is before first peak or after last peak
+                    if len(peaks) > 0:
+                        if valley < peaks[0] or valley > peaks[-1]:
+                            valid_valleys.append(valley)
+                
+                # Calculate delta_n as max(number_of_peaks, number_of_valleys)
+                delta_n = max(len(peaks), len(valid_valleys))
+            else:
+                # If no valleys found, delta_n is just the number of peaks
+                delta_n = len(peaks)
+        else:
+            # Fallback: if no peaks found, delta_n = 0
+            delta_n = 0
+        
         # Calculate frequency
         frequency = abs(u_true) * n_pulses
         
+        # Calculate n_pulses from Fourier spectrum
+        n_pulses_fourier, k_dominant, k_spectrum, power_spectrum = calculate_N_from_fourier(n_final, L)
+        
         print(f"  Processing u_d={u_d:.4f} (u_d > u* = {u_star})")
+        print(f"    Peaks: {len(peaks)}, Valleys: {len(valid_valleys) if 'valid_valleys' in locals() else 0}")
+        print(f"    delta_n = max({len(peaks)}, {len(valid_valleys) if 'valid_valleys' in locals() else 0}) = {delta_n}")
+        print(f"    n_pulses_fourier = {n_pulses_fourier:.4f}, k_dominant = {k_dominant:.3f}")
         
         data_by_label[data_label]['u_d'].append(u_d)
         data_by_label[data_label]['u_true'].append(u_true)
         data_by_label[data_label]['n_pulses'].append(n_pulses)
         data_by_label[data_label]['frequency'].append(frequency)
+        data_by_label[data_label]['delta_n'].append(delta_n)
+        data_by_label[data_label]['N_fourier'].append(n_pulses_fourier)
         
         # Collect all data for interpolation
         all_u_d.append(u_d)
         all_u_true.append(u_true)
         all_n_pulses.append(n_pulses)
         all_frequency.append(frequency)
+        all_delta_n.append(delta_n)
+        all_N_fourier.append(n_pulses_fourier)
     
     # Create plots - more compact design similar to original velocity_vs_ud.png
     fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
@@ -1150,6 +1258,18 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
                             n_pulses_smooth_b = spline_n_pulses_b(u_d_smooth_2b)
                             # ax2.plot(u_d_smooth_2b, n_pulses_smooth_b, 'r-', linewidth=2.5, alpha=0.9, zorder=100)
             
+            # Add Fourier-based n_pulses values as additional curve on ax2
+            if all_N_fourier:
+                n_pulses_fourier_sorted = np.array(all_N_fourier)[sorted_indices]
+                mask2_fourier = (u_d_sorted > u_star)  # Same filter as n_pulses
+                if np.sum(mask2_fourier) > 0:
+                    u_d_2_fourier = u_d_sorted[mask2_fourier]
+                    n_pulses_fourier_2 = n_pulses_fourier_sorted[mask2_fourier]
+                    
+                    # Plot n_pulses_fourier as a line with different style
+                    ax2.plot(u_d_2_fourier, n_pulses_fourier_2, 'g--', linewidth=2, alpha=0.8, 
+                            label='n_pulses (Fourier)', zorder=10)
+            
             # Plot 3: frequency vs u_d - plot ALL data points (no upper limit on u_d)
             mask3 = (u_d_sorted > u_star)  # Only filter for u_d > u*, no upper limit
             if np.sum(mask3) > 0:  # Plot even with just 1 point
@@ -1231,6 +1351,8 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
         u_true_arr = np.array(data_by_label[label]['u_true'])
         n_pulses_arr = np.array(data_by_label[label]['n_pulses'])
         freq_arr = np.array(data_by_label[label]['frequency'])
+        delta_n_arr = np.array(data_by_label[label]['delta_n'])
+        N_fourier_arr = np.array(data_by_label[label]['N_fourier'])
         
         mask = (u_d_arr > u_star)  # Only filter for u_d > u*, no upper limit
         
@@ -1241,6 +1363,8 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
         u_true_filtered = u_true_arr[mask]
         n_pulses_filtered = n_pulses_arr[mask]
         freq_filtered = freq_arr[mask]
+        delta_n_filtered = delta_n_arr[mask]/L
+        N_fourier_filtered = N_fourier_arr[mask]
         
         marker = markers[idx % len(markers)]
         
@@ -1249,8 +1373,13 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
                    label=label, s=24, alpha=0.8)
         
         # Plot 2: n_pulses vs u_d (points only, no lines, larger size)
-        ax2.scatter(u_d_filtered, n_pulses_filtered, marker=marker, #color=color,
+        ax2.scatter(u_d_filtered, delta_n_filtered, marker=marker, #color=color,
                    label=label, s=24, alpha=0.8)
+        
+        # Plot 2: n_pulses_fourier vs u_d (line with different style for each dataset)
+        linestyle = ['-', '--', '-.', ':'][idx % 4]
+        ax2.plot(u_d_filtered, N_fourier_filtered, linestyle=linestyle, 
+                linewidth=2, alpha=0.8, label=f'{label} (n_pulses_fourier)')
         
         # Plot 3: frequency vs u_d (points only, no lines, larger size)
         ax3.scatter(u_d_filtered, freq_filtered, marker=marker, #color=color,
@@ -1326,12 +1455,70 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
             
         n_t = data['n_t']
         t = data['t']
+        L = data['L']
         
-        # Calculate delta n = n_max - n_min for the final time step
+        # Calculate delta n using peak-based n_max and valley-based n_min
         n_final = n_t[:, -1]  # Last time step
-        delta_n = np.max(n_final) - np.min(n_final)
         
-        print(f"  Processing u_d={u_d:.4f} (u_d > u* = {u_star})")
+        # Calculate n_max as average of peak values and n_min as average of valley values
+        from scipy.signal import find_peaks
+        
+            # Find peaks (local maxima above threshold)
+            n_mean = np.mean(n_final)
+            n_std = np.std(n_final)
+            threshold = n_mean + 0.1 * n_std
+            peaks, _ = find_peaks(n_final, height=threshold, distance=5)
+            
+            if len(peaks) > 0:
+                # Calculate n_max as average of peak values
+                peak_values = n_final[peaks]
+                n_max = np.mean(peak_values)  # Average of peak values
+                
+                # Find valleys (minima) between peaks
+                valleys, _ = find_peaks(-n_final, distance=5)  # Find minima by inverting the signal
+                
+                # Filter valleys to be between peaks (in the valleys)
+                if len(valleys) > 0:
+                    # Keep only valleys that are between peaks
+                    valid_valleys = []
+                    for valley in valleys:
+                        # Check if this valley is between any two peaks
+                        for i in range(len(peaks)-1):
+                            if peaks[i] < valley < peaks[i+1]:
+                                valid_valleys.append(valley)
+                                break
+                        # Also check if valley is before first peak or after last peak
+                        if len(peaks) > 0:
+                            if valley < peaks[0] or valley > peaks[-1]:
+                                valid_valleys.append(valley)
+                    
+                    if len(valid_valleys) > 0:
+                        valley_values = n_final[valid_valleys]
+                        n_min = np.mean(valley_values)  # Average of valley values
+                    else:
+                        # If no valid valleys found, use global minimum
+                        n_min = np.min(n_final)
+                else:
+                    # If no valleys found, use global minimum
+                    n_min = np.min(n_final)
+                
+                delta_n = n_max - n_min
+            else:
+                # Fallback to global min/max if no peaks found
+                n_max = np.max(n_final)
+                n_min = np.min(n_final)
+                delta_n = n_max - n_min
+        else:
+            delta_n = 0.0
+        
+        # Print detailed information about the calculation
+        if len(n_final) > 0 and len(peaks) > 0:
+            print(f"  Processing u_d={u_d:.4f} (u_d > u* = {u_star})")
+            print(f"    Peaks: {len(peaks)}, Valleys: {len(valid_valleys) if 'valid_valleys' in locals() else 0}")
+            print(f"    n_max = {n_max:.3f} (avg of {len(peaks)} peaks), n_min = {n_min:.3f} (avg of {len(valid_valleys) if 'valid_valleys' in locals() else 0} valleys)")
+            print(f"    delta_n = {delta_n:.3f}")
+        else:
+            print(f"  Processing u_d={u_d:.4f} (u_d > u* = {u_star}) - using global min/max")
         
         data_by_label[data_label]['u_d'].append(u_d)
         data_by_label[data_label]['delta_n'].append(delta_n)
@@ -1640,20 +1827,25 @@ def find_available_simulations():
     """Automatically find all available simulation files in out_drift_ud* subdirectories"""
     data_files = []
     
-    folder_name = "multiple_u_d"
+    folder_name = "multiple_u_d/"
     # Search in multiple_u_d/out_drift_ud* subdirectories
     if os.path.exists(folder_name):
         for item in os.listdir(folder_name):
             if item.startswith("out_drift_ud") and os.path.isdir(os.path.join(folder_name, item)):
-                # Extract u_d from directory name
+                # Extract u_d from directory name (handle both old and new formats)
                 try:
                     u_d_str = item.replace("out_drift_ud", "")
+                    # Handle new format: out_drift_ud4p6000 -> 4p6000 -> 4.6000
+                    if "p" in u_d_str:
+                        u_d_str = u_d_str.replace("p", ".")
                     u_d = float(u_d_str)
                     
                     # Look for data file in this subdirectory
                     subdir_path = os.path.join(folder_name, item)
                     for file in os.listdir(subdir_path):
-                        if file.startswith("data_m01_ud") and file.endswith(".npz"):
+                        # Support both old and new filename formats
+                        if (file.startswith("data_m01_ud") and file.endswith(".npz")) or \
+                           (file.startswith("data_m") and "_ud" in file and file.endswith(".npz")):
                             filepath = os.path.join(subdir_path, file)
                             data_files.append((filepath, u_d))
                             break  # Only take first matching file
@@ -1663,10 +1855,21 @@ def find_available_simulations():
     # Search in out_drift directory (main level only)
     if os.path.exists("out_drift"):
         for file in os.listdir("out_drift"):
-            if file.startswith("data_m01_ud") and file.endswith(".npz"):
+            # Support both old and new filename formats
+            if (file.startswith("data_m01_ud") and file.endswith(".npz")) or \
+               (file.startswith("data_m") and "_ud" in file and file.endswith(".npz")):
                 try:
-                    u_d_str = file.replace("data_m01_ud", "").replace(".npz", "")
-                    u_d = float(u_d_str)
+                    # Try new format first (data_mXX_udXpXXXX_tag.npz)
+                    if "_ud" in file and "p" in file:
+                        # Extract u_d from new format: data_mXX_udXpXXXX_tag.npz
+                        parts = file.split("_ud")[1].split("_")[0]  # Get "XpXXXX" part
+                        u_d_str = parts.replace("p", ".")  # Convert "XpXXXX" to "X.XXXX"
+                        u_d = float(u_d_str)
+                    else:
+                        # Fallback to old format: data_m01_udX.XXXX.npz
+                        u_d_str = file.replace("data_m01_ud", "").replace(".npz", "")
+                        u_d = float(u_d_str)
+                    
                     filepath = os.path.join("out_drift", file)
                     data_files.append((filepath, u_d))
                 except ValueError:
@@ -1684,14 +1887,12 @@ def find_available_simulations():
 if __name__ == "__main__":
     # Compare results from three different parameter sets
     base_dirs = [
-        "multiple_u_d/delta n=delta p=0.03(cos3x+cos5x+cos8x+cos13x)",
-        "multiple_u_d/delta n=delta p=0.05(cos3x+cos5x+cos8x+cos13x)",
-        "multiple_u_d/quadratic;delta n=delta p=0.05(cos3x+cos5x+cos8x+cos13x)"
+        "multiple_u_d/2.5L(lambda=0.0, sigma=-1.0, seed_amp_n=0.05, seed_amp_p=0.05)",
     ]
     
     custom_labels = [
-        "δn,δp = 0.03",
-        "δn,δp = 0.05 (uniform)",
+        # "δn,δp = 0.03",
+        # "δn,δp = 0.05 (uniform)",
         "δn,δp = 0.05 (quadratic)"
     ]
     
