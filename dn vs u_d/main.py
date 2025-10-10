@@ -13,6 +13,9 @@ from scipy.fft import fft, ifft, fftfreq, set_workers
 from scipy.integrate import solve_ivp
 import glob
 from dataclasses import asdict
+import multiprocessing as mp
+from functools import partial
+import copy
 
 # Import spectral analysis helpers
 try:
@@ -58,7 +61,7 @@ class P:
 
     J0: float = 1.0#0.04
     sigma_J: float = 2.0**1/2#6.0
-    x0: float = 5.0
+    x0: float = 12.5
     source_model: str = "as_given"
     
     # Localized dissipation perturbation parameters
@@ -68,26 +71,26 @@ class P:
     # Time-independent Gaussian density perturbation
     lambda_gauss: float = 0.0  # Amplitude of Gaussian density perturbation
     sigma_gauss: float = 2.0   # Width of Gaussian density perturbation
-    x0_gauss: float = 5.0      # Center of Gaussian density perturbation
+    x0_gauss: float = 12.5      # Center of Gaussian density perturbation
 
     use_nbar_gaussian: bool = False
     nbar_amp: float = 0.0
     nbar_sigma: float = 120.0
 
-    L: float = 10.0
+    L: float = 25.0
     Nx: int = 1212#2048#1218#1512#2524#1024
     t_final: float = 10.0
-    n_save: int = 200  #200#200  # Reduced for speed
+    n_save: int = 100  #200#200  # Reduced for speed
     # rtol: float = 5e-7
     # atol: float = 5e-9
-    rtol = 1e-6  # Relaxed for speed
-    atol = 1e-9  # Relaxed for speed
+    rtol = 1e-4#1e-5#1e-6  # Relaxed for speed
+    atol = 1e-7#1e-8#1e-9  # Relaxed for speed
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 30e-3
+    seed_amp_n: float = 50e-3  # Increased from 30e-3 to help escape metastable states
     seed_mode: int = 1
-    seed_amp_p: float = 30e-3
+    seed_amp_p: float = 50e-3  # Increased from 30e-3 to help escape metastable states
 
     outdir: str = "out_drift/small_dissipation_perturbation"
     cmap: str = "inferno"
@@ -505,25 +508,28 @@ def initial_fields():
     n0 = nbar.copy()
     p0 = pbar.copy()
     
-    # Add cosine perturbations as delta n and delta p for seed_mode == 2
+    # Add sum of sine waves as delta n and delta p for seed_mode == 2
     if par.seed_mode == 2 and (par.seed_amp_n != 0.0 or par.seed_amp_p != 0.0):
-        # Define wave numbers for seed_mode == 2
-        kx1 = 2*np.pi*3 / par.L
-        kx2 = 2*np.pi*5 / par.L
-        kx3 = 2*np.pi*8 / par.L
-        kx4 = 2*np.pi*13 / par.L
+    # Define sine wave modes: include more harmonics (m=2,3,5) and larger modes
+        modes = [2, 3, 5, 8, 13, 21, 34, 55]
         
-        # Create cosine perturbation using local x grid
-        cosine_perturbation = np.cos(kx1 * x_local) + np.cos(kx2 * x_local) + np.cos(kx3 * x_local) + np.cos(kx4 * x_local)
+        # Create sum of sine waves perturbation
+        sine_perturbation = np.zeros_like(x_local)
+        for mode in modes:
+            kx = 2*np.pi*mode / par.L
+            sine_perturbation += np.cos(kx * x_local)
+        
+        # Normalize by number of modes to keep amplitude reasonable
+        sine_perturbation = sine_perturbation / len(modes)
         
         # Add delta n perturbation
         if par.seed_amp_n != 0.0:
-            delta_n = par.seed_amp_n * cosine_perturbation
+            delta_n = par.seed_amp_n * sine_perturbation
             n0 = nbar + delta_n
         
         # Add delta p perturbation  
         if par.seed_amp_p != 0.0:
-            delta_p = par.seed_amp_p * cosine_perturbation
+            delta_p = par.seed_amp_p * sine_perturbation
             p0 = pbar + delta_p
     
     # Handle other seed modes (keeping original logic for compatibility)
@@ -577,7 +583,11 @@ def save_final_spectra(m, t, n_t, p_t, L, tag=""):
     meta = asdict(par).copy()
     meta['outdir'] = str(par.outdir)
     os.makedirs(par.outdir, exist_ok=True)
-    out = os.path.join(par.outdir, f"data_m{int(m):02d}_{tag}.npz")
+    
+    # Create filename with floating point significant digits
+    u_d_str = f"{par.u_d:.4f}".replace('.', 'p')  # e.g., 7.5000 -> 7p5000
+    out = os.path.join(par.outdir, f"data_m{int(m):02d}_ud{u_d_str}_{tag}.npz")
+    
     np.savez_compressed(out,
                         m=int(m),
                         t=t,
@@ -672,41 +682,42 @@ def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False):
     plt.savefig(f"{par.outdir}/fft_final_overlay_{tag}.pdf", dpi=300, bbox_inches='tight')
     plt.close()
 
-def rhs_with_progress(t, y, E_base, last_print_time=[0.0], start_time=[0.0]):
+def rhs_with_progress(t, y, E_base, last_print_time=[0.0], start_time=[0.0], worker_id=0):
     """RHS function with progress tracking"""
-    if t - last_print_time[0] > 0.05:  # Print every 0.05 time units (less frequent for speed)
+    if t - last_print_time[0] > 1.0:  # Print every 0.1 time units (reduced frequency)
         progress = (t / par.t_final) * 100
         elapsed_wall_time = time.time() - start_time[0]
-        print(f"\r[Progress] {progress:6.1f}% (t = {t:6.3f}/{par.t_final:.3f}) | Wall time: {elapsed_wall_time:6.1f}s", end="", flush=True)
+        # Use carriage return to overwrite the same line for this worker
+        print(f"\r[Worker {worker_id:2d}] {progress:6.1f}% (t = {t:6.3f}/{par.t_final:.3f}) | Wall: {elapsed_wall_time:6.1f}s", end="", flush=True)
         last_print_time[0] = t
     return rhs(t, y, E_base)
 
-def run_once(tag="seed_mode"):
+def run_once(tag="seed_mode", worker_id=0):
     os.makedirs(par.outdir, exist_ok=True)
 
     n0, p0 = initial_fields()
     E_base = E_base_from_drift(nbar_profile()) if par.maintain_drift in ("field","feedback") else 0.0
 
-    print(f"[Simulation] E_base={E_base}")
+    print(f"[Worker {worker_id:2d}] E_base={E_base}")
     #E_base = 15.0
     
     if par.lambda_diss != 0.0:
-        print(f"[Simulation] Localized dissipation: lambda_diss={par.lambda_diss}, sigma_diss={par.sigma_diss}, x0={par.x0}")
-        print(f"[Simulation]   (adds {par.lambda_diss:+.3f}*exp(-(x-{par.x0})^2/(2*{par.sigma_diss}^2)) to Gamma)")
+        print(f"[Worker {worker_id:2d}] Localized dissipation: lambda_diss={par.lambda_diss}, sigma_diss={par.sigma_diss}, x0={par.x0}")
+        print(f"[Worker {worker_id:2d}]   (adds {par.lambda_diss:+.3f}*exp(-(x-{par.x0})^2/(2*{par.sigma_diss}^2)) to Gamma)")
     else:
-        print(f"[Simulation] No localized dissipation perturbation (lambda_diss=0)")
+        print(f"[Worker {worker_id:2d}] No localized dissipation perturbation (lambda_diss=0)")
     
     if par.lambda_gauss != 0.0:
-        print(f"[Simulation] Time-independent Gaussian: lambda_gauss={par.lambda_gauss}, sigma_gauss={par.sigma_gauss}, x0_gauss={par.x0_gauss}")
-        print(f"[Simulation]   (adds {par.lambda_gauss:+.3f}*exp(-(x-{par.x0_gauss})^2/(2*{par.sigma_gauss}^2)) to nbar)")
+        print(f"[Worker {worker_id:2d}] Time-independent Gaussian: lambda_gauss={par.lambda_gauss}, sigma_gauss={par.sigma_gauss}, x0_gauss={par.x0_gauss}")
+        print(f"[Worker {worker_id:2d}]   (adds {par.lambda_gauss:+.3f}*exp(-(x-{par.x0_gauss})^2/(2*{par.sigma_gauss}^2)) to nbar)")
     else:
-        print(f"[Simulation] No time-independent Gaussian perturbation (lambda_gauss=0)")
+        print(f"[Worker {worker_id:2d}] No time-independent Gaussian perturbation (lambda_gauss=0)")
 
     y0 = np.concatenate([n0, p0])
     t_eval = np.linspace(0.0, par.t_final, par.n_save)
 
-    print(f"[Simulation] Starting simulation for {tag}...")
-    print(f"[Simulation] Parameters: t_final={par.t_final}, Nx={par.Nx}, u_d={par.u_d}")
+    print(f"[Worker {worker_id:2d}] Starting simulation for {tag}...")
+    print(f"[Worker {worker_id:2d}] Parameters: t_final={par.t_final}, Nx={par.Nx}, u_d={par.u_d}")
     
     # Initialize timing variables
     start_wall_time = time.time()
@@ -716,12 +727,12 @@ def run_once(tag="seed_mode"):
     if HAS_THREADPOOLCTL:
         with threadpool_limits(limits=NTHREADS, user_api="blas"):
             with set_workers(NTHREADS):
-                sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time),
+                sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time,worker_id),
                                 (0.0, par.t_final), y0, t_eval=t_eval,
                                 method="BDF", rtol=par.rtol, atol=par.atol)
     else:
         with set_workers(NTHREADS):
-            sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time),
+            sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time,worker_id),
                             (0.0, par.t_final), y0, t_eval=t_eval,
                             method="BDF", rtol=par.rtol, atol=par.atol)
 
@@ -738,9 +749,9 @@ def run_once(tag="seed_mode"):
     #                         max_step=0.05, vectorized=False)#BDF
     
     total_wall_time = time.time() - start_wall_time
-    print(f"\n[Simulation] Completed successfully!")
-    print(f"[Simulation] Final time: {sol.t[-1]:.3f}, Success: {sol.success}")
-    print(f"[Simulation] Total wall time: {total_wall_time:.2f} seconds")
+    print(f"\n[Worker {worker_id:2d}] Completed successfully!")
+    print(f"[Worker {worker_id:2d}] Final time: {sol.t[-1]:.3f}, Success: {sol.success}")
+    print(f"[Worker {worker_id:2d}] Total wall time: {total_wall_time:.2f} seconds")
 
     N = par.Nx
     n_t = sol.y[:N,:]
@@ -756,15 +767,15 @@ def run_once(tag="seed_mode"):
     idx_t1 = -5  # Second-to-last snapshot
     idx_t2 = -1  # Last snapshot
 
-    print("len=",len(sol.t), idx_t1, idx_t2)
+    print(f"[Worker {worker_id:2d}] len=",len(sol.t), idx_t1, idx_t2)
     
     u_drift_inst, shift_opt_inst, corr_max_inst, shifts_inst, correlations_inst = calculate_velocity_from_period(
         n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], par.L
     )
     
-    print(f"[run]  <u>(t=0)={u_momentum_initial:.4f},  <u>(t_end)={u_momentum_final:.4f},  target u_d={par.u_d:.4f}")
-    print(f"[run]  u_drift_instantaneous={u_drift_inst:.4f} (from shift={shift_opt_inst:.3f}, Δt={sol.t[idx_t2]-sol.t[idx_t1]:.3f})")
-    print(f"[run]  measured at t={sol.t[idx_t2]:.3f}, correlation_max={corr_max_inst:.4f}")
+    print(f"[Worker {worker_id:2d}]  <u>(t=0)={u_momentum_initial:.4f},  <u>(t_end)={u_momentum_final:.4f},  target u_d={par.u_d:.4f}")
+    print(f"[Worker {worker_id:2d}]  u_drift_instantaneous={u_drift_inst:.4f} (from shift={shift_opt_inst:.3f}, Δt={sol.t[idx_t2]-sol.t[idx_t1]:.3f})")
+    print(f"[Worker {worker_id:2d}]  measured at t={sol.t[idx_t2]:.3f}, correlation_max={corr_max_inst:.4f}")
     
     # Create velocity detection plot showing instantaneous measurement
     plot_period_detection(n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], 
@@ -901,6 +912,87 @@ def run_all_modes_snapshots(tag="snapshots_panels"):
         par.seed_amp_n, par.seed_mode = oldA, oldm
 
 
+def run_single_ud_worker(u_d, base_params, worker_id=0):
+    """
+    Worker function to run a single u_d simulation.
+    This function is designed to be called in parallel by multiprocessing.
+    
+    Parameters:
+    -----------
+    u_d : float
+        Drift velocity value for this simulation
+    base_params : dict
+        Dictionary containing all the base parameters
+    worker_id : int
+        Worker ID for progress tracking
+        
+    Returns:
+    --------
+    dict : Results dictionary with u_d, success status, and paths
+    """
+    # Create a local copy of parameters for this worker
+    import copy
+    from dataclasses import dataclass
+    
+    # Recreate the parameter object
+    local_par = P()
+    for key, value in base_params.items():
+        if hasattr(local_par, key):
+            setattr(local_par, key, value)
+    
+    # Override with this specific u_d
+    local_par.u_d = u_d
+    u_d_str = f"{u_d:.4f}".replace('.', 'p')  # e.g., 7.5000 -> 7p5000
+    local_par.outdir = f"multiple_u_d/2.5L(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})/out_drift_ud{u_d_str}"
+    
+    # Set t_final based on u_d value - doubled to confirm asymptotic regime
+    local_par.t_final = 40*local_par.L/u_d  # Doubled from 20*par.L/u_d
+    
+    local_par.n_save = 512
+    
+    if u_d < 6.5:
+        local_par.Nx = 512
+    else:
+        local_par.Nx = 812
+    
+    # Update global par for this process
+    global par
+    par = local_par
+    
+    # Update global arrays for this process
+    _update_global_arrays()
+    
+    print(f"\n{'='*50}")
+    print(f"[Worker {worker_id:2d}] Running simulation for u_d = {u_d:.4f}")
+    print(f"[Worker {worker_id:2d}] Parameters: t_final={par.t_final:.2f}, Nx={par.Nx}")
+    print(f"{'='*50}")
+    
+    try:
+        start_time = time.time()
+        t, n_t, p_t = run_once(tag=f"ud{u_d}", worker_id=worker_id)
+        elapsed = time.time() - start_time
+        
+        print(f"[Worker {worker_id:2d}] Completed u_d={u_d:.4f} in {elapsed:.1f}s")
+        print(f"[Worker {worker_id:2d}] Final time: {t[-1]:.3f}, Data shapes: n_t={n_t.shape}, p_t={p_t.shape}")
+        
+        return {
+            'u_d': u_d,
+            'success': True,
+            'elapsed_time': elapsed,
+            'final_time': t[-1],
+            'outdir': par.outdir
+        }
+        
+    except Exception as e:
+        print(f"[Worker {worker_id:2d}] Error in simulation for u_d={u_d}: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'u_d': u_d,
+            'success': False,
+            'error': str(e)
+        }
+
 def run_multiple_ud():
     # Generate quadratic distribution with max density near u_d = 2.4-2.5
     # Strategy: Use sqrt in segment 1 (increasing density) and quadratic in segment 2 (decreasing density)
@@ -929,6 +1021,7 @@ def run_multiple_ud():
     alpha2 = (u_max - u_split) / (n_total - n_split - 1)**2 if (n_total - n_split) > 1 else 1.0
     u_d_values[n_split:] = u_split + alpha2 * n2**2
 
+    u_d_values = np.arange(2.6, 8.0, 0.2)
     
     print(f"[run_multiple_ud] Generated {len(u_d_values)} u_d values with max density near u_d={u_split}")
     print(f"[run_multiple_ud] Segment 1: {n_split} points in [{u_min:.2f}, {u_split:.2f}] using sqrt (β={beta1:.6f})")
@@ -944,43 +1037,58 @@ def run_multiple_ud():
     print(f"  Max spacing: Δu={spacing.max():.4f}")
     print(f"  Spacing around junction (n={n_split}): Δu={spacing[n_split-1]:.4f}")
 
-    u_d_values = [15.8]#[13.0]#np.arange(15.8, 16.0, 0.2)#[1.025,1.075,1.125,1.175,1.225,1.275,1.325,1.375,1.425,1.475,1.525,1.575,1.625,1.675,1.725,1.775,1.825,1.875,1.925,1.975]
-    print(u_d_values)
-    for u_d in u_d_values:
-        print(f"\n{'='*50}")
-        print(f"Running simulation for u_d = {u_d:.4f}")
-        print(f"{'='*50}")
-        
-        par.u_d = u_d
-        par.outdir = f"multiple_u_d/no_inhomogeneity(lambda={par.lambda_diss}, sigma={par.sigma_diss}, seed_amp_n={par.seed_amp_n}, seed_amp_p={par.seed_amp_p})/out_drift_ud{u_d:.4f}"
-        print(par.outdir)
-        # Set t_final based on u_d value
-        par.t_final = 10*10/u_d
-        # if 1.4 <= u_d <= 3.0:
-        #     par.t_final = 2*10/u_d#50.0/5
-        # elif 3.0 < u_d < 5.0:
-        #     par.t_final = 2*10/u_d#50.0/10
-        # else:  # u_d >= 5.0
-        #     par.t_final = 2*10/u_d#10.0/5
-        
-        par.n_save = 200
-        
-        print(f"Parameters: u_d={par.u_d}, t_final={par.t_final}, Nx={par.Nx}")
-        
-        try:
-            t, n_t, p_t = run_once(tag=f"ud{u_d}")
-            
-            print(f"Simulation completed successfully for u_d={u_d}")
-            print(f"Final time: {t[-1]:.3f}")
-            print(f"Data shapes: n_t={n_t.shape}, p_t={p_t.shape}")
-            
-        except Exception as e:
-            print(f"Error in simulation for u_d={u_d}: {e}")
-            continue
+    # Use the generated u_d_values with optimized spacing
+    print(f"[run_multiple_ud] u_d values to simulate: {u_d_values}")
     
-    print(f"\n{'='*50}")
-    print("All simulations completed!")
-    print(f"{'='*50}")
+    # Convert current parameters to dictionary for passing to workers
+    base_params = asdict(par)
+    
+    # Determine number of parallel workers
+    n_cpus = mp.cpu_count()
+    n_workers = min(len(u_d_values), max(1, n_cpus - 1))  # Leave one CPU free
+    
+    print(f"\n[Parallel] Using {n_workers} parallel workers (out of {n_cpus} CPUs)")
+    print(f"[Parallel] Running {len(u_d_values)} simulations in parallel")
+    print(f"[Parallel] Progress will be shown for each worker simultaneously")
+    print(f"[Parallel] Each worker will update its progress line independently")
+    
+    overall_start_time = time.time()
+    
+    # Run simulations in parallel with worker IDs
+    with mp.Pool(processes=n_workers) as pool:
+        # Create worker function with base_params and assign worker IDs
+        worker_args = [(u_d, base_params, i) for i, u_d in enumerate(u_d_values)]
+        results = pool.starmap(run_single_ud_worker, worker_args)
+    
+    overall_elapsed = time.time() - overall_start_time
+    
+    # Print summary
+    print(f"\n{'='*60}")
+    print(f"ALL SIMULATIONS COMPLETED!")
+    print(f"{'='*60}")
+    print(f"Total wall time: {overall_elapsed:.1f}s ({overall_elapsed/60:.1f} minutes)")
+    print(f"\nSummary:")
+    
+    successful = [r for r in results if r['success']]
+    failed = [r for r in results if not r['success']]
+    
+    print(f"  Successful: {len(successful)}/{len(results)}")
+    print(f"  Failed: {len(failed)}/{len(results)}")
+    
+    if successful:
+        total_sim_time = sum(r['elapsed_time'] for r in successful)
+        avg_time = total_sim_time / len(successful)
+        speedup = total_sim_time / overall_elapsed
+        print(f"  Average simulation time: {avg_time:.1f}s")
+        print(f"  Total simulation time (sequential equivalent): {total_sim_time:.1f}s")
+        print(f"  Parallel speedup: {speedup:.2f}x")
+    
+    if failed:
+        print(f"\nFailed simulations:")
+        for r in failed:
+            print(f"  u_d={r['u_d']:.4f}: {r.get('error', 'Unknown error')}")
+    
+    print(f"{'='*60}")
 
 if __name__ == "__main__":
     # run_all_modes_snapshots(tag="seed_modes_1to5")
@@ -989,14 +1097,14 @@ if __name__ == "__main__":
     # To test increased dissipation at x=x0:
     par.lambda_diss = 0.0      # Positive = increased damping
     par.sigma_diss =  -1.0       # Width of perturbation
-    par.x0 = 5.0               # Location of perturbation
+    par.x0 = 12.5               # Location of perturbation
     
     # Set seed_mode to 2 for delta n and delta p cosine perturbations
     par.seed_mode = 2
-    par.seed_amp_n = 0.01
-    par.seed_amp_p = 0.01
+    par.seed_amp_n = 0.06  # Doubled from 0.05 to confirm asymptotic regime
+    par.seed_amp_p = 0.06  # Doubled from 0.05 to confirm asymptotic regime
     
-    par.Nx = 1212#812
+    par.Nx = 512#256#512#812#812
 
 
     # Ensure NO potential perturbations are active for seed_mode == 2
@@ -1005,7 +1113,7 @@ if __name__ == "__main__":
     par.include_poisson = False
     par.lambda_gauss = 0.0      # Disable time-independent Gaussian perturbation
     par.sigma_gauss = 2.0       # Width of Gaussian (not used when lambda_gauss=0)
-    par.x0_gauss = 5.0          # Center at x=5.0 (not used when lambda_gauss=0)
+    par.x0_gauss = 12.5          # Center at x=12.5 (not used when lambda_gauss=0)
     
     #   run_once(tag="increased_dissipation")
     run_multiple_ud()
