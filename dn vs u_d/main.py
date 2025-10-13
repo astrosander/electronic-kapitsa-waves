@@ -77,20 +77,20 @@ class P:
     nbar_amp: float = 0.0
     nbar_sigma: float = 120.0
 
-    L: float = 25.0
+    L: float = 10.0  # System size
     Nx: int = 1212#2048#1218#1512#2524#1024
-    t_final: float = 10.0
+    t_final: float = 50.0
     n_save: int = 100  #200#200  # Reduced for speed
     # rtol: float = 5e-7
     # atol: float = 5e-9
-    rtol = 1e-4#1e-5#1e-6  # Relaxed for speed
-    atol = 1e-7#1e-8#1e-9  # Relaxed for speed
+    rtol = 1e-4  # Tighter tolerance for accuracy
+    atol = 1e-7  # Tighter tolerance for accuracy
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 50e-3  # Increased from 30e-3 to help escape metastable states
-    seed_mode: int = 1
-    seed_amp_p: float = 50e-3  # Increased from 30e-3 to help escape metastable states
+    seed_amp_n: float = 0.001  # Small amplitude perturbation
+    seed_mode: int = 7  # New mode for cos(6πx/L) + cos(10πx/L) + cos(14πx/L)
+    seed_amp_p: float = 0.001  # Small amplitude perturbation
 
     outdir: str = "out_drift/small_dissipation_perturbation"
     cmap: str = "inferno"
@@ -180,15 +180,61 @@ def _power_spectrum_1d(n_slice, L):
     kpos = 2*np.pi*m / L
     return kpos[1:], P[1:N//2+1]
 
+def _fourier_shift_real(f, shift, L):
+    """Circularly shift a real 1D signal by a non-integer amount using FFT."""
+    N = f.size
+    k = 2*np.pi * np.fft.rfftfreq(N, d=L/N)      # wavenumbers (>=0)
+    F = np.fft.rfft(f)
+    return np.fft.irfft(F * np.exp(1j*k*shift), n=N)
+
+def estimate_velocity_fourier(n_t1, n_t2, t1, t2, L, power_floor=1e-3):
+    """
+    Estimate spatial shift and velocity from two snapshots using the
+    cross-spectrum phase: Δφ_k = k * shift  (mod 2π).
+    """
+    N = n_t1.size
+    # remove mean to drop k=0
+    f1 = n_t1 - n_t1.mean()
+    f2 = n_t2 - n_t2.mean()
+
+    k = 2*np.pi * np.fft.rfftfreq(N, d=L/N)            # [0..Nyquist]
+    F1 = np.fft.rfft(f1)
+    F2 = np.fft.rfft(f2)
+    C  = np.conj(F1) * F2                        # cross-spectrum
+    phi = np.angle(C)                            # phase diff
+
+    # discard k=0; keep only energetic modes for robustness
+    k = k[1:]
+    phi = phi[1:]
+    w = np.abs(C[1:])                            # weights ~ power
+    mask = w > (power_floor * w.max())
+    k, phi, w = k[mask], phi[mask], w[mask]
+
+    # unwrap the phase along k so it's linear: phi ≈ k * shift
+    phi = np.unwrap(phi)
+
+    # weighted least-squares slope: shift = argmin ||phi - k*shift||_W
+    # shift = (Σ w k φ) / (Σ w k^2)
+    num = np.sum(w * k * phi)
+    den = np.sum(w * k**2)
+    shift = num / den
+
+    # Fix sign convention: positive shift = forward motion (rightward drift)
+    # The phase difference phi = angle(F2) - angle(F1) should give the correct sign
+    # But we need to ensure positive shift means n_t1 shifted right to match n_t2
+    shift = -shift  # Flip sign to match spatial convention
+
+    # map to principal interval [-L/2, L/2] (purely cosmetic)
+    shift = (shift + 0.5*L) % L - 0.5*L
+
+    dt = float(t2 - t1)
+    u = shift / dt
+    return u, shift
+
 def find_modulation_period_by_shift(n_t1, n_t2, t1, t2, L):
     """
     Find the drift velocity by comparing two snapshots at different times.
-    
-    The idea: 
-    1. Take snapshots at times t1 and t2
-    2. Shift n_t1 spatially to find best match with n_t2
-    3. The shift that gives best match (max correlation) indicates how far the pattern moved
-    4. Velocity = shift / (t2 - t1)
+    Uses robust Fourier-based method that works with multiple modes.
     
     Parameters:
     -----------
@@ -216,39 +262,26 @@ def find_modulation_period_by_shift(n_t1, n_t2, t1, t2, L):
     correlations : array
         Correlation for each shift
     """
-    dx = L / len(n_t1)
-    x = np.linspace(0, L, len(n_t1), endpoint=False)
+    u, shift = estimate_velocity_fourier(n_t1, n_t2, t1, t2, L)
     
-    # Remove mean to focus on fluctuations
-    dn_t1 = n_t1 - np.mean(n_t1)
-    dn_t2 = n_t2 - np.mean(n_t2)
+    # Build a correlation-vs-shift curve via FFT xcorr for visualization
+    N = n_t1.size
+    f1 = n_t1 - n_t1.mean()
+    f2 = n_t2 - n_t2.mean()
+    F1 = np.fft.rfft(f1)
+    F2 = np.fft.rfft(f2)
+    xcorr = np.fft.irfft(np.conj(F1) * F2, n=N)        # circular correlation
+    dx = L/N
+    shifts = dx * (np.arange(N) - (N//2))
+    xcorr = np.roll(xcorr, -N//2)
     
-    # Test different spatial shifts
-    n_shifts = len(n_t1)  # Test all possible shifts
-    shifts = np.arange(n_shifts) * dx
-    correlations = np.zeros(n_shifts)
+    # Simple normalized "correlation"
+    correlations = (xcorr - xcorr.min())/(xcorr.max()-xcorr.min() + 1e-15)
     
-    for i, shift in enumerate(shifts):
-        # Shift n_t1 forward in space
-        x_shifted = (x + shift) % L
-        dn_t1_shifted = np.interp(x, x_shifted, dn_t1)
-        
-        # Calculate correlation between shifted n_t1 and n_t2
-        correlations[i] = np.corrcoef(dn_t1_shifted, dn_t2)[0, 1]
+    # Use Fourier-estimated shift as "optimal"
+    corr_max = np.interp(shift, shifts, correlations)
     
-    # Find the shift with maximum correlation
-    max_idx = np.argmax(correlations)
-    shift_optimal = shifts[max_idx]
-    correlation_max = correlations[max_idx]
-    
-    # Calculate velocity
-    delta_t = t2 - t1
-    if delta_t > 0:
-        u_drift = shift_optimal / delta_t
-    else:
-        u_drift = 0.0
-    
-    return u_drift, shift_optimal, correlation_max, shifts, correlations
+    return u, shift, corr_max, shifts, correlations
 
 def calculate_velocity_from_period(n_initial, n_final, t_initial, t_final, L):
     """
@@ -371,9 +404,8 @@ def plot_period_detection(n_initial, n_final, t_initial, t_final, L, u_momentum,
     # Plot 1: Initial and shifted initial vs final
     x = np.linspace(0, L, len(n_final), endpoint=False)
     
-    # Create shifted initial profile at detected shift
-    x_shifted = (x + shift_opt) % L
-    n_initial_shifted = np.interp(x, x_shifted, n_initial)
+    # Create shifted initial profile at detected shift using Fourier method
+    n_initial_shifted = _fourier_shift_real(n_initial, shift_opt, L)
     
     ax1.plot(x, n_initial, 'b-', label=f'Initial n(x,{t_initial:.2f})', alpha=0.6, linewidth=1.5)
     ax1.plot(x, n_final, 'r-', label=f'Final n(x,{t_final:.2f})', alpha=0.8, linewidth=2)
@@ -414,8 +446,8 @@ def nbar_profile():
     # Create spatial grid with current Nx
     x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
     
-    # For seed_mode == 2, use uniform background without any Gaussian perturbations
-    if par.seed_mode == 2:
+    # For seed_mode == 2 or 7, use uniform background without any Gaussian perturbations
+    if par.seed_mode == 2 or par.seed_mode == 7:
         return np.full_like(x_local, par.nbar0)
     
     # For other modes, keep original logic with potential Gaussian perturbations
@@ -530,6 +562,28 @@ def initial_fields():
         # Add delta p perturbation  
         if par.seed_amp_p != 0.0:
             delta_p = par.seed_amp_p * sine_perturbation
+            p0 = pbar + delta_p
+    
+    # seed_mode == 7: cos(6πx/L) + cos(10πx/L) + cos(14πx/L) (modes m=3, 5, 7)
+    elif par.seed_mode == 7 and (par.seed_amp_n != 0.0 or par.seed_amp_p != 0.0):
+        # Modes: 6π/L = 3*(2π/L), 10π/L = 5*(2π/L), 14π/L = 7*(2π/L)
+        # So we use Fourier modes m = 3, 5, 7
+        modes = [3, 5, 7]
+        
+        # Create sum of cosine perturbation
+        cosine_perturbation = np.zeros_like(x_local)
+        for mode in modes:
+            kx = 2*np.pi*mode / par.L
+            cosine_perturbation += np.cos(kx * x_local)
+        
+        # Add delta n perturbation (no normalization - use amplitude as-is)
+        if par.seed_amp_n != 0.0:
+            delta_n = par.seed_amp_n * cosine_perturbation
+            n0 = nbar + delta_n
+        
+        # Add delta p perturbation  
+        if par.seed_amp_p != 0.0:
+            delta_p = par.seed_amp_p * cosine_perturbation
             p0 = pbar + delta_p
     
     # Handle other seed modes (keeping original logic for compatibility)
@@ -684,11 +738,20 @@ def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False):
 
 def rhs_with_progress(t, y, E_base, last_print_time=[0.0], start_time=[0.0], worker_id=0):
     """RHS function with progress tracking"""
-    if t - last_print_time[0] > 1.0:  # Print every 0.1 time units (reduced frequency)
+    if t - last_print_time[0] > 1.0:  # Print every 1.0 time units
         progress = (t / par.t_final) * 100
         elapsed_wall_time = time.time() - start_time[0]
+        
+        # Calculate estimated time remaining
+        if progress > 0.1:  # Only estimate after 0.1% progress to avoid division by zero
+            estimated_total_time = elapsed_wall_time / (progress / 100.0)
+            estimated_remaining = estimated_total_time - elapsed_wall_time
+            est_str = f"EST: {estimated_remaining:6.1f}s"
+        else:
+            est_str = "EST: ---s"
+        
         # Use carriage return to overwrite the same line for this worker
-        print(f"\r[Worker {worker_id:2d}] {progress:6.1f}% (t = {t:6.3f}/{par.t_final:.3f}) | Wall: {elapsed_wall_time:6.1f}s", end="", flush=True)
+        print(f"\r[Worker {worker_id:2d}] {progress:6.1f}% (t = {t:6.3f}/{par.t_final:.3f}) | Wall: {elapsed_wall_time:6.1f}s | {est_str}", end="", flush=True)
         last_print_time[0] = t
     return rhs(t, y, E_base)
 
@@ -943,17 +1006,15 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
     # Override with this specific u_d
     local_par.u_d = u_d
     u_d_str = f"{u_d:.4f}".replace('.', 'p')  # e.g., 7.5000 -> 7p5000
-    local_par.outdir = f"multiple_u_d/2.5L(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})/out_drift_ud{u_d_str}"
+    local_par.outdir = f"multiple_u_d/modes_3_5_7_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})/out_drift_ud{u_d_str}"
     
-    # Set t_final based on u_d value - doubled to confirm asymptotic regime
-    local_par.t_final = 40*local_par.L/u_d  # Doubled from 20*par.L/u_d
+    # Keep t_final fixed at 50.0 for all u_d values
+    local_par.t_final = 20*10.0/u_d#50.0
     
-    local_par.n_save = 512
+    local_par.n_save = 1024*4#100  # Reduced for speed, as per user's settings
     
-    if u_d < 6.5:
-        local_par.Nx = 512
-    else:
-        local_par.Nx = 812
+    # Keep Nx from global par (user set it to 1212)
+    local_par.Nx = 512*4
     
     # Update global par for this process
     global par
@@ -994,48 +1055,13 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
         }
 
 def run_multiple_ud():
-    # Generate quadratic distribution with max density near u_d = 2.4-2.5
-    # Strategy: Use sqrt in segment 1 (increasing density) and quadratic in segment 2 (decreasing density)
-    # This creates maximum density at the junction around u_d ~ 2.5
+    # Generate u_d values for parameter sweep
+    u_d_values = np.arange(4.4, 8.0, 0.2)
     
-    n_total = 30  # Total number of points
-    n_points = np.arange(0, n_total)
-    
-    # Split into two segments with junction at u_d where we want max density
-    n_split = 15  # Split at middle of point range
-    u_split = 2.5  # Maximum density location
-    u_min = 1.4
-    u_max = 8.0
-    
-    u_d_values = np.zeros(n_total)
-    
-    # Segment 1: sqrt spacing in [1.4, 2.5] - density increases toward u_split
-    # u = u_min + beta * sqrt(n)
-    n1 = n_points[:n_split]
-    beta1 = (u_split - u_min) / np.sqrt(n_split - 1) if n_split > 1 else 1.0
-    u_d_values[:n_split] = u_min + beta1 * np.sqrt(n1)
-    
-    # Segment 2: quadratic spacing in [2.5, 8.0] - density decreases from u_split
-    # u = u_split + alpha * n^2
-    n2 = n_points[n_split:] - n_split
-    alpha2 = (u_max - u_split) / (n_total - n_split - 1)**2 if (n_total - n_split) > 1 else 1.0
-    u_d_values[n_split:] = u_split + alpha2 * n2**2
-
-    u_d_values = np.arange(2.6, 8.0, 0.2)
-    
-    print(f"[run_multiple_ud] Generated {len(u_d_values)} u_d values with max density near u_d={u_split}")
-    print(f"[run_multiple_ud] Segment 1: {n_split} points in [{u_min:.2f}, {u_split:.2f}] using sqrt (β={beta1:.6f})")
-    print(f"[run_multiple_ud] Segment 2: {n_total - n_split} points in [{u_split:.2f}, {u_max:.2f}] using quadratic (α={alpha2:.6f})")
+    print(f"[run_multiple_ud] Running parameter sweep with {len(u_d_values)} u_d values")
     print(f"[run_multiple_ud] Range: [{u_d_values[0]:.4f}, {u_d_values[-1]:.4f}]")
-    print(f"[run_multiple_ud] u_d values:\n{u_d_values}")
-    
-    # Print spacing to show density pattern
-    spacing = np.diff(u_d_values)
-    min_spacing_idx = np.argmin(spacing)
-    print(f"\n[run_multiple_ud] Spacing analysis:")
-    print(f"  Min spacing: Δu={spacing.min():.4f} at u_d≈{u_d_values[min_spacing_idx]:.3f} (highest density)")
-    print(f"  Max spacing: Δu={spacing.max():.4f}")
-    print(f"  Spacing around junction (n={n_split}): Δu={spacing[n_split-1]:.4f}")
+    print(f"[run_multiple_ud] Step size: {u_d_values[1] - u_d_values[0]:.4f}")
+    print(f"[run_multiple_ud] u_d values: {u_d_values}")
 
     # Use the generated u_d_values with optimized spacing
     print(f"[run_multiple_ud] u_d values to simulate: {u_d_values}")
@@ -1099,12 +1125,15 @@ if __name__ == "__main__":
     par.sigma_diss =  -1.0       # Width of perturbation
     par.x0 = 12.5               # Location of perturbation
     
-    # Set seed_mode to 2 for delta n and delta p cosine perturbations
-    par.seed_mode = 2
-    par.seed_amp_n = 0.06  # Doubled from 0.05 to confirm asymptotic regime
-    par.seed_amp_p = 0.06  # Doubled from 0.05 to confirm asymptotic regime
+    # Set seed_mode to 7 for cos(6πx/L) + cos(10πx/L) + cos(14πx/L) perturbations
+    par.seed_mode = 7
+    par.seed_amp_n = 0.001  # Small amplitude perturbation
+    par.seed_amp_p = 0.001  # Small amplitude perturbation (can set to 0 if only perturbing n)
     
-    par.Nx = 512#256#512#812#812
+    # par.Nx = 10000  # High spatial resolution
+    par.L = 10.0    # System size
+    par.t_final = 50.0  # Final time
+    # par.max_step = 0.0005  # Maximum time step
 
 
     # Ensure NO potential perturbations are active for seed_mode == 2
