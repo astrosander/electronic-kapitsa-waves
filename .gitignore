@@ -1,2 +1,13 @@
 *.npz
 *.json
+*.pyc
+
+fft_compare_ud*.pdf
+fft_compare_ud*.png
+
+period_detection_ud*.pdf
+period_detection_ud*.png
+
+snapshots_n_ud*.png
+spacetime_n_comoving_ud*.png
+spacetime_n_lab_ud*.png
