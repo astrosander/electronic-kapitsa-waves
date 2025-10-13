@@ -1046,27 +1046,68 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
         t2 = t[idx_t2]
         
         dx = L / len(n_t1)
+        x = np.linspace(0, L, len(n_t1), endpoint=False)
         
-        # Detrend the data
+        # Remove mean to focus on fluctuations (same as main.py)
         dn_t1 = n_t1 - np.mean(n_t1)
         dn_t2 = n_t2 - np.mean(n_t2)
         
-        # Calculate correlation for different shifts
-        n_shifts = len(n_t1)
-        shifts = np.arange(-n_shifts//2, n_shifts//2) * dx
-        correlations = np.zeros(len(shifts))
+        # Use robust Fourier-based velocity estimation (same method as main.py)
+        from numpy.fft import rfft, irfft, rfftfreq
         
-        for i, shift in enumerate(shifts):
-            if shift >= 0:
-                dn_t1_shifted = np.roll(dn_t1, -int(shift/dx))
-            else:
-                dn_t1_shifted = np.roll(dn_t1, int(-shift/dx))
-            correlations[i] = np.corrcoef(dn_t1_shifted, dn_t2)[0, 1]
+        def _fourier_shift_real(f, shift, L):
+            """Circularly shift a real 1D signal by a non-integer amount using FFT."""
+            N = f.size
+            k = 2*np.pi * rfftfreq(N, d=L/N)      # wavenumbers (>=0)
+            F = rfft(f)
+            return irfft(F * np.exp(1j*k*shift), n=N)
+
+        def estimate_velocity_fourier(n_t1, n_t2, t1, t2, L, power_floor=1e-3):
+            """Estimate spatial shift and velocity using cross-spectrum phase."""
+            N = n_t1.size
+            f1 = n_t1 - n_t1.mean()
+            f2 = n_t2 - n_t2.mean()
+
+            k = 2*np.pi * rfftfreq(N, d=L/N)
+            F1 = rfft(f1)
+            F2 = rfft(f2)
+            C  = np.conj(F1) * F2
+            phi = np.angle(C)
+
+            k = k[1:]
+            phi = phi[1:]
+            w = np.abs(C[1:])
+            mask = w > (power_floor * w.max())
+            k, phi, w = k[mask], phi[mask], w[mask]
+
+            phi = np.unwrap(phi)
+            num = np.sum(w * k * phi)
+            den = np.sum(w * k**2)
+            shift = num / den
+            
+            # Fix sign convention: positive shift = forward motion (rightward drift)
+            shift = -shift  # Flip sign to match spatial convention
+            
+            shift = (shift + 0.5*L) % L - 0.5*L
+
+            dt = float(t2 - t1)
+            u = shift / dt
+            return u, shift
         
-        # Find optimal shift
-        max_idx = np.argmax(correlations)
-        shift_opt = shifts[max_idx]
-        u_true = shift_opt / (t2 - t1)
+        # Calculate velocity using Fourier method
+        u_true, shift_opt = estimate_velocity_fourier(n_t1, n_t2, t1, t2, L)
+        
+        # Build correlation curve for visualization
+        N = len(n_t1)
+        f1 = n_t1 - n_t1.mean()
+        f2 = n_t2 - n_t2.mean()
+        F1 = rfft(f1)
+        F2 = rfft(f2)
+        xcorr = irfft(np.conj(F1) * F2, n=N)
+        dx = L/N
+        shifts = dx * (np.arange(N) - (N//2))
+        xcorr = np.roll(xcorr, -N//2)
+        correlations = (xcorr - xcorr.min())/(xcorr.max()-xcorr.min() + 1e-15)
         
         # Calculate density of pulses (count peaks in final density profile)
         n_final = n_t[:, -1]
@@ -1463,6 +1504,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
         # Calculate n_max as average of peak values and n_min as average of valley values
         from scipy.signal import find_peaks
         
+        if len(n_final) > 0:
             # Find peaks (local maxima above threshold)
             n_mean = np.mean(n_final)
             n_std = np.std(n_final)
@@ -1553,7 +1595,8 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
         try:
             # Fit to sqrt function: delta_n = a * sqrt(u_d - u_c) for u_d > u_c
             u_c = 2.74  # Critical u_d value (onset of instability)
-            mask_fit = (u_d_sorted > u_c)  # No upper limit - use ALL data points
+            # Fit only on points with u_d < 4.0
+            mask_fit = (u_d_sorted > u_c) & (u_d_sorted < 4.7)
             if np.sum(mask_fit) > 3:  # Need at least 4 points for fitting
                 u_d_fit = u_d_sorted[mask_fit]
                 delta_n_fit = delta_n_sorted[mask_fit]
@@ -1566,8 +1609,8 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
                 popt, pcov = curve_fit(sqrt_model, u_d_fit, delta_n_fit, p0=[1.0])
                 a_fit = popt[0]
                 
-                # Generate smooth curve
-                u_d_smooth = np.linspace(u_c, u_d_fit.max(), 200)
+                # Generate smooth curve over the whole x-axis range (not just fitted range)
+                u_d_smooth = np.linspace(u_c, u_d_sorted.max(), 1000)
                 delta_n_smooth = sqrt_model(u_d_smooth, a_fit)
                 
                 ax.plot(u_d_smooth, delta_n_smooth, 'r-', linewidth=1.5, alpha=0.9, 
@@ -1577,6 +1620,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
                 print(f"  Fit parameter: a = {a_fit:.4f}")
                 print(f"  Model: Δn = {a_fit:.4f} * sqrt(u_d - 2.74)")
                 print(f"  Standard error: {np.sqrt(pcov[0,0]):.4f}")
+                print(f"  Fitted on {np.sum(mask_fit)} points with u_d < 4.0")
         except Exception as e:
             print(f"Warning: Could not fit sqrt model: {e}")
             import traceback
