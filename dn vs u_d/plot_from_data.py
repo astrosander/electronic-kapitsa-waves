@@ -1,6 +1,16 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import os
+
+# --- unified TeX-style appearance (MathText, no system LaTeX needed) ---
+mpl.rcParams.update({
+    "text.usetex": False,          # use MathText (portable)
+    "font.family": "STIXGeneral",  # match math fonts
+    "font.size": 12,
+    "mathtext.fontset": "stix",
+    "axes.unicode_minus": False,   # proper minus sign
+})
 
 def load_data(filename):
     data = np.load(filename, allow_pickle=True)
@@ -1460,13 +1470,14 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
     
     return data_by_label
 
-def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
+def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fraction=0.5):
     """Plot delta n (n_max - n_min) vs u_d for combined datasets.
     
     Args:
         base_dirs: List of base directory paths
         labels: Optional custom labels for each dataset
         outdir: Output directory for plots
+        x0_fraction: Fraction of domain length to use for current measurement (default: 0.5 = middle)
     """
     if labels is None:
         labels = [os.path.basename(d) for d in base_dirs]
@@ -1479,11 +1490,12 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
         return
     
     # Organize data by label
-    data_by_label = {label: {'u_d': [], 'delta_n': []} for label in labels}
+    data_by_label = {label: {'u_d': [], 'delta_n': [], 'j_avg': []} for label in labels}
     
     # Collect all data for interpolation
     all_u_d = []
     all_delta_n = []
+    all_j_avg = []
     
     # Critical velocity u* = 2.74
     u_star = 2.74
@@ -1553,24 +1565,47 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
         else:
             delta_n = 0.0
         
+        # Calculate time-averaged current j = v*n = p at fixed location x0
+        p_t = data['p_t']
+        Nx = data['Nx']
+        
+        # Determine spatial index for measurement
+        x0_idx = int(x0_fraction * Nx)
+        
+        # Extract momentum time series at x0
+        p_at_x0 = p_t[x0_idx, :]
+        
+        # Calculate time-averaged current over the last period
+        # Estimate period from oscillations in the last portion of the simulation
+        t_final = t[-1]
+        t_window_start = max(0, len(t) - int(0.3 * len(t)))  # Last 30% of simulation
+        
+        # Use the entire time window for averaging (or could estimate period and use that)
+        j_avg = np.mean(p_at_x0[t_window_start:])
+        
         # Print detailed information about the calculation
         if len(n_final) > 0 and len(peaks) > 0:
             print(f"  Processing u_d={u_d:.4f} (u_d > u* = {u_star})")
             print(f"    Peaks: {len(peaks)}, Valleys: {len(valid_valleys) if 'valid_valleys' in locals() else 0}")
             print(f"    n_max = {n_max:.3f} (avg of {len(peaks)} peaks), n_min = {n_min:.3f} (avg of {len(valid_valleys) if 'valid_valleys' in locals() else 0} valleys)")
             print(f"    delta_n = {delta_n:.3f}")
+            print(f"    j_avg (at x={x0_fraction:.2f}L) = {j_avg:.4f}")
         else:
             print(f"  Processing u_d={u_d:.4f} (u_d > u* = {u_star}) - using global min/max")
+            print(f"    j_avg (at x={x0_fraction:.2f}L) = {j_avg:.4f}")
         
         data_by_label[data_label]['u_d'].append(u_d)
         data_by_label[data_label]['delta_n'].append(delta_n)
+        data_by_label[data_label]['j_avg'].append(j_avg)
         
         # Collect all data for interpolation
         all_u_d.append(u_d)
         all_delta_n.append(delta_n)
+        all_j_avg.append(j_avg)
     
-    # Create plot - same style as plot_combined_velocity_analysis
-    fig, ax = plt.subplots(1, 1, figsize=(12,9))
+    # Create plot with dual y-axes
+    fig, ax1 = plt.subplots(1, 1, figsize=(12*0.8,9*0.8))
+    ax2 = ax1.twinx()  # Create second y-axis for current
     
     # Same color for all datasets, different marker shapes
     color = 'black'  # Single color for all datasets
@@ -1613,7 +1648,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
                 u_d_smooth = np.linspace(u_c, u_d_sorted.max(), 1000)
                 delta_n_smooth = sqrt_model(u_d_smooth, a_fit)
                 
-                ax.plot(u_d_smooth, delta_n_smooth, 'r-', linewidth=1.5, alpha=0.9, 
+                ax1.plot(u_d_smooth, delta_n_smooth, 'r-', linewidth=1.5, alpha=0.9, 
                         label=f'${a_fit:.3f} \\sqrt{{u_d - 2.74}}$')
                 
                 print(f"\nSquare-root fit results:")
@@ -1634,6 +1669,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
         # Filter for u_d > u* only (no upper limit - plot ALL data points)
         u_d_arr = np.array(data_by_label[label]['u_d'])
         delta_n_arr = np.array(data_by_label[label]['delta_n'])
+        j_avg_arr = np.array(data_by_label[label]['j_avg'])
         
         mask = u_d_arr > u_star  # Only filter for u_d > u*, no upper limit
         
@@ -1642,11 +1678,18 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
         
         u_d_filtered = u_d_arr[mask]
         delta_n_filtered = delta_n_arr[mask]
+        j_avg_filtered = j_avg_arr[mask]
         
         marker = markers[idx % len(markers)]
 
-        ax.scatter(u_d_filtered, delta_n_filtered, marker=marker,
-                  label=label, s=24, alpha=0.8)
+        # Plot delta_n on left axis (filled markers)
+        ax1.scatter(u_d_filtered, delta_n_filtered, marker=marker, color='black',
+                   label=f'$\\Delta n=n_{{\\rm max}} - n_{{\\rm min}}$', s=50, alpha=0.8, zorder=10)
+        
+        # Plot j_avg on right axis (hollow markers)
+        ax2.scatter(u_d_filtered, j_avg_filtered, marker=marker, color='blue',
+                   label=f'$\\langle j \\rangle = \\langle u n \\rangle_t$', s=50, alpha=0.7, 
+                   facecolors='none', edgecolors='blue', linewidths=1.5, zorder=10)
 
         # Plot points only, no lines, larger size
         # if "25" in label:
@@ -1660,8 +1703,8 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
         #               label=label, s=24, alpha=0.8)
     
     # Add vertical line at u* = 2.74
-    ax.axvline(x=2.74, color='blue', linestyle='--', linewidth=2.0, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
-    ax.axhline(y=0.0, color='black', linestyle='--', linewidth=1.0, alpha=0.8)
+    ax1.axvline(x=2.74, color='green', linestyle='--', linewidth=2.0, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
+    ax1.axhline(y=0.0, color='black', linestyle='--', linewidth=1.0, alpha=0.5)
 
     # Add zoomed inset around the critical region
     from matplotlib.patches import Rectangle
@@ -1749,18 +1792,30 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d"):
     # for spine in ax_inset.spines.values():
     #     spine.set_linewidth(0.8)
     
-    ax.set_xlabel('$u_d$', fontsize=12)
-    ax.set_ylabel('$n_{\\rm max} - n_{\\rm min}$', fontsize=12)
-    ax.legend(fontsize=10, ncol=1, loc='best', framealpha=0.9)
-    ax.grid(True, alpha=0.3)
-    # ax.set_xlim(0.5, 8)
+    # Set axis labels and properties
+    ax1.set_xlabel('$u_d$', fontsize=14)
+    ax1.set_ylabel('$\\Delta n = n_{\\rm max} - n_{\\rm min}$', fontsize=14, color='black')
+    ax2.set_ylabel('$\\langle j \\rangle = \\langle u n \\rangle_t$', fontsize=14, color='blue')
+    
+    # Color the y-axis ticks to match the data
+    ax1.tick_params(axis='y', labelcolor='black')
+    ax2.tick_params(axis='y', labelcolor='blue')
+    
+    # Combine legends from both axes
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, fontsize=9, ncol=1, loc='upper left', framealpha=0.9)
+    
+    ax1.grid(True, alpha=0.3)
+    # ax1.set_xlim(0.5, 8)
     
     plt.tight_layout()
     os.makedirs(outdir, exist_ok=True)
     plt.savefig(f"{outdir}/delta_n_vs_ud.png", dpi=200, bbox_inches='tight')
     plt.savefig(f"{outdir}/delta_n_vs_ud.pdf", dpi=200, bbox_inches='tight')
     plt.savefig(f"{outdir}/delta_n_vs_ud.svg", dpi=200, bbox_inches='tight')
-    print(f"\nSaved delta n vs u_d plot to {outdir}/delta_n_vs_ud.png")
+    print(f"\nSaved delta n vs u_d plot (with time-averaged current) to {outdir}/delta_n_vs_ud.png")
+    print(f"  Current measured at x = {x0_fraction:.2f}L")
     plt.show()
     plt.close()
     

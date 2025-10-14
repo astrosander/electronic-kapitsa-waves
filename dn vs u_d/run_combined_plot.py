@@ -41,7 +41,7 @@ if __name__ == "__main__":
     # custom_labels=base_dirs
 
     custom_labels = [
-        "$\\delta n, \\delta p = 0.01$",
+        "$\\delta n, \\delta p = 0.001$",
         # "$\\sin(x)/x$"#\\delta n, \\delta p = 0.01$",
         # "$\\delta n, \\delta p = 0.03$",
         # "$\\delta n, \\delta p = 0.05$",
@@ -80,7 +80,7 @@ if __name__ == "__main__":
     
     # Plot velocity analysis (u_true, n_pulses, frequency)
     print("Generating velocity analysis (u_true, n_pulses, frequency)...")
-    velocity_data = plot_combined_velocity_analysis(base_dirs, labels=custom_labels)
+    # velocity_data = plot_combined_velocity_analysis(base_dirs, labels=custom_labels)
     
     # Plot delta n vs u_d
     print("\nGenerating delta n vs u_d plot...")
