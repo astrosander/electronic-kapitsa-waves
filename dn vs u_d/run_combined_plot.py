@@ -8,6 +8,7 @@ from plot_from_data import (
     plot_multiple_ud_panel_p,
     plot_overlay_final_profiles_n,
     plot_overlay_final_profiles_p,
+    plot_n_p_time_series,
 )
 
 if __name__ == "__main__":
@@ -86,6 +87,10 @@ if __name__ == "__main__":
     print("\nGenerating delta n vs u_d plot...")
     delta_n_data = plot_delta_n_vs_ud(base_dirs, labels=custom_labels)
     
+    # Plot n(t) and p(t) time series comparison
+    print("\nGenerating n(t) and p(t) time series comparison...")
+    plot_n_p_time_series(base_dirs, labels=custom_labels)
+    
     # Panel plots of final n(x) and p(x) with columns per base_dir
     print("\nGenerating multi-column panel of final n(x) across u_d and datasets...")
     # plot_multiple_ud_panel(base_dirs=base_dirs, labels=custom_labels)
@@ -96,6 +101,7 @@ if __name__ == "__main__":
     print("Analysis complete! Generated:")
     print("- velocity_vs_ud_combined.png")
     print("- delta_n_vs_ud.png")
+    print("- n_p_time_series_comparison.png (n(t) and p(t) at x₀)")
     print("- final_profiles_panel_grid_n.png (n panel, columns per dataset)")
     print("- final_profiles_panel_grid_p.png (p panel, columns per dataset)")
     print("=" * 60)

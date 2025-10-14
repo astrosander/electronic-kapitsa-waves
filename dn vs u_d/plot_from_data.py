@@ -1858,6 +1858,149 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
     
     return data_by_label
 
+def plot_n_p_time_series(base_dirs, labels=None, outdir="multiple_u_d", x0_fraction=0.5, 
+                        u_d_subcritical=None, u_d_supercritical=None):
+    """Plot n(t) and p(t) at fixed location x₀ for subcritical and supercritical u_d values.
+    
+    Args:
+        base_dirs: List of base directory paths
+        labels: Optional custom labels for each dataset
+        outdir: Output directory for plots
+        x0_fraction: Fraction of domain length to use for measurement (default: 0.5 = middle)
+        u_d_subcritical: u_d value below critical (default: 0.8 * 2.74 = 2.192)
+        u_d_supercritical: u_d value above critical (default: 1.2 * 2.74 = 3.288)
+    """
+    if labels is None:
+        labels = [os.path.basename(d) for d in base_dirs]
+    
+    # Set default u_d values if not provided
+    u_star = 2.74
+    if u_d_subcritical is None:
+        u_d_subcritical = 0.8 * u_star  # 2.192
+    if u_d_supercritical is None:
+        u_d_supercritical = 1.2 * u_star  # 3.288
+    
+    # Load all data
+    all_data = load_multi_dataset(base_dirs, labels)
+    
+    if not all_data:
+        print("No data found!")
+        return
+    
+    # Find closest u_d values to target values
+    u_d_values = [u_d for _, u_d, _ in all_data]
+    
+    def find_closest_u_d(target_u_d):
+        if not u_d_values:
+            return None, None
+        closest_idx = min(range(len(u_d_values)), key=lambda i: abs(u_d_values[i] - target_u_d))
+        closest_u_d = u_d_values[closest_idx]
+        closest_data = all_data[closest_idx]
+        return closest_u_d, closest_data
+    
+    # Find data for subcritical and supercritical cases
+    u_d_sub, data_sub = find_closest_u_d(u_d_subcritical)
+    u_d_sup, data_sup = find_closest_u_d(u_d_supercritical)
+    
+    print(f"\nTime series analysis:")
+    print(f"  Subcritical: u_d = {u_d_sub:.4f} (target: {u_d_subcritical:.4f})")
+    print(f"  Supercritical: u_d = {u_d_sup:.4f} (target: {u_d_supercritical:.4f})")
+    
+    # Create figure with subplots
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8))
+    
+    # Plot subcritical case
+    if data_sub is not None:
+        n_t = data_sub[2]['n_t']
+        p_t = data_sub[2]['p_t']
+        t = data_sub[2]['t']
+        L = data_sub[2]['L']
+        Nx = data_sub[2]['Nx']
+        
+        # Determine spatial index for measurement
+        x0_idx = int(x0_fraction * Nx)
+        x0 = x0_fraction * L
+        
+        # Extract time series at x₀
+        n_at_x0 = n_t[x0_idx, :]
+        p_at_x0 = p_t[x0_idx, :]
+        
+        # Plot n(t)
+        axes[0, 0].plot(t, n_at_x0, 'b-', linewidth=0.5, alpha=0.8)
+        axes[0, 0].set_ylabel('$n(x_0, t)$', fontsize=12)
+        axes[0, 0].set_title(f'$u_d = {u_d_sub:.3f}$\n$n({x0:.2f}, t)$', fontsize=11)
+        axes[0, 0].grid(True, alpha=0.3)
+        
+        # Plot p(t)
+        axes[1, 0].plot(t, p_at_x0, 'r-', linewidth=0.5, alpha=0.8)
+        axes[1, 0].set_xlabel('$t$', fontsize=12)
+        axes[1, 0].set_ylabel('$p(x_0, t)$', fontsize=12)
+        axes[1, 0].set_title(f'$p({x0:.2f}, t)$', fontsize=11)
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        # Add statistics
+        n_mean = np.mean(n_at_x0)
+        n_std = np.std(n_at_x0)
+        p_mean = np.mean(p_at_x0)
+        p_std = np.std(p_at_x0)
+        
+        axes[0, 0].text(0.02, 0.98, f'$\\langle n \\rangle = {n_mean:.3f}$\n$\\sigma_n = {n_std:.3f}$', 
+                       transform=axes[0, 0].transAxes, fontsize=9, verticalalignment='top',
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        axes[1, 0].text(0.02, 0.98, f'$\\langle p \\rangle = {p_mean:.3f}$\n$\\sigma_p = {p_std:.3f}$', 
+                       transform=axes[1, 0].transAxes, fontsize=9, verticalalignment='top',
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    # Plot supercritical case
+    if data_sup is not None:
+        n_t = data_sup[2]['n_t']
+        p_t = data_sup[2]['p_t']
+        t = data_sup[2]['t']
+        L = data_sup[2]['L']
+        Nx = data_sup[2]['Nx']
+        
+        # Determine spatial index for measurement
+        x0_idx = int(x0_fraction * Nx)
+        x0 = x0_fraction * L
+        
+        # Extract time series at x₀
+        n_at_x0 = n_t[x0_idx, :]
+        p_at_x0 = p_t[x0_idx, :]
+        
+        # Plot n(t)
+        axes[0, 1].plot(t, n_at_x0, 'b-', linewidth=0.5, alpha=0.8)
+        axes[0, 1].set_ylabel('$n(x_0, t)$', fontsize=12)
+        axes[0, 1].set_title(f'$u_d = {u_d_sup:.3f}$\n$n({x0:.2f}, t)$', fontsize=11)
+        axes[0, 1].grid(True, alpha=0.3)
+        
+        # Plot p(t)
+        axes[1, 1].plot(t, p_at_x0, 'r-', linewidth=0.5, alpha=0.8)
+        axes[1, 1].set_xlabel('$t$', fontsize=12)
+        axes[1, 1].set_ylabel('$p(x_0, t)$', fontsize=12)
+        axes[1, 1].set_title(f'$p({x0:.2f}, t)$', fontsize=11)
+        axes[1, 1].grid(True, alpha=0.3)
+        
+        # Add statistics
+        n_mean = np.mean(n_at_x0)
+        n_std = np.std(n_at_x0)
+        p_mean = np.mean(p_at_x0)
+        p_std = np.std(p_at_x0)
+        
+        axes[0, 1].text(0.02, 0.98, f'$\\langle n \\rangle = {n_mean:.3f}$\n$\\sigma_n = {n_std:.3f}$', 
+                       transform=axes[0, 1].transAxes, fontsize=9, verticalalignment='top',
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        axes[1, 1].text(0.02, 0.98, f'$\\langle p \\rangle = {p_mean:.3f}$\n$\\sigma_p = {p_std:.3f}$', 
+                       transform=axes[1, 1].transAxes, fontsize=9, verticalalignment='top',
+                       bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+    
+    plt.tight_layout()
+    os.makedirs(outdir, exist_ok=True)
+    plt.savefig(f"{outdir}/n_p_time_series_comparison.png", dpi=200, bbox_inches='tight')
+    plt.savefig(f"{outdir}/n_p_time_series_comparison.pdf", dpi=200, bbox_inches='tight')
+    print(f"\nSaved n(t) and p(t) time series comparison to {outdir}/n_p_time_series_comparison.png")
+    plt.show()
+    plt.close()
+
 def plot_combined_comparison(base_dirs, labels=None, outdir="multiple_u_d"):
     """Compare results across multiple parameter sets.
     
