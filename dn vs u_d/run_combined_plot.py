@@ -19,10 +19,10 @@ if __name__ == "__main__":
         # "multiple_u_d/no_inhomogeneity(lambda=0.0, sigma=-1.0, seed_amp_n=0.05, seed_amp_p=0.05)",
         # "multiple_u_d/no_inhomogeneity(lambda=0.0, sigma=-1.0, seed_amp_n=0.07, seed_amp_p=0.07)",
 
-        "multiple_u_d/modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)",# - 10t_final
+        # "multiple_u_d/modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)",# - 10t_final
         # "multiple_u_d/modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)-Nx=512; Nt=100"
 
-        # "multiple_u_d/dissipation_perturbation",
+        "multiple_u_d/2.5L(lambda=0.0, sigma=-1.0, seed_amp_n=0.06, seed_amp_p=0.06)",
         # "multiple_u_d/medium_dissipation_perturbation",
         # "multiple_u_d/small_dissipation_perturbation",
 
