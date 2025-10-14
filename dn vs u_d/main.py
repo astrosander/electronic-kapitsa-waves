@@ -1056,7 +1056,7 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
 
 def run_multiple_ud():
     # Generate u_d values for parameter sweep
-    u_d_values = np.arange(4.4, 8.0, 0.2)
+    u_d_values = np.arange(0.2, 2.8, 0.2)
     
     print(f"[run_multiple_ud] Running parameter sweep with {len(u_d_values)} u_d values")
     print(f"[run_multiple_ud] Range: [{u_d_values[0]:.4f}, {u_d_values[-1]:.4f}]")
