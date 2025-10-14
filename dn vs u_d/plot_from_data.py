@@ -1497,7 +1497,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
     print(f"  Above u* = 2.74: {sum(1 for u in u_d_values if u >= 2.74)} simulations")
     
     # Organize data by label
-    data_by_label = {label: {'u_d': [], 'delta_n': [], 'j_avg': []} for label in labels}
+    data_by_label = {label: {'u_d': [], 'delta_n': [], 'j_avg': [], 'sigma_p': []} for label in labels}
     
     # Collect all data for interpolation
     all_u_d = []
@@ -1580,13 +1580,25 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
         # Extract momentum time series at x0
         p_at_x0 = p_t[x0_idx, :]
         
-        # Calculate time-averaged current over the last period
-        # Estimate period from oscillations in the last portion of the simulation
-        t_final = t[-1]
-        t_window_start = max(0, len(t) - int(0.1 * len(t)))  # Last 30% of simulation
+        # Calculate time-averaged current using Gaussian weighting
+        # Gaussian centered at t=30 with width=15
+        t_center = 30.0
+        t_width = 15.0
         
-        # Use the entire time window for averaging (or could estimate period and use that)
-        j_avg = np.mean(p_at_x0[t_window_start:])
+        # Create Gaussian weights
+        gaussian_weights = np.exp(-0.5 * ((t - t_center) / t_width)**2)
+        
+        # Normalize weights so they sum to 1
+        gaussian_weights = gaussian_weights / np.sum(gaussian_weights)
+        
+        # Calculate weighted average and weighted standard deviation
+        j_avg = np.sum(p_at_x0 * gaussian_weights)
+        
+        # For weighted standard deviation, we need to be careful
+        # Calculate weighted variance: sum(w * (x - mean)^2) / sum(w)
+        weighted_mean = j_avg
+        weighted_variance = np.sum(gaussian_weights * (p_at_x0 - weighted_mean)**2) / np.sum(gaussian_weights)
+        sigma_p = np.sqrt(weighted_variance)
         
         # Print detailed information about the calculation
         regime = "subcritical" if u_d < u_star else "supercritical"
@@ -1594,14 +1606,15 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
             print(f"    [{regime}] Peaks: {len(peaks)}, Valleys: {len(valid_valleys) if 'valid_valleys' in locals() else 0}")
             print(f"    n_max = {n_max:.3f} (avg of {len(peaks)} peaks), n_min = {n_min:.3f} (avg of {len(valid_valleys) if 'valid_valleys' in locals() else 0} valleys)")
             print(f"    delta_n = {delta_n:.3f}")
-            print(f"    j_avg (at x={x0_fraction:.2f}L) = {j_avg:.4f}")
+            print(f"    j_avg (Gaussian t={t_center}±{t_width}, x={x0_fraction:.2f}L) = {j_avg:.4f}, σ_p = {sigma_p:.4f}")
         else:
             print(f"    [{regime}] Using global min/max")
-            print(f"    j_avg (at x={x0_fraction:.2f}L) = {j_avg:.4f}")
+            print(f"    j_avg (Gaussian t={t_center}±{t_width}, x={x0_fraction:.2f}L) = {j_avg:.4f}, σ_p = {sigma_p:.4f}")
         
         data_by_label[data_label]['u_d'].append(u_d)
         data_by_label[data_label]['delta_n'].append(delta_n)
         data_by_label[data_label]['j_avg'].append(j_avg)
+        data_by_label[data_label]['sigma_p'].append(sigma_p)
         
         # Collect all data for interpolation
         all_u_d.append(u_d)
@@ -1700,6 +1713,103 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
             import traceback
             traceback.print_exc()
     
+    # Collect all data for least squares fitting of ⟨j⟩ vs u_d
+    all_u_d_j = []
+    all_j_avg_j = []
+    all_sigma_p_j = []
+    for label in labels:
+        if data_by_label[label]['u_d']:
+            all_u_d_j.extend(data_by_label[label]['u_d'])
+            all_j_avg_j.extend(data_by_label[label]['j_avg'])
+            # Collect sigma_p values for error bars
+            if 'sigma_p' in data_by_label[label]:
+                all_sigma_p_j.extend(data_by_label[label]['sigma_p'])
+            else:
+                # If sigma_p not available, use zeros
+                all_sigma_p_j.extend([0.0] * len(data_by_label[label]['u_d']))
+    
+    # Convert to numpy arrays for fitting
+    all_u_d_j = np.array(all_u_d_j)
+    all_j_avg_j = np.array(all_j_avg_j)
+    
+    # Fit least squares lines for j_avg vs u_d
+    u_c = 2.74  # Critical u_d value
+    
+    # Subcritical region (u_d < u_c)
+    subcritical_mask = all_u_d_j < u_c
+    if np.sum(subcritical_mask) > 1:
+        u_d_sub = all_u_d_j[subcritical_mask]
+        j_avg_sub = all_j_avg_j[subcritical_mask]
+        
+        # Linear fit: j_avg = a_sub * u_d + b_sub
+        A_sub = np.vstack([u_d_sub, np.ones(len(u_d_sub))]).T
+        a_sub, b_sub = np.linalg.lstsq(A_sub, j_avg_sub, rcond=None)[0]
+        
+        # Plot subcritical fit
+        u_d_fit_sub = np.linspace(min(u_d_sub), u_c, 100)
+        j_avg_fit_sub = a_sub * u_d_fit_sub + b_sub
+        # ax2.plot(u_d_fit_sub, j_avg_fit_sub, 'g--', linewidth=2, alpha=0.8,
+        #         label=f'$\\langle j \\rangle$ fit (subcritical): slope = {a_sub:.3f}')
+        
+        print(f"\nSubcritical ⟨j⟩ fit: ⟨j⟩ = {a_sub:.4f} * u_d + {b_sub:.4f}")
+        # Calculate R²
+        j_pred_sub = a_sub * u_d_sub + b_sub
+        ss_res_sub = np.sum((j_avg_sub - j_pred_sub)**2)
+        ss_tot_sub = np.sum((j_avg_sub - np.mean(j_avg_sub))**2)
+        r2_sub = 1 - (ss_res_sub / ss_tot_sub) if ss_tot_sub > 0 else 0
+        print(f"  R² = {r2_sub:.4f}")
+    
+    # Supercritical region (u_d > u_c)
+    supercritical_mask = all_u_d_j > u_c
+    if np.sum(supercritical_mask) > 1:
+        u_d_sup = all_u_d_j[supercritical_mask]
+        j_avg_sup = all_j_avg_j[supercritical_mask]
+        
+        # Linear fit: j_avg = a_sup * u_d + b_sup
+        A_sup = np.vstack([u_d_sup, np.ones(len(u_d_sup))]).T
+        a_sup, b_sup = np.linalg.lstsq(A_sup, j_avg_sup, rcond=None)[0]
+        
+        # Plot supercritical fit
+        u_d_fit_sup = np.linspace(u_c, max(u_d_sup), 100)
+        j_avg_fit_sup = a_sup * u_d_fit_sup + b_sup
+        ax2.plot(u_d_fit_sup, j_avg_fit_sup, 'm--', linewidth=2, alpha=0.8,
+                label=f'$\\langle j \\rangle$ fit ($u_d > u^{{\\bigstar}}$): slope = {a_sup:.3f}')
+        
+        print(f"\nSupercritical ⟨j⟩ fit: ⟨j⟩ = {a_sup:.4f} * u_d + {b_sup:.4f}")
+        # Calculate R²
+        j_pred_sup = a_sup * u_d_sup + b_sup
+        ss_res_sup = np.sum((j_avg_sup - j_pred_sup)**2)
+        ss_tot_sup = np.sum((j_avg_sup - np.mean(j_avg_sup))**2)
+        r2_sup = 1 - (ss_res_sup / ss_tot_sup) if ss_tot_sup > 0 else 0
+        print(f"  R² = {r2_sup:.4f}")
+    
+    # Overall fit (all data)
+    if len(all_u_d_j) > 1:
+        A_all = np.vstack([all_u_d_j, np.ones(len(all_u_d_j))]).T
+        a_all, b_all = np.linalg.lstsq(A_all, all_j_avg_j, rcond=None)[0]
+        
+        # Plot overall fit
+        u_d_fit_all = np.linspace(min(all_u_d_j), max(all_u_d_j), 100)
+        j_avg_fit_all = a_all * u_d_fit_all + b_all
+        ax2.plot(u_d_fit_all, j_avg_fit_all, 'k:', linewidth=2, alpha=0.6,
+                label=f'$\\langle j \\rangle$ fit (overall): slope = {a_all:.3f}')
+        
+        print(f"\nOverall ⟨j⟩ fit: ⟨j⟩ = {a_all:.4f} * u_d + {b_all:.4f}")
+        # Calculate R²
+        j_pred_all = a_all * all_u_d_j + b_all
+        ss_res_all = np.sum((all_j_avg_j - j_pred_all)**2)
+        ss_tot_all = np.sum((all_j_avg_j - np.mean(all_j_avg_j))**2)
+        r2_all = 1 - (ss_res_all / ss_tot_all) if ss_tot_all > 0 else 0
+        print(f"  R² = {r2_all:.4f}")
+        
+        # Compare slopes if both subcritical and supercritical fits exist
+        if np.sum(subcritical_mask) > 1 and np.sum(supercritical_mask) > 1:
+            slope_change = a_sup - a_sub
+            print(f"\nSlope change at u* = {u_c}: Δslope = {slope_change:.4f}")
+            print(f"  Subcritical slope: {a_sub:.4f}")
+            print(f"  Supercritical slope: {a_sup:.4f}")
+            print(f"  Relative change: {slope_change/abs(a_sub)*100:.1f}%")
+
     # Plot data points AFTER the approximation so they appear on top
     for idx, label in enumerate(labels):
         if not data_by_label[label]['u_d']:
@@ -1856,6 +1966,98 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
     plt.show()
     plt.close()
     
+    # Create separate plot for ⟨j⟩ residuals: ⟨j⟩ - 0.2*u_d
+    print(f"\nCreating residual plot: ⟨j⟩ - 0.2*u_d")
+    fig_res, ax_res = plt.subplots(1, 1, figsize=(10, 6))
+    
+    # Plot residuals for each dataset
+    for idx, label in enumerate(labels):
+        if not data_by_label[label]['u_d']:
+            continue
+        
+        u_d_arr = np.array(data_by_label[label]['u_d'])
+        j_avg_arr = np.array(data_by_label[label]['j_avg'])
+        sigma_p_arr = np.array(data_by_label[label]['sigma_p'])
+        
+        if len(u_d_arr) == 0:
+            continue
+        
+        # Calculate residuals: ⟨j⟩ - 0.2*u_d
+        j_expected = 0.2 * u_d_arr
+        j_residuals = j_avg_arr - j_expected
+        
+        marker = markers[idx % len(markers)]
+        
+        # Plot residuals with error bars (sigma_p represents uncertainty in j_avg)
+        # ax_res.scatter(u_d_arr, j_residuals, marker=marker, color='red',
+        #         label=f'$\\langle j \\rangle - 0.2 \\cdot u_d$', 
+        #         s=60, alpha=0.8, zorder=10)
+        ax_res.errorbar(u_d_arr, j_residuals, yerr=sigma_p_arr, 
+                       marker=marker, color='red', linestyle='none',
+                       label=f'$\\langle j \\rangle - 0.2 \\cdot u_d$', 
+                       markersize=8, alpha=0.8, zorder=10, capsize=3, capthick=1)
+        
+        print(f"  {label}: {len(u_d_arr)} points, residual range: [{j_residuals.min():.4f}, {j_residuals.max():.4f}], σ_p range: [{sigma_p_arr.min():.4f}, {sigma_p_arr.max():.4f}]")
+    
+    # Add reference lines
+    ax_res.axhline(y=0.0, color='black', linestyle='-', linewidth=1.0, alpha=0.5, label='$\\langle j \\rangle = 0.2 \\cdot u_d$')
+    ax_res.axvline(x=2.74, color='green', linestyle='--', linewidth=2.0, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
+    
+    # Fit lines to residuals in subcritical and supercritical regions
+    if len(all_u_d_j) > 1:
+        # Subcritical residuals
+        if np.sum(subcritical_mask) > 1:
+            u_d_sub = all_u_d_j[subcritical_mask]
+            j_avg_sub = all_j_avg_j[subcritical_mask]
+            j_expected_sub = 0.2 * u_d_sub
+            j_residuals_sub = j_avg_sub - j_expected_sub
+            
+            # Linear fit to residuals
+            A_sub_res = np.vstack([u_d_sub, np.ones(len(u_d_sub))]).T
+            a_sub_res, b_sub_res = np.linalg.lstsq(A_sub_res, j_residuals_sub, rcond=None)[0]
+            
+            # Plot subcritical residual fit
+            u_d_fit_sub = np.linspace(min(u_d_sub), u_c, 100)
+            j_residuals_fit_sub = a_sub_res * u_d_fit_sub + b_sub_res
+            # ax_res.plot(u_d_fit_sub, j_residuals_fit_sub, 'g--', linewidth=2, alpha=0.8,
+            #            label=f'Residual fit ($u_d < u^{{\\bigstar}}$): slope = {a_sub_res:.3f}')
+            
+            print(f"\nSubcritical residual fit: residual = {a_sub_res:.4f} * u_d + {b_sub_res:.4f}")
+        
+        # Supercritical residuals
+        if np.sum(supercritical_mask) > 1:
+            u_d_sup = all_u_d_j[supercritical_mask]
+            j_avg_sup = all_j_avg_j[supercritical_mask]
+            j_expected_sup = 0.2 * u_d_sup
+            j_residuals_sup = j_avg_sup - j_expected_sup
+            
+            # Linear fit to residuals
+            A_sup_res = np.vstack([u_d_sup, np.ones(len(u_d_sup))]).T
+            a_sup_res, b_sup_res = np.linalg.lstsq(A_sup_res, j_residuals_sup, rcond=None)[0]
+            
+            # Plot supercritical residual fit
+            u_d_fit_sup = np.linspace(u_c, max(u_d_sup), 100)
+            j_residuals_fit_sup = a_sup_res * u_d_fit_sup + b_sup_res
+            ax_res.plot(u_d_fit_sup, j_residuals_fit_sup, 'm--', linewidth=2, alpha=0.8,
+                       label=f'Residual fit ($u_d > u^{{\\bigstar}}$): slope = {a_sup_res:.3f}')
+            
+            print(f"\nSupercritical residual fit: residual = {a_sup_res:.4f} * u_d + {b_sup_res:.4f}")
+    
+    # Set axis labels and properties
+    ax_res.set_xlabel('$u_d$', fontsize=14)
+    ax_res.set_ylabel('$\\langle j \\rangle - 0.2 \\cdot u_d$', fontsize=14)
+    ax_res.set_title('Residuals from expected linear relationship $\\langle j \\rangle = 0.2 \\cdot u_d$', fontsize=14)
+    ax_res.grid(True, alpha=0.3)
+    ax_res.legend(fontsize=10, loc='best', framealpha=0.9)
+    
+    plt.tight_layout()
+    plt.savefig(f"{outdir}/j_residuals_vs_ud.png", dpi=200, bbox_inches='tight')
+    plt.savefig(f"{outdir}/j_residuals_vs_ud.pdf", dpi=200, bbox_inches='tight')
+    plt.savefig(f"{outdir}/j_residuals_vs_ud.svg", dpi=200, bbox_inches='tight')
+    print(f"\nSaved residual plot to {outdir}/j_residuals_vs_ud.png")
+    plt.show()
+    plt.close()
+    
     return data_by_label
 
 def plot_n_p_time_series(base_dirs, labels=None, outdir="multiple_u_d", x0_fraction=0.5, 
@@ -1909,6 +2111,43 @@ def plot_n_p_time_series(base_dirs, labels=None, outdir="multiple_u_d", x0_fract
     # Create figure with subplots
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     
+    # First, collect all data to determine common scales
+    all_n_data = []
+    all_p_data = []
+    
+    # Collect subcritical data
+    if data_sub is not None:
+        n_t = data_sub[2]['n_t']
+        p_t = data_sub[2]['p_t']
+        Nx = data_sub[2]['Nx']
+        x0_idx = int(x0_fraction * Nx)
+        all_n_data.extend(n_t[x0_idx, :])
+        all_p_data.extend(p_t[x0_idx, :])
+    
+    # Collect supercritical data
+    if data_sup is not None:
+        n_t = data_sup[2]['n_t']
+        p_t = data_sup[2]['p_t']
+        Nx = data_sup[2]['Nx']
+        x0_idx = int(x0_fraction * Nx)
+        all_n_data.extend(n_t[x0_idx, :])
+        all_p_data.extend(p_t[x0_idx, :])
+    
+    # Determine common y-axis limits with some padding
+    if all_n_data:
+        n_min, n_max = min(all_n_data), max(all_n_data)
+        n_padding = 0.05 * (n_max - n_min)
+        n_ylim = (n_min - n_padding, n_max + n_padding)
+    else:
+        n_ylim = None
+    
+    if all_p_data:
+        p_min, p_max = min(all_p_data), max(all_p_data)
+        p_padding = 0.05 * (p_max - p_min)
+        p_ylim = (p_min - p_padding, p_max + p_padding)
+    else:
+        p_ylim = None
+    
     # Plot subcritical case
     if data_sub is not None:
         n_t = data_sub[2]['n_t']
@@ -1930,6 +2169,8 @@ def plot_n_p_time_series(base_dirs, labels=None, outdir="multiple_u_d", x0_fract
         axes[0, 0].set_ylabel('$n(x_0, t)$', fontsize=12)
         axes[0, 0].set_title(f'$u_d = {u_d_sub:.3f}$\n$n({x0:.2f}, t)$', fontsize=11)
         axes[0, 0].grid(True, alpha=0.3)
+        if n_ylim is not None:
+            axes[0, 0].set_ylim(n_ylim)
         
         # Plot p(t)
         axes[1, 0].plot(t, p_at_x0, 'r-', linewidth=0.5, alpha=0.8)
@@ -1937,6 +2178,8 @@ def plot_n_p_time_series(base_dirs, labels=None, outdir="multiple_u_d", x0_fract
         axes[1, 0].set_ylabel('$p(x_0, t)$', fontsize=12)
         axes[1, 0].set_title(f'$p({x0:.2f}, t)$', fontsize=11)
         axes[1, 0].grid(True, alpha=0.3)
+        if p_ylim is not None:
+            axes[1, 0].set_ylim(p_ylim)
         
         # Add statistics
         n_mean = np.mean(n_at_x0)
@@ -1972,6 +2215,8 @@ def plot_n_p_time_series(base_dirs, labels=None, outdir="multiple_u_d", x0_fract
         axes[0, 1].set_ylabel('$n(x_0, t)$', fontsize=12)
         axes[0, 1].set_title(f'$u_d = {u_d_sup:.3f}$\n$n({x0:.2f}, t)$', fontsize=11)
         axes[0, 1].grid(True, alpha=0.3)
+        if n_ylim is not None:
+            axes[0, 1].set_ylim(n_ylim)
         
         # Plot p(t)
         axes[1, 1].plot(t, p_at_x0, 'r-', linewidth=0.5, alpha=0.8)
@@ -1979,6 +2224,8 @@ def plot_n_p_time_series(base_dirs, labels=None, outdir="multiple_u_d", x0_fract
         axes[1, 1].set_ylabel('$p(x_0, t)$', fontsize=12)
         axes[1, 1].set_title(f'$p({x0:.2f}, t)$', fontsize=11)
         axes[1, 1].grid(True, alpha=0.3)
+        if p_ylim is not None:
+            axes[1, 1].set_ylim(p_ylim)
         
         # Add statistics
         n_mean = np.mean(n_at_x0)
