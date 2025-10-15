@@ -66,8 +66,8 @@ L = 10.0  # Physical box size
 print("Calculating u_star...")
 u_star = u_star_for()
 
-u_d_min = 2.5
-u_d_max = 2.999
+u_d_min = 0.1#2.5
+u_d_max = 1.4#2.999
 u_d_step = 0.1
 u_values = np.arange(u_d_min, u_d_max + u_d_step, u_d_step)
 
