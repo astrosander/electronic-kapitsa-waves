@@ -1031,8 +1031,8 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
     all_delta_n = []
     all_N_fourier = []
     
-    # Critical velocity u* = 2.74
-    u_star = 2.74
+    # Critical velocity u* = 2.39
+    u_star = 2.39
     
     for data_label, u_d, data in all_data:
         # Filter: only process data where u_d > u*
@@ -1442,7 +1442,7 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
     ax1.set_title('$u_{\\text{true}}$ vs $u_d$')
     ax1.legend(fontsize=8, ncol=2, loc='best', framealpha=0.9)
     ax1.grid(True, alpha=0.3)
-    ax1.axvline(x=2.74, color='blue', linestyle='--', linewidth=1, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
+    ax1.axvline(x=2.39, color='blue', linestyle='--', linewidth=1, alpha=0.8, label='$u^{\\bigstar} = 2.39$')
     
     # Plot 2: n_pulses vs u_d (exact labels from original)
     ax2.set_xlabel('$u_d$')
@@ -1450,7 +1450,7 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
     ax2.set_title('$n_{\\text{pulses}}$ vs $u_d$')
     ax2.legend(fontsize=8, ncol=2, loc='best', framealpha=0.9)
     ax2.grid(True, alpha=0.3)
-    ax2.axvline(x=2.74, color='blue', linestyle='--', linewidth=1, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
+    ax2.axvline(x=2.39, color='blue', linestyle='--', linewidth=1, alpha=0.8, label='$u^{\\bigstar} = 2.39$')
     
     # Plot 3: frequency vs u_d (exact labels from original)
     ax3.set_xlabel('$u_d$')
@@ -1458,7 +1458,7 @@ def plot_combined_velocity_analysis(base_dirs, labels=None, outdir="multiple_u_d
     ax3.set_title('$f$ vs $u_d$')
     ax3.legend(fontsize=8, ncol=2, loc='best', framealpha=0.9)
     ax3.grid(True, alpha=0.3)
-    ax3.axvline(x=2.74, color='blue', linestyle='--', linewidth=1, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
+    ax3.axvline(x=2.39, color='blue', linestyle='--', linewidth=1, alpha=0.8, label='$u^{\\bigstar} = 2.39$')
     
     plt.tight_layout()
     os.makedirs(outdir, exist_ok=True)
@@ -1493,8 +1493,8 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
     u_d_values = [u_d for _, u_d, _ in all_data]
     print(f"\nLoaded {len(u_d_values)} simulations with u_d values:")
     print(f"  Range: {min(u_d_values):.4f} to {max(u_d_values):.4f}")
-    print(f"  Below u* = 2.74: {sum(1 for u in u_d_values if u < 2.74)} simulations")
-    print(f"  Above u* = 2.74: {sum(1 for u in u_d_values if u >= 2.74)} simulations")
+    print(f"  Below u* = 2.39: {sum(1 for u in u_d_values if u < 2.39)} simulations")
+    print(f"  Above u* = 2.39: {sum(1 for u in u_d_values if u >= 2.39)} simulations")
     
     # Organize data by label
     data_by_label = {label: {'u_d': [], 'delta_n': [], 'j_avg': [], 'sigma_p': []} for label in labels}
@@ -1504,8 +1504,8 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
     all_delta_n = []
     all_j_avg = []
     
-    # Critical velocity u* = 2.74
-    u_star = 2.74
+    # Critical velocity u* = 2.39
+    u_star = 2.39
     
     for data_label, u_d, data in all_data:
         # Process ALL data (both subcritical and supercritical)
@@ -1581,9 +1581,10 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
         p_at_x0 = p_t[x0_idx, :]
         
         # Calculate time-averaged current using Gaussian weighting
-        # Gaussian centered at t=30 with width=15
-        t_center = 30.0
-        t_width = 15.0
+        # Gaussian centered at 85% of final time with width 10% of final time
+        t_final = t[-1]
+        t_center = 0.85 * t_final
+        t_width = 0.1 * t_final
         
         # Create Gaussian weights
         gaussian_weights = np.exp(-0.5 * ((t - t_center) / t_width)**2)
@@ -1645,7 +1646,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
         u_d_sorted = u_d_sorted[mask]
         delta_n_sorted = delta_n_sorted[mask]
         
-        u_c = 2.74  # Critical u_d value (onset of instability)
+        u_c = 2.39  # Critical u_d value (onset of instability)
         
         try:
             # Linear fit BELOW critical u_d: delta_n = b * u_d for u_d < u_c
@@ -1668,7 +1669,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
                     delta_n_smooth_linear = linear_model(u_d_smooth_linear, b_fit)
                     
                     ax1.plot(u_d_smooth_linear, delta_n_smooth_linear, 'g--', linewidth=1.5, alpha=0.9, 
-                            label=f'$u^{{\\bigstar}} = 2.74$')
+                            label=f'$u^{{\\bigstar}} = 2.39$')
                     
                     print(f"\nLinear fit results (u_d < u*):")
                     print(f"  Fit parameter: b = {b_fit:.6f}")
@@ -1701,11 +1702,11 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
                 delta_n_smooth = sqrt_model(u_d_smooth, a_fit)
                 
                 ax1.plot(u_d_smooth, delta_n_smooth, 'r-', linewidth=1.5, alpha=0.9, 
-                        label=f'${a_fit:.3f} \\sqrt{{u_d - 2.74}}$')
+                        label=f'${a_fit:.3f} \\sqrt{{u_d - 2.39}}$')
                 
                 print(f"\nSquare-root fit results (u_d > u*):")
                 print(f"  Fit parameter: a = {a_fit:.4f}")
-                print(f"  Model: Δn = {a_fit:.4f} * sqrt(u_d - 2.74)")
+                print(f"  Model: Δn = {a_fit:.4f} * sqrt(u_d - 2.39)")
                 print(f"  Standard error: {np.sqrt(pcov[0,0]):.4f}")
                 print(f"  Fitted on {np.sum(mask_fit)} points with {u_c} < u_d < 4.7")
         except Exception as e:
@@ -1733,7 +1734,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
     all_j_avg_j = np.array(all_j_avg_j)
     
     # Fit least squares lines for j_avg vs u_d
-    u_c = 2.74  # Critical u_d value
+    u_c = 2.39  # Critical u_d value
     
     # Subcritical region (u_d < u_c)
     subcritical_mask = all_u_d_j < u_c
@@ -1845,8 +1846,8 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
         #     ax.scatter(u_d_filtered, delta_n_filtered, marker=marker, color="black",
         #               label=label, s=24, alpha=0.8)
     
-    # Add vertical line at u* = 2.74
-    ax1.axvline(x=2.74, color='green', linestyle='--', linewidth=2.0, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
+    # Add vertical line at u* = 2.39
+    ax1.axvline(x=2.39, color='green', linestyle='--', linewidth=2.0, alpha=0.8, label='$u^{\\bigstar} = 2.39$')
     ax1.axhline(y=0.0, color='black', linestyle='--', linewidth=1.0, alpha=0.5)
 
     # Add zoomed inset around the critical region
@@ -1875,7 +1876,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
             u_d_sorted = np.array(all_u_d)[sorted_indices]
             delta_n_sorted = np.array(all_delta_n)[sorted_indices]
             
-            u_c = 2.74
+            u_c = 2.39
             mask_fit = (u_d_sorted > u_c)  # No upper limit - use ALL data points
             if np.sum(mask_fit) > 3:
                 u_d_fit = u_d_sorted[mask_fit]
@@ -1920,7 +1921,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
         #     ax_inset.scatter(u_d_arr, delta_n_arr, marker=marker, color="black", s=20, alpha=0.8)
     
     # Add reference lines in inset
-    # ax_inset.axvline(x=2.74, color='blue', linestyle='--', linewidth=1.0, alpha=0.8)
+    # ax_inset.axvline(x=2.39, color='blue', linestyle='--', linewidth=1.0, alpha=0.8)
     # ax_inset.axhline(y=0.0, color='black', linestyle='--', linewidth=1.0, alpha=0.8)
     
     # Set inset properties
@@ -2001,7 +2002,7 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
     
     # Add reference lines
     ax_res.axhline(y=0.0, color='black', linestyle='-', linewidth=1.0, alpha=0.5, label='$\\langle j \\rangle = 0.2 \\cdot u_d$')
-    ax_res.axvline(x=2.74, color='green', linestyle='--', linewidth=2.0, alpha=0.8, label='$u^{\\bigstar} = 2.74$')
+    ax_res.axvline(x=2.39, color='green', linestyle='--', linewidth=2.0, alpha=0.8, label='$u^{\\bigstar} = 2.39$')
     
     # Fit lines to residuals in subcritical and supercritical regions
     if len(all_u_d_j) > 1:
@@ -2069,14 +2070,14 @@ def plot_n_p_time_series(base_dirs, labels=None, outdir="multiple_u_d", x0_fract
         labels: Optional custom labels for each dataset
         outdir: Output directory for plots
         x0_fraction: Fraction of domain length to use for measurement (default: 0.5 = middle)
-        u_d_subcritical: u_d value below critical (default: 0.8 * 2.74 = 2.192)
-        u_d_supercritical: u_d value above critical (default: 1.2 * 2.74 = 3.288)
+        u_d_subcritical: u_d value below critical (default: 0.8 * 2.39 = 2.192)
+        u_d_supercritical: u_d value above critical (default: 1.2 * 2.39 = 3.288)
     """
     if labels is None:
         labels = [os.path.basename(d) for d in base_dirs]
     
     # Set default u_d values if not provided
-    u_star = 2.74
+    u_star = 2.39
     if u_d_subcritical is None:
         u_d_subcritical = 0.8 * u_star  # 2.192
     if u_d_supercritical is None:

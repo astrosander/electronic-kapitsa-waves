@@ -47,7 +47,7 @@ class P:
     U: float = 1.0#0.06
     nbar0: float = 0.2
     Gamma0: float = 2.50#0.08
-    w: float = 5.0
+    w: float = 0.2
     include_poisson: bool = False
     eps: float = 20.0
 
@@ -1006,11 +1006,11 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
     # Override with this specific u_d
     local_par.u_d = u_d
     u_d_str = f"{u_d:.4f}".replace('.', 'p')  # e.g., 7.5000 -> 7p5000
-    local_par.outdir = f"multiple_u_d/modes_3_5_7_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})/out_drift_ud{u_d_str}"
+    local_par.outdir = f"multiple_u_d/w=0.2_modes_3_5_7_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})/out_drift_ud{u_d_str}"
     
     # Keep t_final fixed at 50.0 for all u_d values
-    local_par.t_final = 20*10.0/u_d#50.0
-    
+    local_par.t_final = 5*10.0/u_d#50.0
+    #<=1.4 -- 20 periods
     local_par.n_save = 1024*4#100  # Reduced for speed, as per user's settings
     
     # Keep Nx from global par (user set it to 1212)
@@ -1056,7 +1056,7 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
 
 def run_multiple_ud():
     # Generate u_d values for parameter sweep
-    u_d_values = np.arange(0.2, 2.8, 0.2)
+    u_d_values = np.arange(0.4, 2.0, 0.1)
     
     print(f"[run_multiple_ud] Running parameter sweep with {len(u_d_values)} u_d values")
     print(f"[run_multiple_ud] Range: [{u_d_values[0]:.4f}, {u_d_values[-1]:.4f}]")
