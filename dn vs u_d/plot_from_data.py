@@ -1599,8 +1599,13 @@ def plot_delta_n_vs_ud(base_dirs, labels=None, outdir="multiple_u_d", x0_fractio
         # Calculate weighted variance: sum(w * (x - mean)^2) / sum(w)
         weighted_mean = j_avg
         weighted_variance = np.sum(gaussian_weights * (p_at_x0 - weighted_mean)**2) / np.sum(gaussian_weights)
-        sigma_p = np.sqrt(weighted_variance)
+        # sigma_p = np.sqrt(weighted_variance)
+        # effective_n = (np.sum(gaussian_weights))**2 / np.sum(gaussian_weights**2)
+        # sigma_p = np.sqrt(weighted_variance) / np.sqrt(effective_n)
         
+        effective_n = (np.sum(gaussian_weights))**2 / np.sum(gaussian_weights**2)
+        sigma_p = np.sqrt(weighted_variance) / np.sqrt(effective_n)
+
         # Print detailed information about the calculation
         regime = "subcritical" if u_d < u_star else "supercritical"
         if len(n_final) > 0 and len(peaks) > 0:
