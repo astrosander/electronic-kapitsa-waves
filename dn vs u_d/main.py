@@ -568,7 +568,7 @@ def initial_fields():
     elif par.seed_mode == 7 and (par.seed_amp_n != 0.0 or par.seed_amp_p != 0.0):
         # Modes: 6π/L = 3*(2π/L), 10π/L = 5*(2π/L), 14π/L = 7*(2π/L)
         # So we use Fourier modes m = 3, 5, 7
-        modes = [3, 5, 7]
+        modes = [1.82634]#[3, 5, 7]
         
         # Create sum of cosine perturbation
         cosine_perturbation = np.zeros_like(x_local)
@@ -1009,12 +1009,12 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
     local_par.outdir = f"multiple_u_d/w=0.4_modes_3_5_7_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})/out_drift_ud{u_d_str}"
     
     # Keep t_final fixed at 50.0 for all u_d values
-    local_par.t_final = 20*10.0/u_d#50.0
+    local_par.t_final = 50*10.0/u_d#50.0
     
-    local_par.n_save = 1024*4#100  # Reduced for speed, as per user's settings
+    local_par.n_save = 512#1024*4#100  # Reduced for speed, as per user's settings
     
     # Keep Nx from global par (user set it to 1212)
-    local_par.Nx = 512*4
+    local_par.Nx = 512#*4
     
     # Update global par for this process
     global par
@@ -1056,11 +1056,14 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
 
 def run_multiple_ud():
     # Generate u_d values for parameter sweep
-    u_d_values = [2.1]#np.arange(1.4, 2.8, 0.1)
+    u_d_values = [1.8]#np.arange(2.3, 2.4, 0.1)
     
     print(f"[run_multiple_ud] Running parameter sweep with {len(u_d_values)} u_d values")
     print(f"[run_multiple_ud] Range: [{u_d_values[0]:.4f}, {u_d_values[-1]:.4f}]")
-    print(f"[run_multiple_ud] Step size: {u_d_values[1] - u_d_values[0]:.4f}")
+    if len(u_d_values) > 1:
+        print(f"[run_multiple_ud] Step size: {u_d_values[1] - u_d_values[0]:.4f}")
+    else:
+        print(f"[run_multiple_ud] Step size: N/A (single value)")
     print(f"[run_multiple_ud] u_d values: {u_d_values}")
 
     # Use the generated u_d_values with optimized spacing
