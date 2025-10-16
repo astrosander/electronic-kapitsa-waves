@@ -46,8 +46,8 @@ class P:
     e: float = 1.0
     U: float = 1.0#0.06
     nbar0: float = 0.2
-    Gamma0: float = 2.50#0.08
-    w: float = 0.2
+    Gamma0: float = 1.80#0.08
+    w: float = 0.25
     include_poisson: bool = False
     eps: float = 20.0
 
@@ -56,8 +56,8 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.5#/10#0.03
-    Dp: float = 0.1
+    Dn: float = 0.4#/10#0.03
+    Dp: float = 0.03
 
     J0: float = 1.0#0.04
     sigma_J: float = 2.0**1/2#6.0
@@ -77,7 +77,7 @@ class P:
     nbar_amp: float = 0.0
     nbar_sigma: float = 120.0
 
-    L: float = 10.0  # System size
+    L: float = 11.0  # System size
     Nx: int = 1212#2048#1218#1512#2524#1024
     t_final: float = 50.0
     n_save: int = 100  #200#200  # Reduced for speed
@@ -88,9 +88,9 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 0.001  # Small amplitude perturbation
+    seed_amp_n: float = 0.03  # Small amplitude perturbation
     seed_mode: int = 7  # New mode for cos(6πx/L) + cos(10πx/L) + cos(14πx/L)
-    seed_amp_p: float = 0.001  # Small amplitude perturbation
+    seed_amp_p: float = 0.03  # Small amplitude perturbation
 
     outdir: str = "out_drift/small_dissipation_perturbation"
     cmap: str = "inferno"
@@ -566,15 +566,11 @@ def initial_fields():
     
     # seed_mode == 7: cos(6πx/L) + cos(10πx/L) + cos(14πx/L) (modes m=3, 5, 7)
     elif par.seed_mode == 7 and (par.seed_amp_n != 0.0 or par.seed_amp_p != 0.0):
-        # Modes: 6π/L = 3*(2π/L), 10π/L = 5*(2π/L), 14π/L = 7*(2π/L)
-        # So we use Fourier modes m = 3, 5, 7
-        modes = [3, 5, 7]
+        # Use k* = 3/2 for the perturbation
+        k_star = 3.0/2.0
         
-        # Create sum of cosine perturbation
-        cosine_perturbation = np.zeros_like(x_local)
-        for mode in modes:
-            kx = 2*np.pi*mode / par.L
-            cosine_perturbation += np.cos(kx * x_local)
+        # Create cosine perturbation with k* = 3/2
+        cosine_perturbation = np.cos(k_star * x_local)
         
         # Add delta n perturbation (no normalization - use amplitude as-is)
         if par.seed_amp_n != 0.0:
@@ -1006,10 +1002,10 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
     # Override with this specific u_d
     local_par.u_d = u_d
     u_d_str = f"{u_d:.4f}".replace('.', 'p')  # e.g., 7.5000 -> 7p5000
-    local_par.outdir = f"multiple_u_d/w=0.2_modes_3_5_7_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})/out_drift_ud{u_d_str}"
+    local_par.outdir = f"multiple_u_d/w=0.25_kstar_1.5_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})/out_drift_ud{u_d_str}"
     
     # Keep t_final fixed at 50.0 for all u_d values
-    local_par.t_final = 5*10.0/u_d#50.0
+    local_par.t_final = 5*11.0/u_d#50.0
     #<=1.4 -- 20 periods
     local_par.n_save = 1024*4#100  # Reduced for speed, as per user's settings
     
@@ -1056,7 +1052,7 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
 
 def run_multiple_ud():
     # Generate u_d values for parameter sweep
-    u_d_values = np.arange(0.4, 2.0, 0.1)
+    u_d_values = np.arange(0.6, 2.0, 0.1)
     
     print(f"[run_multiple_ud] Running parameter sweep with {len(u_d_values)} u_d values")
     print(f"[run_multiple_ud] Range: [{u_d_values[0]:.4f}, {u_d_values[-1]:.4f}]")
@@ -1127,11 +1123,11 @@ if __name__ == "__main__":
     
     # Set seed_mode to 7 for cos(6πx/L) + cos(10πx/L) + cos(14πx/L) perturbations
     par.seed_mode = 7
-    par.seed_amp_n = 0.001  # Small amplitude perturbation
-    par.seed_amp_p = 0.001  # Small amplitude perturbation (can set to 0 if only perturbing n)
+    par.seed_amp_n = 0.03  # Small amplitude perturbation
+    par.seed_amp_p = 0.03  # Small amplitude perturbation (can set to 0 if only perturbing n)
     
     # par.Nx = 10000  # High spatial resolution
-    par.L = 10.0    # System size
+    par.L = 11.0    # System size
     par.t_final = 50.0  # Final time
     # par.max_step = 0.0005  # Maximum time step
 
