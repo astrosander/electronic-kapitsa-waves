@@ -40,100 +40,6 @@ except Exception:
 
 print(f"[Threading] Using {NTHREADS} threads for FFTs and linear algebra")
 
-def calculate_most_unstable_mode(u_d, n=0.2, w=0.4, gamma0=2.5, eta_p=0.1*0.25, eta_n=0.2, U0=1.0, m=1.0, kmin=-8, kmax=40, N=20000):
-    """
-    Calculate the most unstable mode from linear instability analysis.
-    
-    Parameters:
-    -----------
-    u_d : float
-        Drift velocity
-    n : float
-        Background density
-    w : float  
-        Width parameter
-    gamma0 : float
-        Gamma parameter
-    eta_p, eta_n : float
-        Diffusion coefficients
-    U0, m : float
-        Physical parameters
-    kmin, kmax : float
-        k-range for analysis
-    N : int
-        Number of k points
-        
-    Returns:
-    --------
-    tuple : (k_max_neg, k_max_pos, n_star_neg, n_star_pos, L_optimal)
-        Most unstable wavenumbers, mode numbers, and optimal domain size
-    """
-    k = np.linspace(kmin, kmax, N)
-    
-    # Physical parameters
-    gamma = gamma0 * np.exp(-n / w)
-    Dp, Dn = eta_p, eta_n
-    p = n * u_d
-    Pn = n * U0 - p**2 / (n**2 * m)
-    Pp = 2 * p / (n * m)
-    Gamma_n = -gamma / w
-    Lambda = (Gamma_n - gamma / n) * p
-    
-    # Dispersion relation
-    G_tilde = gamma + (Dp - Dn) * k**2
-    Delta = (G_tilde + 1j * k * Pp)**2 + 4j * k * Lambda / m - 4 * k**2 * Pn / m
-    omega_plus = (-1j * G_tilde + k * Pp + 1j * np.sqrt(Delta)) / 2 - 1j * Dn * k**2
-    
-    # Growth rate
-    zeta = np.imag(omega_plus)
-    
-    # Find maximum growth rate on both k < 0 and k > 0 sides
-    mask_neg = k < 0
-    mask_pos = k > 0
-    
-    if np.any(mask_neg):
-        k_neg = k[mask_neg]
-        zeta_neg = zeta[mask_neg]
-        k_max_neg_idx = np.argmax(zeta_neg)
-        k_max_neg = k_neg[k_max_neg_idx]
-        zeta_max_neg = zeta_neg[k_max_neg_idx]
-    else:
-        k_max_neg = 0
-        zeta_max_neg = 0
-        
-    if np.any(mask_pos):
-        k_pos = k[mask_pos]
-        zeta_pos = zeta[mask_pos]
-        k_max_pos_idx = np.argmax(zeta_pos)
-        k_max_pos = k_pos[k_max_pos_idx]
-        zeta_max_pos = zeta_pos[k_max_pos_idx]
-    else:
-        k_max_pos = 0
-        zeta_max_pos = 0
-
-    import math
-    k_max_pos = k_max_pos#np.ceil(k_max_pos)-2
-    
-    # Calculate optimal domain size to fit the most unstable mode
-    # Use the larger of the two k_max values to determine L
-    # k_max_abs = max(abs(k_max_neg), abs(k_max_pos)) if (k_max_neg != 0 or k_max_pos != 0) else 2*np.pi
-    k_max_abs = k_max_pos
-    print(f"k_max_abs: {k_max_abs}")
-    # print(f"k_max_pos: {k_max_pos}, k_max_neg: {k_max_neg}")
-    # Choose L such that the most unstable mode fits well (k_max * L / (2π) should be an integer)
-    # We want L such that k_max * L / (2π) ≈ n_star (integer mode number)
-    n_star_neg = int(np.round(abs(k_max_neg) / (2 * np.pi / 10.0))) if k_max_neg != 0 else 0
-    n_star_pos = int(np.round(abs(k_max_pos) / (2 * np.pi / 10.0))) if k_max_pos != 0 else 0
-    
-    # Use the larger mode number to determine L
-    n_star_max = n_star_pos#max(n_star_neg, n_star_pos) if (n_star_neg > 0 or n_star_pos > 0) else 1
-    L_optimal = 2 * np.pi * n_star_max / k_max_abs if k_max_abs > 0 else 10.0
-    
-    # Ensure L is reasonable (not too small or too large)
-    L_optimal = max(5.0, min(50.0, L_optimal))
-    
-    return k_max_neg, k_max_pos, n_star_neg, n_star_pos, L_optimal
-
 @dataclass
 class P:
     m: float = 1.0
@@ -141,7 +47,7 @@ class P:
     U: float = 1.0#0.06
     nbar0: float = 0.2
     Gamma0: float = 2.50#0.08
-    w: float = 0.25#5.0
+    w: float = 0.04
     include_poisson: bool = False
     eps: float = 20.0
 
@@ -150,12 +56,12 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 10#0.03
-    Dp: float = 0.1*0.25
+    Dn: float = 0.5#/10#0.03
+    Dp: float = 0.1
 
     J0: float = 1.0#0.04
     sigma_J: float = 2.0**1/2#6.0
-    x0: float = 5.0
+    x0: float = 12.5
     source_model: str = "as_given"
     
     # Localized dissipation perturbation parameters
@@ -165,7 +71,7 @@ class P:
     # Time-independent Gaussian density perturbation
     lambda_gauss: float = 0.0  # Amplitude of Gaussian density perturbation
     sigma_gauss: float = 2.0   # Width of Gaussian density perturbation
-    x0_gauss: float = 5.0      # Center of Gaussian density perturbation
+    x0_gauss: float = 12.5      # Center of Gaussian density perturbation
 
     use_nbar_gaussian: bool = False
     nbar_amp: float = 0.0
@@ -182,9 +88,9 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 0.02  # Small amplitude perturbation
+    seed_amp_n: float = 0.030  # Small amplitude perturbation
     seed_mode: int = 7  # New mode for cos(6πx/L) + cos(10πx/L) + cos(14πx/L)
-    seed_amp_p: float = 0.02  # Small amplitude perturbation
+    seed_amp_p: float = 0.030  # Small amplitude perturbation
 
     outdir: str = "out_drift/small_dissipation_perturbation"
     cmap: str = "inferno"
@@ -658,40 +564,11 @@ def initial_fields():
             delta_p = par.seed_amp_p * sine_perturbation
             p0 = pbar + delta_p
     
-    # seed_mode == 7: Automatically calculate most unstable modes from linear analysis
+    # seed_mode == 7: cos(6πx/L) + cos(10πx/L) + cos(14πx/L) (modes m=3, 5, 7)
     elif par.seed_mode == 7 and (par.seed_amp_n != 0.0 or par.seed_amp_p != 0.0):
-        # Calculate most unstable modes from linear instability analysis
-        k_max_neg, k_max_pos, n_star_neg, n_star_pos, L_optimal = calculate_most_unstable_mode(
-            u_d=par.u_d, n=par.nbar0, w=par.w, gamma0=par.Gamma0, 
-            eta_p=par.Dp, eta_n=par.Dn, U0=par.U, m=par.m
-        )
-        
-        # Update domain size to optimal value
-        par.L = L_optimal
-        print(f"[Auto-mode] Calculated optimal L = {L_optimal:.3f}")
-        print(f"[Auto-mode] Most unstable modes: n*_neg = {n_star_neg}, n*_pos = {n_star_pos}")
-        
-        # Update global arrays after changing domain size
-        _update_global_arrays()
-        
-        # Update t_final based on the new optimal L
-        par.t_final = 5 * par.L / par.u_d
-        print(f"[Auto-mode] Updated t_final = {par.t_final:.3f} (10*L/u_d = 10*{par.L:.3f}/{par.u_d:.3f})")
-        
-        # Use the most unstable mode numbers (rounded to integers)
-        modes = []
-        # if n_star_neg > 0:
-        #     modes.append(n_star_neg)
-        # if n_star_pos > 0 and n_star_pos != n_star_neg:  # Avoid duplicates
-        #     modes.append(n_star_pos)
-        modes.append(round(n_star_pos))
-        
-        # Fallback to default if no modes found
-        if not modes:
-            modes = [3, 5, 7]  # Default fallback
-            print(f"[Auto-mode] Using fallback modes: {modes}")
-        else:
-            print(f"[Auto-mode] Using calculated modes: {modes}")
+        # Modes: 6π/L = 3*(2π/L), 10π/L = 5*(2π/L), 14π/L = 7*(2π/L)
+        # So we use Fourier modes m = 3, 5, 7
+        modes = [3, 5, 7]
         
         # Create sum of cosine perturbation
         cosine_perturbation = np.zeros_like(x_local)
@@ -1129,16 +1006,15 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
     # Override with this specific u_d
     local_par.u_d = u_d
     u_d_str = f"{u_d:.4f}".replace('.', 'p')  # e.g., 7.5000 -> 7p5000
-    local_par.outdir = f"multiple_u_d/new_w=0.4_dp=0.025_dn=0.2(seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})/out_drift_ud{u_d_str}"
+    local_par.outdir = f"multiple_u_d/w=0.07_modes_3_5_7_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})/out_drift_ud{u_d_str}"
     
-    # Calculate t_final based on optimal L (will be updated after mode calculation)
-    # This will be updated after the optimal L is calculated in the initial_fields function
-    local_par.t_final = 50*local_par.L/u_d#50.0
-    
-    local_par.n_save = 2*512#512#1024*4#100  # Reduced for speed, as per user's settings
+    # Keep t_final fixed at 50.0 for all u_d values
+    local_par.t_final = 20*10.0/u_d#50.0
+    #<=1.4 -- 20 periods
+    local_par.n_save = 512#1024#100  # Reduced for speed, as per user's settings
     
     # Keep Nx from global par (user set it to 1212)
-    local_par.Nx = 512*2#*4
+    local_par.Nx = 512
     
     # Update global par for this process
     global par
@@ -1147,12 +1023,9 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
     # Update global arrays for this process
     _update_global_arrays()
     
-    # Recalculate t_final after L might have been updated by automatic mode calculation
-    par.t_final = 50 * par.L / par.u_d
-    
     print(f"\n{'='*50}")
     print(f"[Worker {worker_id:2d}] Running simulation for u_d = {u_d:.4f}")
-    print(f"[Worker {worker_id:2d}] Parameters: t_final={par.t_final:.2f}, Nx={par.Nx}, L={par.L:.2f}")
+    print(f"[Worker {worker_id:2d}] Parameters: t_final={par.t_final:.2f}, Nx={par.Nx}")
     print(f"{'='*50}")
     
     try:
@@ -1183,14 +1056,11 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
 
 def run_multiple_ud():
     # Generate u_d values for parameter sweep
-    u_d_values = np.arange(7.0, 15, 0.5)#np.arange(4.5, 7.0, 0.1)
+    u_d_values = np.arange(0.2, 2.0, 0.1)
     
     print(f"[run_multiple_ud] Running parameter sweep with {len(u_d_values)} u_d values")
     print(f"[run_multiple_ud] Range: [{u_d_values[0]:.4f}, {u_d_values[-1]:.4f}]")
-    if len(u_d_values) > 1:
-        print(f"[run_multiple_ud] Step size: {u_d_values[1] - u_d_values[0]:.4f}")
-    else:
-        print(f"[run_multiple_ud] Step size: N/A (single value)")
+    print(f"[run_multiple_ud] Step size: {u_d_values[1] - u_d_values[0]:.4f}")
     print(f"[run_multiple_ud] u_d values: {u_d_values}")
 
     # Use the generated u_d_values with optimized spacing
@@ -1253,12 +1123,12 @@ if __name__ == "__main__":
     # To test increased dissipation at x=x0:
     par.lambda_diss = 0.0      # Positive = increased damping
     par.sigma_diss =  -1.0       # Width of perturbation
-    par.x0 = 5.0#5.0               # Location of perturbation
+    par.x0 = 12.5               # Location of perturbation
     
     # Set seed_mode to 7 for cos(6πx/L) + cos(10πx/L) + cos(14πx/L) perturbations
     par.seed_mode = 7
-    par.seed_amp_n = 0.02  # Small amplitude perturbation
-    par.seed_amp_p = 0.02  # Small amplitude perturbation (can set to 0 if only perturbing n)
+    par.seed_amp_n = 0.030  # Small amplitude perturbation
+    par.seed_amp_p = 0.030  # Small amplitude perturbation (can set to 0 if only perturbing n)
     
     # par.Nx = 10000  # High spatial resolution
     par.L = 10.0    # System size
@@ -1272,7 +1142,7 @@ if __name__ == "__main__":
     par.include_poisson = False
     par.lambda_gauss = 0.0      # Disable time-independent Gaussian perturbation
     par.sigma_gauss = 2.0       # Width of Gaussian (not used when lambda_gauss=0)
-    par.x0_gauss = 5.0          # Center at x=5.0 (not used when lambda_gauss=0)
+    par.x0_gauss = 12.5          # Center at x=12.5 (not used when lambda_gauss=0)
     
     #   run_once(tag="increased_dissipation")
     run_multiple_ud()
