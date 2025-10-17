@@ -12,18 +12,20 @@ def find_udrift(u0,u1,kmin=-8,kmax=8,N=20000,eps=1e-12,tol=1e-8,max_iter=80):
         Gamma_n = -gamma / w
         Lambda = (Gamma_n - gamma / n) * p
         G_tilde = gamma + (Dp - Dn) * k**2
-        Delta = (G_tilde + 1j * k * Pp)**2 + 4j * k * Lambda - 4 * k**2 * Pn
+        Delta = (G_tilde + 1j * k * Pp)**2 + 4j * k * Lambda / m - 4 * k**2 * Pn / m
         omega_plus = (-1j * G_tilde + k * Pp + 1j * np.sqrt(Delta)) / 2 - 1j * Dn * k**2
         return np.max(np.imag(omega_plus)) > eps
     a,b=u0,u1
     for _ in range(max_iter):
         if b-a<=tol: break
-        m=(a+b)/2
-        if has_positive_growth(m): b=m
-        else: a=m
+        u_mid = (a + b) / 2
+        if has_positive_growth(u_mid):
+            b = u_mid
+        else:
+            a = u_mid
     return (a+b)/2
 
-def u_star_for(scan=(0.0,5.0,0.01)):
+def u_star_for(scan=(0,5.0,0.01)):
     lo,hi,st=scan
     k=np.linspace(-8,8,20000)
     def has_positive_growth(u):
@@ -35,7 +37,7 @@ def u_star_for(scan=(0.0,5.0,0.01)):
         Gamma_n = -gamma / w
         Lambda = (Gamma_n - gamma / n) * p
         G_tilde = gamma + (Dp - Dn) * k**2
-        Delta = (G_tilde + 1j * k * Pp)**2 + 4j * k * Lambda - 4 * k**2 * Pn
+        Delta = (G_tilde + 1j * k * Pp)**2 + 4j * k * Lambda / m - 4 * k**2 * Pn / m
         omega_plus = (-1j * G_tilde + k * Pp + 1j * np.sqrt(Delta)) / 2 - 1j * Dn * k**2
         return np.max(np.imag(omega_plus)) > 1e-12
     prev=False
@@ -48,15 +50,17 @@ def u_star_for(scan=(0.0,5.0,0.01)):
         u+=st
     return None
 
-U0 = 1.0
-eta_p = 0.1
-eta_n = 0.5
+U0 = 1.5
+eta_p = 0.01
+eta_n = 10#*0.01
+# n = 0.05#0.2
+# w = 0.1
 n = 0.2
-w = 0.2
-gamma0 = 2.5
+w = 0.22#0.4
+gamma0 = 3.0
 m = 1.0
-kmin = -8
-kmax = 8
+kmin = -2
+kmax = 2
 N = 20000
 
 fig, ax = plt.subplots(figsize=(10, 6))
@@ -66,9 +70,9 @@ L = 10.0  # Physical box size
 print("Calculating u_star...")
 u_star = u_star_for()
 
-u_d_min = 0.1#2.5
-u_d_max = 1.4#2.999
-u_d_step = 0.1
+u_d_min = u_star-0.005#2.5
+u_d_max = u_star+0.005#2.999
+u_d_step = 0.001
 u_values = np.arange(u_d_min, u_d_max + u_d_step, u_d_step)
 
 if u_star is not None:
@@ -85,7 +89,7 @@ if u_star is not None:
     Gamma_n = -gamma / w
     Lambda = (Gamma_n - gamma / n) * p
     G_tilde = gamma + (Dp - Dn) * k_test**2
-    Delta = (G_tilde + 1j * k_test * Pp)**2 + 4j * k_test * Lambda - 4 * k_test**2 * Pn
+    Delta = (G_tilde + 1j * k_test * Pp)**2 + 4j * k_test * Lambda / m - 4 * k_test**2 * Pn / m
     omega_plus = (-1j * G_tilde + k_test * Pp + 1j * np.sqrt(Delta)) / 2 - 1j * Dn * k_test**2
     zeta_test = np.imag(omega_plus)
     
@@ -119,7 +123,7 @@ for u in u_values:
     
     # Corrected formulas with proper diffusion terms
     G_tilde = gamma + (Dp - Dn) * k_out**2    # Γ̃ = Γ + (Dp - Dn)k²
-    Delta = (G_tilde + 1j * k_out * Pp)**2 + 4j * k_out * Lambda - 4 * k_out**2 * Pn
+    Delta = (G_tilde + 1j * k_out * Pp)**2 + 4j * k_out * Lambda / m - 4 * k_out**2 * Pn / m
     
     # The two branches (ω± according to convention e^{ikx - iωt})
     omega_plus  = (-1j * G_tilde + k_out * Pp + 1j * np.sqrt(Delta)) / 2 - 1j * Dn * k_out**2
@@ -174,7 +178,7 @@ for u in u_values:
         color = 'blue'
     else:
         lw = 1.5
-        label = f'u = {u:.1f}'
+        label = f'u = {u:.2f}'
         color = plt.cm.viridis((u - u_d_min) / (u_d_max - u_d_min))
     
     ax.plot(k_out, zeta, linewidth=lw, color=color, label=label)
@@ -184,7 +188,7 @@ for u in u_values:
         ax.annotate(
             f'$u^{{\\bigstar}} = {u_star:.2f}$',
             xy=(k_out[mid_idx], zeta[mid_idx]),
-            xytext=(k_out[mid_idx]*0.7, zeta[mid_idx] - 0.5),
+            xytext=(k_out[mid_idx]*0.7, zeta[mid_idx] ),
             arrowprops=dict(arrowstyle="->", color='blue', lw=1.5),
             fontsize=10,
             color='blue'
