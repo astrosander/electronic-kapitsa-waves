@@ -12,19 +12,19 @@ import re
 import zlib
 import matplotlib as mpl
 
-# --- Publication-ready appearance ---
+# --- Publication-ready appearance for large dataset (50 folders × 20 files = 1000 points) ---
 mpl.rcParams.update({
     "text.usetex": False,          # use MathText (portable)
     "font.family": "serif",        # serif font for publication
-    "font.size": 12,               # standard publication size
+    "font.size": 11,               # slightly smaller for large dataset
     "font.serif": ["Times", "Times New Roman", "DejaVu Serif"],
     "mathtext.fontset": "stix",    # STIX math fonts
     "axes.unicode_minus": False,   # proper minus sign
     "axes.linewidth": 0.8,         # thinner axes
-    "xtick.major.size": 4,         # tick size
-    "xtick.minor.size": 2,
-    "ytick.major.size": 4,
-    "ytick.minor.size": 2,
+    "xtick.major.size": 3,         # smaller ticks for large dataset
+    "xtick.minor.size": 1.5,
+    "ytick.major.size": 3,
+    "ytick.minor.size": 1.5,
     "xtick.direction": "in",       # ticks inside
     "ytick.direction": "in",
     "xtick.top": True,             # ticks on all sides
@@ -35,7 +35,11 @@ mpl.rcParams.update({
     "figure.dpi": 300,             # high resolution
     "savefig.dpi": 300,
     "savefig.bbox": "tight",
-    "savefig.pad_inches": 0.1,
+    "savefig.pad_inches": 0.15,    # more padding for large dataset
+    "axes.spines.top": True,       # show all spines
+    "axes.spines.right": True,
+    "axes.spines.left": True,
+    "axes.spines.bottom": True,
 })
 
 def load_simulation_data(data_file):
@@ -200,18 +204,35 @@ def main():
     print(f"\nUnique w values: {unique_w}")
     print(f"Unique u_d values: {np.unique(u_d_values)}")
     
-    # Create publication-ready plot
-    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    # Create publication-ready plot for large dataset (50 folders × 20 files = 1000 points)
+    fig, ax = plt.subplots(1, 1, figsize=(12, 8))
     
     # Plot: <j>_t vs u_d (all data points) colored by w
     import matplotlib.colors as mcolors
-    # Use tab20 colormap for distinct colors
-    scatter = ax.scatter(u_d_values, j_values, c=w_values, cmap='tab20',
-                        s=40, alpha=0.8, edgecolors='black', linewidth=0.5, zorder=10)
+    # Create custom colormap that emphasizes low w values (where slopes vary most)
+    # Use more color variation for w < 0.15 (where slopes range from 0.088 to 0.353)
+    # and less variation for w >= 0.15 (where slopes are similar ~0.21-0.35)
+    from matplotlib.colors import LinearSegmentedColormap
     
-    # Publication-ready labels
-    ax.set_xlabel('$u_d$', fontsize=14, fontweight='bold')
-    ax.set_ylabel('$\\langle j \\rangle_t$', fontsize=14, fontweight='bold')
+    # Create a custom colormap with more colors in the low range
+    # Map w=0.01-0.15 to 80% of the color space, w=0.15-0.50 to 20%
+    def custom_normalize(w_val):
+        if w_val <= 0.15:
+            return w_val / 0.15 * 0.8  # Map 0.01-0.15 to 0-0.8
+        else:
+            return 0.8 + (w_val - 0.15) / 0.35 * 0.2  # Map 0.15-0.50 to 0.8-1.0
+    
+    # Apply custom normalization to w_values
+    normalized_w = np.array([custom_normalize(w) for w in w_values])
+    
+    scatter = ax.scatter(u_d_values, j_values, c=normalized_w, cmap='rainbow',
+                        s=30, alpha=0.8, edgecolors='black', linewidth=0.4, zorder=10)
+    
+    # Publication-ready labels for large dataset
+    ax.set_xlabel('$u_d$', fontsize=16, fontweight='bold')
+    ax.set_ylabel('$\\langle j \\rangle_t$', fontsize=16, fontweight='bold')
+    # ax.set_title('Time-averaged current vs drift velocity\n(50 w values, 1000 simulations)', 
+    #             fontsize=14, fontweight='bold', pad=20)
     
     # Professional grid
     ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
@@ -225,7 +246,9 @@ def main():
     
     # Add least squares fit lines for all w values (subtle styling to avoid clutter)
     from scipy import stats
-    colors = plt.cm.tab20(np.linspace(0, 1, len(unique_w)))
+    # Use the same custom normalization for consistency with scatter plot
+    normalized_unique_w = np.array([custom_normalize(w) for w in unique_w])
+    colors = plt.cm.rainbow(normalized_unique_w)
     
     # Extract delta_n and threshold information
     delta_n_values = np.array([r['delta_n'] for r in results])
@@ -265,7 +288,7 @@ def main():
             j_fit = slope * u_d_fit + intercept
             
             # Plot fit line with same color as data points, but very subtle
-            ax.plot(u_d_fit, j_fit, color=colors[i], linewidth=0.8, alpha=0.3,
+            ax.plot(u_d_fit, j_fit, color=colors[i], linewidth=0.5, alpha=0.2,
                    linestyle='-', zorder=5)
             
             print(f"  w={w:.2f}: {np.sum(above_thresh_w)}/{len(above_thresh_w)} points above threshold, slope={slope:.4f}, R²={r_value**2:.3f}")
@@ -273,7 +296,7 @@ def main():
             print(f"  w={w:.2f}: {np.sum(above_thresh_w)}/{len(above_thresh_w)} points above threshold - insufficient for fitting")
     
     # Find min and max slopes and make them bold with labels
-    if slopes:
+    if len(slopes) > 0:
         slopes = np.array(slopes)
         w_slopes = np.array(w_slopes)
         
@@ -309,8 +332,8 @@ def main():
                     j_fit = slope * u_d_fit + intercept
                     
                     # Bold styling for min/max slopes
-                    linewidth = 3.0 if w == min_w or w == max_w else 0.8
-                    alpha = 0.8 if w == min_w or w == max_w else 0.3
+                    linewidth = 4.0 if w == min_w or w == max_w else 0.5
+                    alpha = 0.9 if w == min_w or w == max_w else 0.2
                     
                     # Create label for min/max slopes
                     label_text = f'$\\langle j \\rangle = {slope:.3f} u_d$ $(w={w:.2f})$'
@@ -324,22 +347,48 @@ def main():
     ax.plot(u_d_fit_all, j_avg_fit_all, 'k--', linewidth=2, alpha=0.8,
             label='$\\langle j \\rangle = 0.2u_d$')
     
-    # Publication-ready colorbar
-    cbar = plt.colorbar(scatter, ax=ax, shrink=0.8, aspect=20)
-    cbar.set_label('$w$', fontsize=12, fontweight='bold')
+    # Publication-ready colorbar for custom normalized rainbow colormap
+    cbar = plt.colorbar(scatter, ax=ax, shrink=0.9, aspect=25)
+    cbar.set_label('$w$', fontsize=14, fontweight='bold')
     
-    # Format colorbar ticks professionally
-    cbar.ax.tick_params(labelsize=10, direction='in')
-    # Set tick labels to show only 2 decimal places
-    tick_labels = [f'{w:.2f}' for w in unique_w]
-    cbar.set_ticks(unique_w)
+    # Format colorbar ticks professionally for custom normalization
+    cbar.ax.tick_params(labelsize=8, direction='in')
+    # Show more ticks in the low range (0.01-0.15) and fewer in high range (0.15+)
+    # Include 0.01 and other small values
+    low_w_ticks = np.concatenate([
+        np.arange(0.01, 0.05, 0.01),  # 0.01, 0.02, 0.03, 0.04
+        np.arange(0.05, 0.16, 0.02)   # 0.05, 0.07, 0.09, 0.11, 0.13, 0.15
+    ])
+    high_w_ticks = np.arange(0.20, 0.51, 0.10)  # Every 0.10 from 0.20 to 0.50
+    tick_positions = np.concatenate([low_w_ticks, high_w_ticks])
+    
+    # Convert original w values to normalized values for proper colorbar positioning
+    normalized_tick_positions = np.array([custom_normalize(w) for w in tick_positions])
+    tick_labels = [f'{w:.2f}' for w in tick_positions]
+    cbar.set_ticks(normalized_tick_positions)
     cbar.set_ticklabels(tick_labels)
     
-    # Legend will automatically include all labeled lines
-    # The min/max slope lines are already plotted with labels above
-    # We just need to ensure the legend shows them
-    ax.legend(loc='upper left', frameon=True, 
-             fancybox=False, shadow=False, fontsize=10, framealpha=0.9)
+    # Legend for large dataset - only show reference line and min/max slopes
+    from matplotlib.lines import Line2D
+    legend_handles = []
+    
+    # Add reference line
+    ref_line = Line2D([0], [0], color='k', linestyle='--', linewidth=2, 
+                     label='$\\langle j \\rangle = 0.2u_d$')
+    legend_handles.append(ref_line)
+    
+    # Add min/max slope lines if they exist
+    if len(slopes) > 0:
+        min_line = Line2D([0], [0], color=colors[np.where(unique_w == min_w)[0][0]], 
+                         linewidth=4, alpha=0.9, 
+                         label=f'$\\langle j \\rangle = {min_slope:.3f}u_d$ $(w={min_w:.2f})$ [min]')
+        max_line = Line2D([0], [0], color=colors[np.where(unique_w == max_w)[0][0]], 
+                         linewidth=4, alpha=0.9, 
+                         label=f'$\\langle j \\rangle = {max_slope:.3f}u_d$ $(w={max_w:.2f})$ [max]')
+        legend_handles.extend([min_line, max_line])
+    
+    ax.legend(handles=legend_handles, loc='upper left', frameon=True, 
+             fancybox=False, shadow=False, fontsize=11, framealpha=0.95)
     
     plt.tight_layout()
     
