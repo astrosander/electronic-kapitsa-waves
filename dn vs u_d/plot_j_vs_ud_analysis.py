@@ -89,6 +89,20 @@ def calculate_time_averaged_current(n_t, p_t, t, L, Nx, x0_fraction=0.5):
     
     return j_avg, p_at_x0
 
+def calculate_delta_n(n_t, threshold=0.01):
+    """Calculate delta n = n_max - n_min for the final density profile."""
+    n_final = n_t[:, -1]  # Last time step
+    
+    # Calculate n_max and n_min
+    n_max = np.max(n_final)
+    n_min = np.min(n_final)
+    delta_n = n_max - n_min
+    
+    # Return delta_n and whether it's above threshold
+    above_threshold = delta_n > threshold
+    
+    return delta_n, above_threshold
+
 def find_all_simulation_files():
     """Find all simulation data files in the multiple_u_d/multiple_w directory."""
     base_dir = "multiple_u_d/multiple_w"
@@ -144,11 +158,16 @@ def main():
             # Calculate time-averaged current
             j_time_avg, j_spatial_avg = calculate_time_averaged_current(n_t, p_t, t, L, Nx)
             
+            # Calculate delta n and check threshold
+            delta_n, above_threshold = calculate_delta_n(n_t, threshold=0.01)
+            
             results.append({
                 'w': w,
                 'u_d': u_d,
                 'j_avg': j_time_avg,  # Rename to match plot_from_data.py convention
                 'p_at_x0': j_spatial_avg,  # Rename to match plot_from_data.py convention
+                'delta_n': delta_n,
+                'above_threshold': above_threshold,
                 't': t,
                 'file': data_file
             })
@@ -188,7 +207,7 @@ def main():
     import matplotlib.colors as mcolors
     # Use tab20 colormap for distinct colors
     scatter = ax.scatter(u_d_values, j_values, c=w_values, cmap='tab20',
-                        s=40, alpha=0.8, edgecolors='black', linewidth=0.5)
+                        s=40, alpha=0.8, edgecolors='black', linewidth=0.5, zorder=10)
     
     # Publication-ready labels
     ax.set_xlabel('$u_d$', fontsize=14, fontweight='bold')
@@ -203,6 +222,101 @@ def main():
                 u_d_values.max() + 0.05*(u_d_values.max() - u_d_values.min()))
     ax.set_ylim(j_values.min() - 0.05*(j_values.max() - j_values.min()),
                 j_values.max() + 0.05*(j_values.max() - j_values.min()))
+    
+    # Add least squares fit lines for all w values (subtle styling to avoid clutter)
+    from scipy import stats
+    colors = plt.cm.tab20(np.linspace(0, 1, len(unique_w)))
+    
+    # Extract delta_n and threshold information
+    delta_n_values = np.array([r['delta_n'] for r in results])
+    above_threshold = np.array([r['above_threshold'] for r in results])
+    
+    print(f"\nDelta n analysis:")
+    print(f"  Threshold: 0.01")
+    print(f"  Points above threshold: {np.sum(above_threshold)}/{len(above_threshold)} ({np.sum(above_threshold)/len(above_threshold)*100:.1f}%)")
+    print(f"  Delta n range: {delta_n_values.min():.4f} - {delta_n_values.max():.4f}")
+    
+    # Store slopes for finding min/max
+    slopes = []
+    w_slopes = []
+    
+    for i, w in enumerate(unique_w):
+        # Get data for this w value
+        mask = w_values == w
+        u_d_w = u_d_values[mask]
+        j_w = j_values[mask]
+        delta_n_w = delta_n_values[mask]
+        above_thresh_w = above_threshold[mask]
+        
+        # Plot fit lines for all w values that have sufficient data
+        if np.sum(above_thresh_w) > 1:  # Need at least 2 points above threshold
+            u_d_filtered = u_d_w[above_thresh_w]
+            j_filtered = j_w[above_thresh_w]
+            
+            # Perform linear regression on filtered data
+            slope, intercept, r_value, p_value, std_err = stats.linregress(u_d_filtered, j_filtered)
+            
+            # Store slope for min/max analysis
+            slopes.append(slope)
+            w_slopes.append(w)
+            
+            # Generate fit line
+            u_d_fit = np.linspace(u_d_filtered.min(), u_d_filtered.max(), 100)
+            j_fit = slope * u_d_fit + intercept
+            
+            # Plot fit line with same color as data points, but very subtle
+            ax.plot(u_d_fit, j_fit, color=colors[i], linewidth=0.8, alpha=0.3,
+                   linestyle='-', zorder=5)
+            
+            print(f"  w={w:.2f}: {np.sum(above_thresh_w)}/{len(above_thresh_w)} points above threshold, slope={slope:.4f}, R²={r_value**2:.3f}")
+        else:
+            print(f"  w={w:.2f}: {np.sum(above_thresh_w)}/{len(above_thresh_w)} points above threshold - insufficient for fitting")
+    
+    # Find min and max slopes and make them bold with labels
+    if slopes:
+        slopes = np.array(slopes)
+        w_slopes = np.array(w_slopes)
+        
+        min_slope_idx = np.argmin(slopes)
+        max_slope_idx = np.argmax(slopes)
+        
+        min_slope = slopes[min_slope_idx]
+        max_slope = slopes[max_slope_idx]
+        min_w = w_slopes[min_slope_idx]
+        max_w = w_slopes[max_slope_idx]
+        
+        print(f"\nSlope analysis:")
+        print(f"  Minimum slope: {min_slope:.4f} at w={min_w:.2f}")
+        print(f"  Maximum slope: {max_slope:.4f} at w={max_w:.2f}")
+        
+        # Re-plot min and max slopes with bold styling and labels
+        for i, w in enumerate(unique_w):
+            if w in [min_w, max_w]:
+                mask = w_values == w
+                u_d_w = u_d_values[mask]
+                j_w = j_values[mask]
+                above_thresh_w = above_threshold[mask]
+                
+                if np.sum(above_thresh_w) > 1:
+                    u_d_filtered = u_d_w[above_thresh_w]
+                    j_filtered = j_w[above_thresh_w]
+                    
+                    # Perform linear regression again
+                    slope, intercept, r_value, p_value, std_err = stats.linregress(u_d_filtered, j_filtered)
+                    
+                    # Generate fit line
+                    u_d_fit = np.linspace(u_d_filtered.min(), u_d_filtered.max(), 100)
+                    j_fit = slope * u_d_fit + intercept
+                    
+                    # Bold styling for min/max slopes
+                    linewidth = 3.0 if w == min_w or w == max_w else 0.8
+                    alpha = 0.8 if w == min_w or w == max_w else 0.3
+                    
+                    # Create label for min/max slopes
+                    label_text = f'$\\langle j \\rangle = {slope:.3f} u_d$ $(w={w:.2f})$'
+                    
+                    ax.plot(u_d_fit, j_fit, color=colors[i], linewidth=linewidth, alpha=alpha,
+                           linestyle='-', zorder=6, label=label_text)
     
     # Add reference line: 0.2 * u_d
     u_d_fit_all = np.linspace(u_d_values.min(), u_d_values.max(), 100)
@@ -221,9 +335,11 @@ def main():
     cbar.set_ticks(unique_w)
     cbar.set_ticklabels(tick_labels)
     
-    # Publication-ready legend
-    ax.legend(loc='upper left', frameon=True, fancybox=False, 
-             shadow=False, fontsize=11, framealpha=0.9)
+    # Legend will automatically include all labeled lines
+    # The min/max slope lines are already plotted with labels above
+    # We just need to ensure the legend shows them
+    ax.legend(loc='upper left', frameon=True, 
+             fancybox=False, shadow=False, fontsize=10, framealpha=0.9)
     
     plt.tight_layout()
     
@@ -232,12 +348,10 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
     
     # Save in multiple formats for publication
-    base_name = "j_vs_ud_publication"
+    base_name = "j_vs_ud"
     plt.savefig(f"{output_dir}/{base_name}.png", dpi=300, bbox_inches='tight', 
                 facecolor='white', edgecolor='none')
     plt.savefig(f"{output_dir}/{base_name}.pdf", bbox_inches='tight',
-                facecolor='white', edgecolor='none')
-    plt.savefig(f"{output_dir}/{base_name}.eps", bbox_inches='tight',
                 facecolor='white', edgecolor='none')
     
     print(f"\nPublication-ready plots saved to:")
@@ -261,16 +375,47 @@ def main():
     print(f"  ⟨j⟩_t median: {np.median(j_values):.4f}")
     print(f"  ⟨j⟩_t CV: {j_values.std()/j_values.mean()*100:.1f}%")
     
-    # Print results by w value for publication
-    print(f"\nResults by w value (for publication):")
-    print(f"{'w':>6} {'N':>3} {'⟨j⟩_t':>8} {'±σ':>6} {'u_d range':>12}")
-    print("-" * 45)
+    # Print results by w value for publication (with delta_n filtering)
+    print(f"\nResults by w value (for publication, Δn > 0.01):")
+    print(f"{'w':>6} {'N':>3} {'N_fit':>5} {'⟨j⟩_t':>8} {'±σ':>6} {'u_d range':>12} {'slope':>8} {'R²':>6}")
+    print("-" * 70)
     for w in unique_w:
         mask = w_values == w
         j_w = j_values[mask]
         u_d_w = u_d_values[mask]
-        print(f"{w:6.2f} {len(j_w):3d} {j_w.mean():8.4f} {j_w.std():6.4f} "
-              f"{u_d_w.min():4.1f}-{u_d_w.max():4.1f}")
+        delta_n_w = delta_n_values[mask]
+        above_thresh_w = above_threshold[mask]
+        
+        # Calculate least squares fit only for points above threshold
+        if np.sum(above_thresh_w) > 1:
+            u_d_filtered = u_d_w[above_thresh_w]
+            j_filtered = j_w[above_thresh_w]
+            slope, intercept, r_value, p_value, std_err = stats.linregress(u_d_filtered, j_filtered)
+            r_squared = r_value**2
+        else:
+            slope, r_squared = 0.0, 0.0
+            
+        print(f"{w:6.2f} {len(j_w):3d} {np.sum(above_thresh_w):5d} {j_w.mean():8.4f} {j_w.std():6.4f} "
+              f"{u_d_w.min():4.1f}-{u_d_w.max():4.1f} {slope:8.4f} {r_squared:6.3f}")
+    
+    # Print least squares summary (filtered data only)
+    print(f"\nLeast squares analysis (Δn > 0.01 only):")
+    print(f"{'w':>6} {'N_fit':>5} {'slope':>8} {'intercept':>10} {'R²':>6} {'p-value':>8}")
+    print("-" * 55)
+    for w in unique_w:
+        mask = w_values == w
+        u_d_w = u_d_values[mask]
+        j_w = j_values[mask]
+        above_thresh_w = above_threshold[mask]
+        
+        if np.sum(above_thresh_w) > 1:
+            u_d_filtered = u_d_w[above_thresh_w]
+            j_filtered = j_w[above_thresh_w]
+            slope, intercept, r_value, p_value, std_err = stats.linregress(u_d_filtered, j_filtered)
+            r_squared = r_value**2
+            print(f"{w:6.2f} {np.sum(above_thresh_w):5d} {slope:8.4f} {intercept:10.4f} {r_squared:6.3f} {p_value:8.2e}")
+        else:
+            print(f"{w:6.2f} {np.sum(above_thresh_w):5d} {'N/A':>8} {'N/A':>10} {'N/A':>6} {'N/A':>8}")
     
     print(f"\nReference line: ⟨j⟩ = 0.2u_d")
     print(f"Figure saved in publication-ready formats (PNG, PDF, EPS)")
