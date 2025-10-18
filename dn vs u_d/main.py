@@ -1054,6 +1054,154 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
             'error': str(e)
         }
 
+def run_single_w_worker(w, u_d, base_params, worker_id=0):
+    """
+    Worker function to run a single w and u_d simulation.
+    
+    Parameters:
+    -----------
+    w : float
+        Width parameter value for this simulation
+    u_d : float
+        Drift velocity value for this simulation
+    base_params : dict
+        Dictionary containing all the base parameters
+    worker_id : int
+        Worker ID for progress tracking
+        
+    Returns:
+    --------
+    dict : Results dictionary with w, u_d, success status, and paths
+    """
+    # Create a local copy of parameters for this worker
+    import copy
+    from dataclasses import dataclass
+    
+    # Recreate the parameter object
+    local_par = P()
+    for key, value in base_params.items():
+        if hasattr(local_par, key):
+            setattr(local_par, key, value)
+    
+    # Override with this specific w and u_d
+    local_par.w = w
+    local_par.u_d = u_d
+    w_str = f"{w:.2f}"  # e.g., 0.05 -> 0.05
+    u_d_str = f"{u_d:.1f}".replace('.', 'p')  # e.g., 1.2 -> 1p2
+    local_par.outdir = f"multiple_u_d/multiple_w/w={w_str}_modes_3_5_7_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})/out_drift_ud{u_d_str}"
+    
+    # Keep t_final fixed
+    local_par.t_final = 20*10.0/u_d
+    local_par.n_save = 512
+    local_par.Nx = 512
+    
+    # Update global par for this process
+    global par
+    par = local_par
+    
+    # Update global arrays for this process
+    _update_global_arrays()
+    
+    print(f"\n{'='*50}")
+    print(f"[Worker {worker_id:2d}] Running simulation for w = {w:.3f}, u_d = {u_d:.3f}")
+    print(f"[Worker {worker_id:2d}] Parameters: t_final={par.t_final:.2f}, Nx={par.Nx}")
+    print(f"{'='*50}")
+    
+    try:
+        start_time = time.time()
+        t, n_t, p_t = run_once(tag=f"w{w}_ud{u_d}", worker_id=worker_id)
+        elapsed = time.time() - start_time
+        
+        print(f"[Worker {worker_id:2d}] Completed w={w:.3f}, u_d={u_d:.3f} in {elapsed:.1f}s")
+        print(f"[Worker {worker_id:2d}] Final time: {t[-1]:.3f}, Data shapes: n_t={n_t.shape}, p_t={p_t.shape}")
+        
+        return {
+            'w': w,
+            'u_d': u_d,
+            'success': True,
+            'elapsed_time': elapsed,
+            'final_time': t[-1],
+            'outdir': par.outdir
+        }
+        
+    except Exception as e:
+        print(f"[Worker {worker_id:2d}] Error in simulation for w={w}, u_d={u_d}: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'w': w,
+            'u_d': u_d,
+            'success': False,
+            'elapsed_time': 0,
+            'final_time': 0,
+            'outdir': par.outdir,
+            'error': str(e)
+        }
+
+def run_multiple_w():
+    """Run simulations for multiple w and u_d values."""
+    # Generate w values for parameter sweep
+    w_values = np.arange(0.01, 0.16, 0.01)  # 0.01, 0.02, ..., 0.15
+    # Generate u_d values for parameter sweep
+    u_d_values = np.arange(0.1, 2.0, 0.1)   # 0.1, 0.2, ..., 1.9
+    
+    print(f"[run_multiple_w] Running parameter sweep with {len(w_values)} w values and {len(u_d_values)} u_d values")
+    print(f"[run_multiple_w] w range: [{w_values[0]:.2f}, {w_values[-1]:.2f}]")
+    print(f"[run_multiple_w] u_d range: [{u_d_values[0]:.1f}, {u_d_values[-1]:.1f}]")
+    print(f"[run_multiple_w] Total combinations: {len(w_values) * len(u_d_values)}")
+
+    # Convert current parameters to dictionary for passing to workers
+    base_params = asdict(par)
+    
+    # Create all combinations of w and u_d
+    combinations = [(w, u_d) for w in w_values for u_d in u_d_values]
+    
+    # Determine number of parallel workers
+    n_cpus = mp.cpu_count()
+    n_workers = min(len(combinations), max(1, n_cpus - 1))  # Leave one CPU free
+    
+    print(f"\n[Parallel] Using {n_workers} parallel workers (out of {n_cpus} CPUs)")
+    print(f"[Parallel] Running {len(combinations)} simulations in parallel")
+    print(f"[Parallel] Progress will be shown for each worker simultaneously")
+    print(f"[Parallel] Each worker will update its progress line independently")
+    
+    overall_start_time = time.time()
+    
+    # Run simulations in parallel with worker IDs
+    with mp.Pool(processes=n_workers) as pool:
+        # Create worker function with base_params and assign worker IDs
+        worker_args = [(w, u_d, base_params, i) for i, (w, u_d) in enumerate(combinations)]
+        results = pool.starmap(run_single_w_worker, worker_args)
+    
+    overall_elapsed = time.time() - overall_start_time
+    
+    # Print summary
+    print(f"\n{'='*60}")
+    print(f"ALL SIMULATIONS COMPLETED!")
+    print(f"{'='*60}")
+    print(f"Total wall time: {overall_elapsed:.1f}s ({overall_elapsed/60:.1f} minutes)")
+    print(f"\nSummary:")
+    
+    successful = [r for r in results if r['success']]
+    failed = [r for r in results if not r['success']]
+    
+    print(f"  Successful: {len(successful)}/{len(results)}")
+    print(f"  Failed: {len(failed)}/{len(results)}")
+    
+    if successful:
+        print(f"\nSuccessful simulations (first 10):")
+        for r in successful[:10]:  # Show first 10 to avoid too much output
+            print(f"  w={r['w']:.2f}, u_d={r['u_d']:.1f}: {r['elapsed_time']:.1f}s, t_final={r['final_time']:.3f}")
+        if len(successful) > 10:
+            print(f"  ... and {len(successful) - 10} more")
+    
+    if failed:
+        print(f"\nFailed simulations:")
+        for r in failed:
+            print(f"  w={r['w']:.2f}, u_d={r['u_d']:.1f}: {r.get('error', 'Unknown error')}")
+    
+    print(f"{'='*60}")
+
 def run_multiple_ud():
     # Generate u_d values for parameter sweep
     u_d_values = np.arange(0.2, 2.0, 0.1)
@@ -1145,7 +1293,8 @@ if __name__ == "__main__":
     par.x0_gauss = 12.5          # Center at x=12.5 (not used when lambda_gauss=0)
     
     #   run_once(tag="increased_dissipation")
-    run_multiple_ud()
+    # run_multiple_ud()  # Comment out the u_d sweep
+    run_multiple_w()     # Run the w parameter sweep
 
     #
     # To test decreased dissipation (can drive instabilities):
