@@ -215,12 +215,12 @@ def main():
     from matplotlib.colors import LinearSegmentedColormap
     
     # Create a custom colormap with more colors in the low range
-    # Map w=0.01-0.15 to 80% of the color space, w=0.15-0.50 to 20%
+    # Map w=0.01-0.15 to 80% of the color space, w=0.15-0.49 to 20%
     def custom_normalize(w_val):
         if w_val <= 0.15:
             return w_val / 0.15 * 0.8  # Map 0.01-0.15 to 0-0.8
         else:
-            return 0.8 + (w_val - 0.15) / 0.35 * 0.2  # Map 0.15-0.50 to 0.8-1.0
+            return 0.8 + (w_val - 0.15) / 0.34 * 0.2  # Map 0.15-0.49 to 0.8-1.0
     
     # Apply custom normalization to w_values
     normalized_w = np.array([custom_normalize(w) for w in w_values])
@@ -354,12 +354,12 @@ def main():
     # Format colorbar ticks professionally for custom normalization
     cbar.ax.tick_params(labelsize=8, direction='in')
     # Show more ticks in the low range (0.01-0.15) and fewer in high range (0.15+)
-    # Include 0.01 and other small values
+    # Include 0.01 and other small values, match actual data range (0.01-0.49)
     low_w_ticks = np.concatenate([
         np.arange(0.01, 0.05, 0.01),  # 0.01, 0.02, 0.03, 0.04
         np.arange(0.05, 0.16, 0.02)   # 0.05, 0.07, 0.09, 0.11, 0.13, 0.15
     ])
-    high_w_ticks = np.arange(0.20, 0.51, 0.10)  # Every 0.10 from 0.20 to 0.50
+    high_w_ticks = np.arange(0.20, 0.50, 0.10)  # Every 0.10 from 0.20 to 0.40 (not 0.50)
     tick_positions = np.concatenate([low_w_ticks, high_w_ticks])
     
     # Convert original w values to normalized values for proper colorbar positioning
