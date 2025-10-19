@@ -22,7 +22,7 @@ if __name__ == "__main__":
         # "multiple_u_d/modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)",# - 10t_final
         # "multiple_u_d/modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)-Nx=512; Nt=100"
 
-        "multiple_u_d/w=0.2_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)",
+        "multiple_u_d/multiple_w/w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.03, seed_amp_p=0.03)",
         # "multiple_u_d/medium_dissipation_perturbation",
         # "multiple_u_d/small_dissipation_perturbation",
 
@@ -80,7 +80,7 @@ if __name__ == "__main__":
     
     # Plot velocity analysis (u_true, n_pulses, frequency)
     print("Generating velocity analysis (u_true, n_pulses, frequency)...")
-    # velocity_data = plot_combined_velocity_analysis(base_dirs, labels=custom_labels)
+    #velocity_data = plot_combined_velocity_analysis(base_dirs, labels=custom_labels)
     
     # Plot delta n vs u_d
     print("\nGenerating delta n vs u_d plot...")
@@ -88,13 +88,13 @@ if __name__ == "__main__":
     
     # Plot n(t) and p(t) time series comparison
     print("\nGenerating n(t) and p(t) time series comparison...")
-    plot_n_p_time_series(base_dirs, labels=custom_labels)
+    # plot_n_p_time_series(base_dirs, labels=custom_labels)
     
     # Panel plots of final n(x) and p(x) with columns per base_dir
-    print("\nGenerating multi-column panel of final n(x) across u_d and datasets...")
-    # plot_multiple_ud_panel(base_dirs=base_dirs, labels=custom_labels)
+    # print("\nGenerating multi-column panel of final n(x) across u_d and datasets...")
+    #plot_multiple_ud_panel(base_dirs=base_dirs, labels=custom_labels)
     print("Generating multi-column panel of final p(x) across u_d and datasets...")
-    # plot_multiple_ud_panel_p(base_dirs=base_dirs, labels=custom_labels)
+    #plot_multiple_ud_panel_p(base_dirs=base_dirs, labels=custom_labels)
     
     print("\n" + "=" * 60)
     print("Analysis complete! Generated:")
