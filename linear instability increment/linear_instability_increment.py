@@ -1,5 +1,15 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib as mpl
+
+# --- unified TeX-style appearance (MathText, no system LaTeX needed) ---
+mpl.rcParams.update({
+    "text.usetex": False,          # use MathText (portable)
+    "font.family": "STIXGeneral",  # match math fonts
+    "font.size": 12,
+    "mathtext.fontset": "stix",
+    "axes.unicode_minus": False,   # proper minus sign
+})
 
 def find_udrift(u0,u1,kmin=-8,kmax=8,N=20000,eps=1e-12,tol=1e-8,max_iter=80):
     k=np.linspace(kmin,kmax,N)
@@ -50,17 +60,17 @@ def u_star_for(scan=(0,5.0,0.01)):
         u+=st
     return None
 
-U0 = 1.5
-eta_p = 0.01
-eta_n = 10#*0.01
+U0 = 1.0
+eta_p = 0.1*0.25#0.01
+eta_n = 0.1#10.0#0.4#*0.01
 # n = 0.05#0.2
 # w = 0.1
 n = 0.2
-w = 0.22#0.4
-gamma0 = 3.0
+w = 0.25#24#0.4
+gamma0 = 2.5
 m = 1.0
-kmin = -2
-kmax = 2
+kmin = -50
+kmax = 50
 N = 20000
 
 fig, ax = plt.subplots(figsize=(10, 6))
@@ -70,9 +80,10 @@ L = 10.0  # Physical box size
 print("Calculating u_star...")
 u_star = u_star_for()
 
-u_d_min = u_star-0.005#2.5
-u_d_max = u_star+0.005#2.999
-u_d_step = 0.001
+step=0.1
+u_d_min = 2#u_star*(1-step)#2.5
+u_d_max = 4#u_star*(1+step*50)#2.999
+u_d_step = 0.2#u_star*step*5
 u_values = np.arange(u_d_min, u_d_max + u_d_step, u_d_step)
 
 if u_star is not None:
