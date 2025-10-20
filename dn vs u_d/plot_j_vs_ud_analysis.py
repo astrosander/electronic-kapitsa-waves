@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script to analyze and plot <j>_t vs u_d for all simulations in multiple_u_d/multiple_w.
+Script to analyze and plot <j>_t vs u_d for Dn_half configuration with rainbow colors for different u_d values.
 """
 
 import os
@@ -56,7 +56,7 @@ def load_simulation_data(data_file):
 
 def extract_parameters_from_path(file_path):
     """Extract w and u_d parameters from the file path."""
-    # Extract w from directory name like "w=0.05_modes_3_5_7_L10..."
+    # Extract w from directory name like "w=0.05_Dn=0p25_Dp=0p10_L10..."
     w_match = re.search(r'w=(\d+\.\d+)', file_path)
     w = float(w_match.group(1)) if w_match else None
     
@@ -108,16 +108,17 @@ def calculate_delta_n(n_t, threshold=0.01):
     return delta_n, above_threshold
 
 def find_all_simulation_files():
-    """Find all simulation data files in the multiple_u_d/multiple_w directory."""
-    base_dir = "multiple_u_d/multiple_w"
-    pattern = os.path.join(base_dir, "**", "data_m07_*.npz")
+    """Find all simulation data files in the multiple_u_d/diffusion_sweep directory for Dn_half configuration."""
+    base_dir = "multiple_u_d/diffusion_sweep"
+    # Look for Dn_half configuration (Dn=0p25, Dp=0p10)
+    pattern = os.path.join(base_dir, "**", "w=*_Dn=0p25_Dp=0p10_*", "**", "data_m07_*.npz")
     files = glob.glob(pattern, recursive=True)
     return files
 
 def main():
     """Main analysis function."""
     print("=" * 80)
-    print("ANALYZING <j>_t vs u_d FOR ALL SIMULATIONS")
+    print("ANALYZING <j>_t vs u_d FOR Dn_half CONFIGURATION")
     print("=" * 80)
     
     # Find all simulation files
@@ -204,35 +205,21 @@ def main():
     print(f"\nUnique w values: {unique_w}")
     print(f"Unique u_d values: {np.unique(u_d_values)}")
     
-    # Create publication-ready plot for large dataset (50 folders × 20 files = 1000 points)
+    # Create publication-ready plot for Dn_half configuration
     fig, ax = plt.subplots(1, 1, figsize=(12, 8))
     
-    # Plot: <j>_t vs u_d (all data points) colored by w
+    # Plot: <j>_t vs u_d (all data points) colored by w using rainbow colors
     import matplotlib.colors as mcolors
-    # Create custom colormap that emphasizes low w values (where slopes vary most)
-    # Use more color variation for w < 0.15 (where slopes range from 0.088 to 0.353)
-    # and less variation for w >= 0.15 (where slopes are similar ~0.21-0.35)
-    from matplotlib.colors import LinearSegmentedColormap
     
-    # Create a custom colormap with more colors in the low range
-    # Map w=0.01-0.15 to 80% of the color space, w=0.15-0.49 to 20%
-    def custom_normalize(w_val):
-        if w_val <= 0.15:
-            return w_val / 0.15 * 0.8  # Map 0.01-0.15 to 0-0.8
-        else:
-            return 0.8 + (w_val - 0.15) / 0.34 * 0.2  # Map 0.15-0.49 to 0.8-1.0
-    
-    # Apply custom normalization to w_values
-    normalized_w = np.array([custom_normalize(w) for w in w_values])
-    
-    scatter = ax.scatter(u_d_values, j_values, c=normalized_w, cmap='rainbow',
+    # Use rainbow colormap for w values
+    scatter = ax.scatter(u_d_values, j_values, c=w_values, cmap='rainbow',
                         s=30, alpha=0.8, edgecolors='black', linewidth=0.4, zorder=10)
     
-    # Publication-ready labels for large dataset
+    # Publication-ready labels for Dn_half configuration
     ax.set_xlabel('$u_d$', fontsize=16, fontweight='bold')
     ax.set_ylabel('$\\langle j \\rangle_t$', fontsize=16, fontweight='bold')
-    # ax.set_title('Time-averaged current vs drift velocity\n(50 w values, 1000 simulations)', 
-    #             fontsize=14, fontweight='bold', pad=20)
+    ax.set_title('Time-averaged current vs drift velocity\n(Dn_half configuration: Dn=0.25, Dp=0.10)', 
+                fontsize=14, fontweight='bold', pad=20)
     
     # Professional grid
     ax.grid(True, alpha=0.3, linestyle='-', linewidth=0.5)
@@ -244,11 +231,10 @@ def main():
     ax.set_ylim(j_values.min() - 0.05*(j_values.max() - j_values.min()),
                 j_values.max() + 0.05*(j_values.max() - j_values.min()))
     
-    # Add least squares fit lines for all w values (subtle styling to avoid clutter)
+    # Add least squares fit lines for all w values
     from scipy import stats
-    # Use the same custom normalization for consistency with scatter plot
-    normalized_unique_w = np.array([custom_normalize(w) for w in unique_w])
-    colors = plt.cm.rainbow(normalized_unique_w)
+    # Use rainbow colors for w values
+    colors = plt.cm.rainbow(np.linspace(0, 1, len(unique_w)))
     
     # Extract delta_n and threshold information
     delta_n_values = np.array([r['delta_n'] for r in results])
@@ -347,28 +333,18 @@ def main():
     ax.plot(u_d_fit_all, j_avg_fit_all, 'k--', linewidth=2, alpha=0.8,
             label='$\\langle j \\rangle = 0.2u_d$')
     
-    # Publication-ready colorbar for custom normalized rainbow colormap
+    # Publication-ready colorbar for w values
     cbar = plt.colorbar(scatter, ax=ax, shrink=0.9, aspect=25)
     cbar.set_label('$w$', fontsize=14, fontweight='bold')
     
-    # Format colorbar ticks professionally for custom normalization
-    cbar.ax.tick_params(labelsize=8, direction='in')
-    # Show more ticks in the low range (0.01-0.15) and fewer in high range (0.15+)
-    # Include 0.01 and other small values, match actual data range (0.01-0.49)
-    low_w_ticks = np.concatenate([
-        np.arange(0.01, 0.05, 0.01),  # 0.01, 0.02, 0.03, 0.04
-        np.arange(0.05, 0.16, 0.02)   # 0.05, 0.07, 0.09, 0.11, 0.13, 0.15
-    ])
-    high_w_ticks = np.arange(0.20, 0.50, 0.10)  # Every 0.10 from 0.20 to 0.40 (not 0.50)
-    tick_positions = np.concatenate([low_w_ticks, high_w_ticks])
+    # Format colorbar ticks professionally
+    cbar.ax.tick_params(labelsize=10, direction='in')
+    # Set ticks for w values
+    w_ticks = np.arange(0.01, 0.26, 0.02)  # Every 0.02 from 0.01 to 0.25
+    cbar.set_ticks(w_ticks)
+    cbar.set_ticklabels([f'{w:.2f}' for w in w_ticks])
     
-    # Convert original w values to normalized values for proper colorbar positioning
-    normalized_tick_positions = np.array([custom_normalize(w) for w in tick_positions])
-    tick_labels = [f'{w:.2f}' for w in tick_positions]
-    cbar.set_ticks(normalized_tick_positions)
-    cbar.set_ticklabels(tick_labels)
-    
-    # Legend for large dataset - only show reference line and min/max slopes
+    # Legend for Dn_half configuration - only show reference line and min/max slopes
     from matplotlib.lines import Line2D
     legend_handles = []
     
@@ -393,11 +369,11 @@ def main():
     plt.tight_layout()
     
     # Save publication-ready plots
-    output_dir = "multiple_u_d/multiple_w"
+    output_dir = "multiple_u_d/diffusion_sweep"
     os.makedirs(output_dir, exist_ok=True)
     
     # Save in multiple formats for publication
-    base_name = "j_vs_ud"
+    base_name = "j_vs_ud_Dn_half_rainbow"
     plt.savefig(f"{output_dir}/{base_name}.png", dpi=300, bbox_inches='tight', 
                 facecolor='white', edgecolor='none')
     plt.savefig(f"{output_dir}/{base_name}.pdf", bbox_inches='tight',
@@ -406,15 +382,15 @@ def main():
     print(f"\nPublication-ready plots saved to:")
     print(f"  {output_dir}/{base_name}.png (300 DPI)")
     print(f"  {output_dir}/{base_name}.pdf (vector)")
-    print(f"  {output_dir}/{base_name}.eps (vector)")
     
     plt.show()
     
     # Print publication-quality summary statistics
     print(f"\n" + "="*80)
-    print("PUBLICATION-READY ANALYSIS SUMMARY")
+    print("Dn_half CONFIGURATION ANALYSIS SUMMARY")
     print("="*80)
     print(f"Dataset: {len(results)} simulations across {len(unique_w)} w values")
+    print(f"Configuration: Dn=0.25, Dp=0.10 (Dn_half)")
     print(f"Parameter ranges:")
     print(f"  w ∈ [{w_values.min():.2f}, {w_values.max():.2f}]")
     print(f"  u_d ∈ [{u_d_values.min():.1f}, {u_d_values.max():.1f}]")
