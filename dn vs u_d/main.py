@@ -1202,6 +1202,209 @@ def run_multiple_w():
     
     print(f"{'='*60}")
 
+def run_single_diffusion_worker(w, u_d, Dn, Dp, base_params, worker_id=0):
+    """
+    Worker function to run a single w, u_d, Dn, Dp simulation.
+    
+    Parameters:
+    -----------
+    w : float
+        Width parameter value for this simulation
+    u_d : float
+        Drift velocity value for this simulation
+    Dn : float
+        Density diffusion coefficient
+    Dp : float
+        Momentum diffusion coefficient
+    base_params : dict
+        Dictionary containing all the base parameters
+    worker_id : int
+        Worker ID for progress tracking
+        
+    Returns:
+    --------
+    dict : Results dictionary with w, u_d, Dn, Dp, success status, and paths
+    """
+    # Create a local copy of parameters for this worker
+    import copy
+    from dataclasses import dataclass
+    
+    # Recreate the parameter object
+    local_par = P()
+    for key, value in base_params.items():
+        if hasattr(local_par, key):
+            setattr(local_par, key, value)
+    
+    # Override with this specific w, u_d, Dn, Dp
+    local_par.w = w
+    local_par.u_d = u_d
+    local_par.Dn = Dn
+    local_par.Dp = Dp
+    
+    w_str = f"{w:.2f}"  # e.g., 0.05 -> 0.05
+    u_d_str = f"{u_d:.1f}".replace('.', 'p')  # e.g., 1.2 -> 1p2
+    Dn_str = f"{Dn:.2f}".replace('.', 'p')  # e.g., 0.25 -> 0p25
+    Dp_str = f"{Dp:.2f}".replace('.', 'p')  # e.g., 0.05 -> 0p05
+    
+    local_par.outdir = f"multiple_u_d/diffusion_sweep/w={w_str}_Dn={Dn_str}_Dp={Dp_str}_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})/out_drift_ud{u_d_str}"
+    
+    # Keep t_final fixed
+    local_par.t_final = 20*10.0/u_d
+    local_par.n_save = 512
+    local_par.Nx = 512
+    
+    # Update global par for this process
+    global par
+    par = local_par
+    
+    # Update global arrays for this process
+    _update_global_arrays()
+    
+    print(f"\n{'='*50}")
+    print(f"[Worker {worker_id:2d}] Running simulation for w={w:.3f}, u_d={u_d:.3f}, Dn={Dn:.3f}, Dp={Dp:.3f}")
+    print(f"[Worker {worker_id:2d}] Parameters: t_final={par.t_final:.2f}, Nx={par.Nx}")
+    print(f"{'='*50}")
+    
+    try:
+        start_time = time.time()
+        t, n_t, p_t = run_once(tag=f"w{w}_ud{u_d}_Dn{Dn}_Dp{Dp}", worker_id=worker_id)
+        elapsed = time.time() - start_time
+        
+        print(f"[Worker {worker_id:2d}] Completed w={w:.3f}, u_d={u_d:.3f}, Dn={Dn:.3f}, Dp={Dp:.3f} in {elapsed:.1f}s")
+        print(f"[Worker {worker_id:2d}] Final time: {t[-1]:.3f}, Data shapes: n_t={n_t.shape}, p_t={p_t.shape}")
+        
+        return {
+            'w': w,
+            'u_d': u_d,
+            'Dn': Dn,
+            'Dp': Dp,
+            'success': True,
+            'elapsed_time': elapsed,
+            'final_time': t[-1],
+            'outdir': par.outdir
+        }
+        
+    except Exception as e:
+        print(f"[Worker {worker_id:2d}] Error in simulation for w={w}, u_d={u_d}, Dn={Dn}, Dp={Dp}: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'w': w,
+            'u_d': u_d,
+            'Dn': Dn,
+            'Dp': Dp,
+            'success': False,
+            'elapsed_time': 0,
+            'final_time': 0,
+            'outdir': par.outdir,
+            'error': str(e)
+        }
+
+def run_diffusion_parameter_sweep():
+    """Run simulations for different diffusion parameter combinations."""
+    # Generate w values for parameter sweep: 0.01 to 0.25 with 0.01 step
+    w_values = np.arange(0.01, 0.26, 0.01)  # 0.01, 0.02, ..., 0.25
+    
+    # Generate u_d values for parameter sweep
+    u_d_values = np.arange(0.1, 2.0, 0.1)   # 0.1, 0.2, ..., 1.9
+    
+    # Define diffusion parameter combinations
+    # Base values from par: Dn = 0.5, Dp = 0.1
+    base_Dn = 0.5
+    base_Dp = 0.1
+    
+    diffusion_combinations = [
+        # 1. Dn reduced two times, Dp the same
+        {"name": "Dn_half", "Dn": base_Dn / 2, "Dp": base_Dp},
+        # 2. Dp reduced two times, Dn the same  
+        {"name": "Dp_half", "Dn": base_Dn, "Dp": base_Dp / 2},
+        # 3. Both Dp and Dn reduced two times
+        {"name": "both_half", "Dn": base_Dn / 2, "Dp": base_Dp / 2},
+        # 4. Dn increased two times, Dp the same
+        {"name": "Dn_double", "Dn": base_Dn * 2, "Dp": base_Dp},
+        # 5. Dp increased two times, Dn the same
+        {"name": "Dp_double", "Dn": base_Dn, "Dp": base_Dp * 2},
+        # 6. Both Dp and Dn increased two times
+        {"name": "both_double", "Dn": base_Dn * 2, "Dp": base_Dp * 2},
+    ]
+    
+    print(f"[run_diffusion_parameter_sweep] Running parameter sweep:")
+    print(f"  w values: {len(w_values)} from {w_values[0]:.2f} to {w_values[-1]:.2f}")
+    print(f"  u_d values: {len(u_d_values)} from {u_d_values[0]:.1f} to {u_d_values[-1]:.1f}")
+    print(f"  Diffusion combinations: {len(diffusion_combinations)}")
+    print(f"  Total simulations: {len(w_values) * len(u_d_values) * len(diffusion_combinations)}")
+    
+    # Convert current parameters to dictionary for passing to workers
+    base_params = asdict(par)
+    
+    # Create all combinations
+    all_combinations = []
+    for diff_combo in diffusion_combinations:
+        for w in w_values:
+            for u_d in u_d_values:
+                all_combinations.append((w, u_d, diff_combo["Dn"], diff_combo["Dp"], diff_combo["name"]))
+    
+    # Determine number of parallel workers
+    n_cpus = mp.cpu_count()
+    n_workers = min(len(all_combinations), max(1, n_cpus - 1))  # Leave one CPU free
+    
+    print(f"\n[Parallel] Using {n_workers} parallel workers (out of {n_cpus} CPUs)")
+    print(f"[Parallel] Running {len(all_combinations)} simulations in parallel")
+    print(f"[Parallel] Progress will be shown for each worker simultaneously")
+    print(f"[Parallel] Each worker will update its progress line independently")
+    
+    overall_start_time = time.time()
+    
+    # Run simulations in parallel with worker IDs
+    with mp.Pool(processes=n_workers) as pool:
+        # Create worker function with base_params and assign worker IDs
+        worker_args = [(w, u_d, Dn, Dp, base_params, i) for i, (w, u_d, Dn, Dp, name) in enumerate(all_combinations)]
+        results = pool.starmap(run_single_diffusion_worker, worker_args)
+    
+    overall_elapsed = time.time() - overall_start_time
+    
+    # Print summary
+    print(f"\n{'='*80}")
+    print(f"ALL DIFFUSION PARAMETER SWEEP SIMULATIONS COMPLETED!")
+    print(f"{'='*80}")
+    print(f"Total wall time: {overall_elapsed:.1f}s ({overall_elapsed/60:.1f} minutes)")
+    print(f"\nSummary:")
+    
+    successful = [r for r in results if r['success']]
+    failed = [r for r in results if not r['success']]
+    
+    print(f"  Successful: {len(successful)}/{len(results)}")
+    print(f"  Failed: {len(failed)}/{len(results)}")
+    
+    # Group results by diffusion combination
+    results_by_combo = {}
+    for result in successful:
+        combo_key = f"Dn={result['Dn']:.2f}, Dp={result['Dp']:.2f}"
+        if combo_key not in results_by_combo:
+            results_by_combo[combo_key] = []
+        results_by_combo[combo_key].append(result)
+    
+    print(f"\nResults by diffusion combination:")
+    for combo_key, combo_results in results_by_combo.items():
+        avg_time = np.mean([r['elapsed_time'] for r in combo_results])
+        print(f"  {combo_key}: {len(combo_results)} simulations, avg time: {avg_time:.1f}s")
+    
+    if successful:
+        print(f"\nSuccessful simulations (first 10):")
+        for r in successful[:10]:  # Show first 10 to avoid too much output
+            print(f"  w={r['w']:.2f}, u_d={r['u_d']:.1f}, Dn={r['Dn']:.2f}, Dp={r['Dp']:.2f}: {r['elapsed_time']:.1f}s")
+        if len(successful) > 10:
+            print(f"  ... and {len(successful) - 10} more")
+    
+    if failed:
+        print(f"\nFailed simulations:")
+        for r in failed:
+            print(f"  w={r['w']:.2f}, u_d={r['u_d']:.1f}, Dn={r['Dn']:.2f}, Dp={r['Dp']:.2f}: {r.get('error', 'Unknown error')}")
+    
+    print(f"{'='*80}")
+    
+    return results
+
 def run_multiple_ud():
     # Generate u_d values for parameter sweep
     u_d_values = np.arange(0.2, 2.0, 0.1)
@@ -1264,6 +1467,232 @@ def run_multiple_ud():
     
     print(f"{'='*60}")
 
+def detect_missing_simulations(base_dir="multiple_u_d/diffusion_sweep"):
+    """
+    Detect missing simulations in the diffusion sweep directory.
+    
+    Returns:
+    --------
+    dict : Dictionary containing lists of missing folders, missing out dirs, and missing npz files
+    """
+    w_values = [f"{w:.2f}" for w in np.arange(0.01, 0.26, 0.01)]
+    u_d_values = [f"{u_d:.1f}".replace('.', 'p') for u_d in np.arange(0.1, 2.0, 0.4)]
+    
+    diffusion_combinations = [
+        {"name": "Dn_half", "Dn": "0p25", "Dp": "0p10"},
+        {"name": "Dp_half", "Dn": "0p50", "Dp": "0p05"},
+        {"name": "both_half", "Dn": "0p25", "Dp": "0p05"},
+        {"name": "Dn_double", "Dn": "1p00", "Dp": "0p10"},
+        {"name": "Dp_double", "Dn": "0p50", "Dp": "0p20"},
+        {"name": "both_double", "Dn": "1p00", "Dp": "0p20"},
+    ]
+
+    missing_folders = []
+    missing_out_dirs = []
+    missing_npz = []
+    complete_simulations = 0
+    
+    for diff_combo in diffusion_combinations:
+        for w in w_values:
+            folder_name = f"w={w}_Dn={diff_combo['Dn']}_Dp={diff_combo['Dp']}_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.03, seed_amp_p=0.03)"
+            folder_path = os.path.join(base_dir, folder_name)
+            
+            if not os.path.exists(folder_path):
+                missing_folders.append(folder_name)
+                continue
+                
+            for u_d in u_d_values:
+                out_dir = os.path.join(folder_path, f"out_drift_ud{u_d}")
+                
+                if not os.path.exists(out_dir):
+                    missing_out_dirs.append(f"out_drift_ud{u_d} in {folder_name}")
+                    continue
+                
+                npz_files = glob.glob(os.path.join(out_dir, "*.npz"))
+                if not npz_files:
+                    missing_npz.append(f"No .npz files in {out_dir}")
+                else:
+                    complete_simulations += 1
+    
+    return {
+        'missing_folders': missing_folders,
+        'missing_out_dirs': missing_out_dirs,
+        'missing_npz': missing_npz,
+        'complete_simulations': complete_simulations
+    }
+
+def check_and_run_missing_simulations():
+    """
+    Check for missing simulations and run only the missing ones.
+    """
+    print("="*80)
+    print("CHECKING FOR MISSING SIMULATIONS")
+    print("="*80)
+    
+    # Detect missing simulations
+    missing_info = detect_missing_simulations()
+    
+    total_missing = len(missing_info['missing_folders']) * 19 + len(missing_info['missing_out_dirs']) + len(missing_info['missing_npz'])
+    
+    print(f"Complete simulations: {missing_info['complete_simulations']}")
+    print(f"Missing folders: {len(missing_info['missing_folders'])} (affects {len(missing_info['missing_folders']) * 19} simulations)")
+    print(f"Missing out dirs: {len(missing_info['missing_out_dirs'])}")
+    print(f"Missing npz files: {len(missing_info['missing_npz'])}")
+    print(f"Total missing simulations: {total_missing}")
+    
+    if total_missing == 0:
+        print("No missing simulations found!")
+        return
+    
+    print(f"\nRunning {total_missing} missing simulations...")
+    
+    # Convert current parameters to dictionary for passing to workers
+    base_params = asdict(par)
+    
+    # Create missing simulation tasks
+    missing_tasks = []
+    
+    for diff_combo in [
+        {"name": "Dn_half", "Dn": 0.25, "Dp": 0.10},
+        {"name": "Dp_half", "Dn": 0.50, "Dp": 0.05},
+        {"name": "both_half", "Dn": 0.25, "Dp": 0.05},
+        {"name": "Dn_double", "Dn": 1.00, "Dp": 0.10},
+        {"name": "Dp_double", "Dn": 0.50, "Dp": 0.20},
+        {"name": "both_double", "Dn": 1.00, "Dp": 0.20},
+    ]:
+        for w in np.arange(0.01, 0.26, 0.01):
+            for u_d in np.arange(0.1, 2.0, 0.4):
+                # Check if this simulation is missing
+                w_str = f"{w:.2f}"
+                u_d_str = f"{u_d:.1f}".replace('.', 'p')
+                Dn_str = f"{diff_combo['Dn']:.2f}".replace('.', 'p')
+                Dp_str = f"{diff_combo['Dp']:.2f}".replace('.', 'p')
+                
+                folder_name = f"w={w_str}_Dn={Dn_str}_Dp={Dp_str}_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.03, seed_amp_p=0.03)"
+                folder_path = os.path.join("multiple_u_d/diffusion_sweep", folder_name)
+                out_dir = os.path.join(folder_path, f"out_drift_ud{u_d_str}")
+                
+                is_missing = False
+                if not os.path.exists(folder_path):
+                    is_missing = True
+                elif not os.path.exists(out_dir):
+                    is_missing = True
+                else:
+                    npz_files = glob.glob(os.path.join(out_dir, "*.npz"))
+                    if not npz_files:
+                        is_missing = True
+                
+                if is_missing:
+                    missing_tasks.append((w, u_d, diff_combo['Dn'], diff_combo['Dp']))
+    
+    print(f"Found {len(missing_tasks)} missing simulation tasks")
+    
+    if len(missing_tasks) == 0:
+        print("No missing simulations to run!")
+        return
+    
+    # Determine number of parallel workers
+    n_cpus = mp.cpu_count()
+    n_workers = min(len(missing_tasks), max(1, n_cpus - 1))
+    
+    print(f"Using {n_workers} parallel workers for {len(missing_tasks)} missing simulations")
+    
+    overall_start_time = time.time()
+    
+    # Run missing simulations in parallel
+    with mp.Pool(processes=n_workers) as pool:
+        worker_args = [(w, u_d, Dn, Dp, base_params, i) for i, (w, u_d, Dn, Dp) in enumerate(missing_tasks)]
+        results = pool.starmap(run_single_diffusion_worker, worker_args)
+    
+    overall_elapsed = time.time() - overall_start_time
+    
+    # Print summary
+    print(f"\n{'='*80}")
+    print(f"MISSING SIMULATIONS COMPLETED!")
+    print(f"{'='*80}")
+    print(f"Total wall time: {overall_elapsed:.1f}s ({overall_elapsed/60:.1f} minutes)")
+    
+    successful = [r for r in results if r['success']]
+    failed = [r for r in results if not r['success']]
+    
+    print(f"Successful: {len(successful)}/{len(results)}")
+    print(f"Failed: {len(failed)}/{len(results)}")
+    
+    if failed:
+        print(f"\nFailed simulations:")
+        for r in failed:
+            print(f"  w={r['w']:.2f}, u_d={r['u_d']:.1f}, Dn={r['Dn']:.2f}, Dp={r['Dp']:.2f}: {r.get('error', 'Unknown error')}")
+    
+    print(f"{'='*80}")
+
+def run_single_Dn_half_simulation():
+    """
+    Run single simulation for Dn_half configuration with w=0.14 and u_d from 0.1 to 2.0.
+    """
+    print("="*80)
+    print("RUNNING SINGLE Dn_half SIMULATION")
+    print("="*80)
+    print("Configuration: Dn_half (Dn=0.25, Dp=0.10)")
+    print("w = 0.14")
+    print("u_d range: 0.1 to 2.0 with 0.1 step")
+    
+    # Set Dn_half parameters
+    par.Dn = 0.1
+    par.Dp = 0.10
+    par.w = 0.14
+    
+    # Generate u_d values
+    u_d_values = np.arange(0.1, 2.1, 0.1)  # 0.1, 0.2, ..., 2.0
+    
+    print(f"Total simulations to run: {len(u_d_values)}")
+    
+    # Convert current parameters to dictionary for passing to workers
+    base_params = asdict(par)
+    
+    # Create simulation tasks
+    simulation_tasks = []
+    for u_d in u_d_values:
+        simulation_tasks.append((par.w, u_d, par.Dn, par.Dp))
+    
+    # Determine number of parallel workers
+    n_cpus = mp.cpu_count()
+    n_workers = min(len(simulation_tasks), max(1, n_cpus - 1))
+    
+    print(f"Using {n_workers} parallel workers for {len(simulation_tasks)} simulations")
+    
+    overall_start_time = time.time()
+    
+    # Run simulations in parallel
+    with mp.Pool(processes=n_workers) as pool:
+        worker_args = [(w, u_d, Dn, Dp, base_params, i) for i, (w, u_d, Dn, Dp) in enumerate(simulation_tasks)]
+        results = pool.starmap(run_single_diffusion_worker, worker_args)
+    
+    overall_elapsed = time.time() - overall_start_time
+    
+    # Print summary
+    print(f"\n{'='*80}")
+    print(f"Dn_half SIMULATION COMPLETED!")
+    print(f"{'='*80}")
+    print(f"Total wall time: {overall_elapsed:.1f}s ({overall_elapsed/60:.1f} minutes)")
+    
+    successful = [r for r in results if r['success']]
+    failed = [r for r in results if not r['success']]
+    
+    print(f"Successful: {len(successful)}/{len(results)}")
+    print(f"Failed: {len(failed)}/{len(results)}")
+    
+    if successful:
+        print(f"\nSuccessful simulations:")
+        for r in successful:
+            print(f"  w={r['w']:.2f}, u_d={r['u_d']:.1f}, Dn={r['Dn']:.2f}, Dp={r['Dp']:.2f}: {r['elapsed_time']:.1f}s")
+    
+    if failed:
+        print(f"\nFailed simulations:")
+        for r in failed:
+            print(f"  w={r['w']:.2f}, u_d={r['u_d']:.1f}, Dn={r['Dn']:.2f}, Dp={r['Dp']:.2f}: {r.get('error', 'Unknown error')}")
+    
+    print(f"{'='*80}")
+
 if __name__ == "__main__":
     # run_all_modes_snapshots(tag="seed_modes_1to5")
     
@@ -1294,7 +1723,11 @@ if __name__ == "__main__":
     
     #   run_once(tag="increased_dissipation")
     # run_multiple_ud()  # Comment out the u_d sweep
-    run_multiple_w()     # Run the w parameter sweep
+    # run_multiple_w()     # Run the w parameter sweep
+    # run_diffusion_parameter_sweep()  # Run the diffusion parameter sweep
+    
+    # Run single simulation for Dn_half with w=0.14 and u_d from 0.1 to 2.0
+    run_single_Dn_half_simulation()
 
     #
     # To test decreased dissipation (can drive instabilities):
