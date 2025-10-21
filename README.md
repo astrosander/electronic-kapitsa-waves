@@ -4,8 +4,6 @@ A lightweight, reproducible research codebase for simulating 1D hydrodynamic dri
 
 > **Purpose.** This README documents the model, dependencies, how to run the code/sweeps, the data products it writes, and how to regenerate the figures with the included plotting tools.
 
----
-
 ## Contents
 
 * [Key features](#key-features)
@@ -20,8 +18,6 @@ A lightweight, reproducible research codebase for simulating 1D hydrodynamic dri
 * [Reproducing common experiments](#reproducing-common-experiments)
 * [Citing this repository](#citing-this-repository)
 
----
-
 ## Key features
 
 * **Spectral (FFT) spatial derivatives** with optional 2/3 de‑aliasing.
@@ -33,8 +29,6 @@ A lightweight, reproducible research codebase for simulating 1D hydrodynamic dri
 * **Parallel parameter sweeps** (over drift `u_d`, nonlinear width `w`, and diffusion coefficients `Dn`, `Dp`).
 * **Thread control** for FFT/BLAS/LAPACK via `NTHREADS` and `threadpoolctl`.
 * **Rich plotting utilities** to inspect spectra, spacetime diagrams, velocities, pulse counts, and combined multi‑run analyses.
-
----
 
 ## Repository layout
 
@@ -55,8 +49,6 @@ A lightweight, reproducible research codebase for simulating 1D hydrodynamic dri
 ├── out_drift/                        # Output data and figures
 └── README.md                         # This document
 ```
-
----
 
 ## Installation
 
@@ -87,8 +79,6 @@ threadpoolctl        # optional but recommended
 export NTHREADS=4  # e.g., run with 4 threads
 ```
 
----
-
 ## Quick start
 
 Run a single simulation with the defaults defined in the parameter dataclass `P`:
@@ -111,8 +101,6 @@ By default the `__main__` block demonstrates one of the bundled experiments (see
 3. Run `python main.py`. Data and figures are written under the configured `outdir`.
 4. Use `plot_from_data.py` to regenerate publication figures from saved `.npz` files.
 
----
-
 ## Model summary
 
 Let $x\in[0,L)$ with periodic boundary conditions and denote density $n(x,t)$ and momentum $p(x,t)$. The code evolves
@@ -134,8 +122,6 @@ Spatial derivatives use FFTs; an optional **2/3 de‑alias** filter is available
 **Initial conditions.** Several seed modes are offered. For example `seed_mode=7` seeds cosine modes m = 3,5,7; `seed_mode=2` uses a multi‑mode sum (e.g., 2,3,5,8,13,21,34,55). Uniform backgrounds are used for modes 2 and 7. See `initial_fields()` for details.
 
 > The source term `S_injection` is implemented but **disabled** in the default RHS for speed (see comments in `rhs`). Enable if needed.
-
----
 
 ## Parameters (dataclass `P`)
 
@@ -173,16 +159,12 @@ Parameters live in `main.py` as a dataclass `P`. Defaults are shown below with b
 
 You can modify parameters either by editing `P()` defaults, or by constructing and assigning a new `P` inside helper workers (as sweep utilities do).
 
----
-
 ## Numerics & performance notes
 
 * **FFTs**: `scipy.fft.fft/ifft` with explicit `workers=NTHREADS`.
 * **Threading**: set `export NTHREADS=...`. The code attempts to set BLAS/LAPACK threads via `threadpoolctl` and `scipy.linalg` APIs when present.
 * **Progress prints**: during integration, a single‑line progress indicator shows simulated time, wall time, and a rough ETA.
 * **Stability**: `dealias_23=True` applies a 2/3 spectral filter to help control aliasing.
-
----
 
 ## Output files & directory structure
 
@@ -210,8 +192,6 @@ Saved via `save_final_spectra(...)` with fields:
 * Various panel/overlay/summary plots for sweeps (see below)
 
 Sweep utilities programmatically set `outdir` to encode parameters in the path (e.g., `multiple_u_d/.../out_drift_ud4p6000/`).
-
----
 
 ## Post‑processing & plotting
 
@@ -242,8 +222,6 @@ D = load_data("path/to/data_m03_ud4p6000_tag.npz")
 * `plot_delta_n_vs_ud(base_dirs, labels)` – publication‑ready joint plot of amplitude $\Delta n$ and mean current $\langle j\rangle$ vs `u_d`, with optional fits.
 
 All plot functions save figures next to the input data (or under a common `multiple_u_d/` directory for combined plots) and use a STIX font setup suitable for manuscripts.
-
----
 
 ## Reproducing common experiments
 
@@ -296,8 +274,6 @@ check_and_run_missing_simulations()
 
 Scans the diffusion‑sweep directory tree for missing folders/data and re‑runs only what’s missing.
 
----
-
 ## Citing this repository
 
 If you use this code or figures in a publication, please cite the repository.
@@ -315,13 +291,9 @@ If you use this code or figures in a publication, please cite the repository.
 }
 ```
 
----
-
 ## License
 
 [License to be specified]
-
----
 
 ## Acknowledgments
 
