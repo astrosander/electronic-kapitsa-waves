@@ -40,9 +40,20 @@ A lightweight, reproducible research codebase for simulating 1D hydrodynamic dri
 
 ```
 .
-├── main.py               # Core model, integrator, sweeps & save routines
-├── plot_from_data.py     # Post-processing & figure generation utilities
-└── README.md             # This document
+├── main.py                           # Core model, integrator, sweeps & save routines
+├── plot_from_data.py                 # Post-processing & figure generation utilities
+├── solve_PDE.py                      # PDE solver implementation
+├── test_linear_instability.py        # Linear instability analysis
+├── compare analytics vs. PDE.py      # Analytical vs numerical comparison
+├── animation/                        # Animation generation scripts and outputs
+├── linear instability increment/     # Linear instability analysis and phase diagrams
+├── mass injection/                   # Mass injection experiments and analysis
+├── dn vs u_d/                        # Density vs drift velocity analysis
+├── diffusion in n and p/             # Diffusion analysis
+├── Hydraulic jump/                   # Hydraulic jump analysis
+├── multiple_u_d/                     # Parameter sweep results
+├── out_drift/                        # Output data and figures
+└── README.md                         # This document
 ```
 
 ---
