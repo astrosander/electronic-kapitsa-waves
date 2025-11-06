@@ -96,15 +96,16 @@ ax.plot(v_F, n_vals_cm2, color=vF_color, linestyle='--', lw=2.0,
         label=r'$v_{\mathrm{F}}(n)$', zorder=4)
 
 # shading (enhanced to showcase beautiful colors while maintaining clarity)
+u_max_display = 1.5e5  # Fixed upper limit for display
 ax.fill_betweenx(n_vals_cm2, 0, u_c, color=stable_color, alpha=0.16,
                  label=r'$\mathrm{Stable}$', zorder=1)
-ax.fill_betweenx(n_vals_cm2, u_c, max(u_c.max(), v_F.max())*1.05,
+ax.fill_betweenx(n_vals_cm2, u_c, u_max_display,
                  color=unstable_color, alpha=0.14, 
                  label=r'$\mathrm{Unstable}$', zorder=1)
-u_right = np.minimum(v_F, max(u_c.max(), v_F.max())*1.05)
+u_right = np.minimum(v_F, u_max_display)
 ax.fill_betweenx(n_vals_cm2, u_c, u_right, where=(v_F > u_c),
                  color=reachable_color, alpha=0.20,
-                 label=r'$\mathrm{Accessible}$', zorder=1)
+                zorder=1)
 
 # crossover marker & annotation (journal style: minimal, clear)
 ax.plot([u_star], [n_star_cm2], 'ko', ms=6, zorder=10, 
@@ -121,7 +122,7 @@ ax.annotate(
 )
 
 # axes, labels, legend
-ax.set_xlim(0, max(u_c.max(), v_F.max()) * 1.05)
+ax.set_xlim(0, 1.5e5)  # Fixed range: 0 to 1.5 × 10^5 m/s
 ax.set_ylim(n_min_cm2, n_max_cm2)
 
 # X-axis formatter: scale by 10^5 (journal style: numbers only, multiplier in label)
@@ -158,7 +159,7 @@ plt.savefig('blg_phase_diagram.png', dpi=300, bbox_inches='tight',
             facecolor='white', edgecolor='none')
 plt.savefig('blg_phase_diagram.pdf', dpi=300, bbox_inches='tight',
             facecolor='white', edgecolor='none')
-plt.show()
+# plt.show()
 
 # quick readout
 n_spec_cm2 = 2.0e10
