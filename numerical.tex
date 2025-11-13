@@ -1,6 +1,6 @@
 \section{Numerical procedure} %Aleksandr's section
 
-Here we described the numerical method used to solve the %one-dimensional 
+Here we describe the numerical method used to solve the %one-dimensional 
 hydrodynamic transport equations for the quantities of interest---the particle density $n(x,t)$ and the momentum density $p(x,t)=mnu$---which read:
 %The partial differential equation (PDE) system solved is as follows:
 \begin{align}
@@ -11,22 +11,22 @@ hydrodynamic transport equations for the quantities of interest---the particle d
 + e n E }
 + D_p \partial_{x}^2 p, \label{eq:p_eq}
 \end{align}
-where $\xi=(x,t)$. 
+where $\xi=(x,t)$ and $E$ is a spatially uniform driving field to sustain the prescribed drift $u_d$. 
 We non-dimensionalize the problem by setting $m=e=1$ and, in this paper, work with $n(\xi)$ and $p(\xi)$ defined on a finite interval $0<x<L$, obeying Eqs.\eqref{eq:n_eq} and \eqref{eq:p_eq} with periodic boundary conditions, $n(\xi)_{x=0}=n(\xi)_{x=L}$, $p(\xi)_{x=0}=p(\xi)_{x=L}$.
 %We solve numerically the one-dimensional hydrodynamic system \eqref{eq:n_eq}-\eqref{eq:p_eq} on a periodic interval $x\in[0,L)$. 
 
 The results shown in Fig. 2 and Fig. 3 have been produced by the numerical procedure summarized below.
-The quantities of interest are the density $n(x,t)$ and the momentum density $p(x,t)=mnu$.
+The quantities of interest are the density $n(\xi)$ and the momentum density $p(\xi)=mnu$.
 %Periodic boundary conditions are imposed at $x=0$ and $x=L$.
-We use a mesh in both $x$ and $t$. 
-Spatial derivatives are computed in Fourier space for high accuracy on periodic domains, and time integration uses a stiff Backward Differentiation Formula (BDF) method. The solver automatically adjusts the time step to satisfy the prescribed error tolerances. 
+We discretize space and time is integrated adaptively.
+Spatial derivatives are computed in Fourier space (e.g., \cite{trefethen2000,boyd2001,canuto1988}) for high accuracy on periodic domains, and time integration uses a stiff Backward Differentiation Formula (BDF) method\cite{hairerwannerII}. The solver automatically adjusts the time step to satisfy the prescribed error tolerances. 
 Throughout, divisions by $n$ are regularized with $n_{\min}=10^{-7}$ in denominators; this has no discernible effect on converged solutions but avoids numerical singularities.
 
 %All fields 
 %Both $n(x)$ and $p(x)$ were represented by discrete Fourier series on an equispaced grid of $N_x$ points. 
 The functions $n(x)$ and $p(x)$ were represented as discrete Fourier series evaluated on an equispaced grid of 
 $N_x$ points.
-Each right-hand-side evaluation scales as $\mathcal{O}(N_x \log N_x)$ due to FFTs. We therefore target 30–50 grid points per dominant wavelength - enough to resolve active scales without over-resolving the grid.
+Each right-hand side evaluation scales as $\mathcal{O}(N_x \log N_x)$ due to FFTs. Because accurate wave resolution is required, we choose around 30–50 grid points per dominant wavelength to capture active scales without over-resolving the grid.
 
 For improved numerical accuracy and reduced computational cost, the spatial derivatives in Eqs. \eqref{eq:n_eq} and \eqref{eq:p_eq} are computed in Fourier space by multiplying the field by $ik$ and $-k^2$, for the first and second derivatives, respectively, and subsequently transforming back to physical space. 
 Nonlinear products (such as the pressure and damping contributions) are formed pointwise in $x$ space and returned to $k$ space by Fast Fourier Transform (FFT).
@@ -37,7 +37,7 @@ On a finite grid, quadratic products generate Fourier interactions beyond the Ny
 Keeping only the lowest two–thirds of modes guarantees \cite{orszag1971} that every quadratic interaction of retained modes either stays within the allowed range or falls completely outside it, where it is removed.
 
 
-We implement the method of lines: first discretize space, which turns the PDEs into a large system of ODEs in time. The system is integrated in time using a \emph{BDF} integrator implemented through the \emph{solve\_ivp} function from the SciPy library \cite{virtanen2020scipy}. This method automatically adjusts how many past time levels it uses during the run, allowing it to maintain accuracy and stability for stiff problems. The solver used the relative and absolute tolerances $\mathrm{rtol}=10^{-4}$ and $\mathrm{atol}=10^{-7}$. These tolerance values were determined through numerical experiments as optimal: reducing them further increases runtime, while loosening them may introduce numerical artifacts. Therefore, when accuracy concerns arise, 
+We apply the method of lines by discretizing space, thereby converting the PDEs into a large system of ODEs in time. The system is integrated in time using a \emph{BDF} integrator implemented through the \emph{solve\_ivp} function from the SciPy library \cite{virtanen2020scipy}. This method automatically adjusts how many past time levels it uses during the run, allowing it to maintain accuracy and stability for stiff problems. The solver used the relative and absolute tolerances $\mathrm{rtol}=10^{-4}$ and $\mathrm{atol}=10^{-7}$. These tolerance values were determined through numerical experiments as optimal: reducing them further increases runtime, while loosening them may introduce numerical artifacts. Therefore, when accuracy concerns arise, 
 we refine the spatial discretization $N_x$ and adjust the tolerance parameters accordingly.
 
 
@@ -54,7 +54,7 @@ We then select $N_x$ large enough that the de-aliased band retains not only $k^*
 The box size and initial conditions are decided before the run and are not altered during the simulation.
 
 Simulations start from a spatially uniform drifting state, $n(x,0)=\bar n$ and $p(x,0)=m\bar nu_d$.
-To seed pattern formation we add a small, deterministic superposition of cosine modes,
+To seed pattern formation we add a small, deterministic superposition of sine and cosine modes,
 {\small
 \begin{equation}
 \begin{aligned}
@@ -64,12 +64,12 @@ p(x,0)&=m\bar n u_d+\sum_{j\in\mathcal S}(a'_j\cos\tfrac{2\pi jx}{L}+b'_j\sin\tf
 \end{equation}
 }
 
-where $\mathcal S$ is a finite set of low integers (for example $\{3,5,8,13,21\}$) and the coefficients $a_j$, $a'_j$, etc., are small, typically $\lesssim0.2\bar{n}$. As shown in Fig. 2, the system converges to the same spatial pattern regardless of the initial conditions.
+where $\mathcal S$ is a finite set of low integers (for example $\{3,5,8,13,21\}$) and the coefficients $a_j$, $a'_j$, etc., are moderate, typically $\lesssim0.2\bar{n}$. As shown in Fig. 2, the system converges to the same spatial pattern regardless of the initial conditions.
 
 The density-dependent damping is implemented as Eq.\textcolor{red}{~5}. The pressure entering the momentum balance is Eq.\textcolor{red}{~9}. 
 The electric field is uniform in space.
 
-% Please see the citations to insert below:
+% Please see the citations to insert below (adjust if needed):
 % @article{orszag1971,
 %   author    = {Orszag, Steven A.},
 %   title     = {Elimination of aliasing in finite-difference schemes by filtering high-wavenumber components},
@@ -81,7 +81,7 @@ The electric field is uniform in space.
 %   publisher = {American Meteorological Society},
 %   doi       = {10.1175/1520-0469(1971)028<1074:EOAIFS>2.0.CO;2}
 % }
-
+% 
 % @book{canuto1988,
 %   author    = {Canuto, Claudio and Hussaini, M. Y. and Quarteroni, Alfio and Zang, Thomas A.},
 %   title     = {Spectral Methods in Fluid Dynamics},
@@ -90,7 +90,7 @@ The electric field is uniform in space.
 %   year      = {1988},
 %   doi       = {10.1007/978-3-642-84108-8}
 % }
-
+% 
 % @article{virtanen2020scipy,
 %   author    = {Virtanen, Pauli and Gommers, Ralf and Oliphant, Travis E. and Haberland, Matt and Reddy, Tyler and Cournapeau, David and Burovski, Evgeni and Peterson, Pearu and Weckesser, Warren and Bright, Jonathan and van der Walt, St{\'e}fan J. and Brett, Matthew and Wilson, Joshua and Millman, K. Jarrod and Mayorov, Nikolay and Nelson, Andrew R. J. and Jones, Eric and Kern, Robert and Larson, Eric and Carey, C J. and Polat, Ilhan and Feng, Yu and Moore, Eric W. and {VanderPlas}, Jake and Laxalde, Denis and Perktold, Josef and Cimrman, Robert and Henriksen, Ian and Quintero, E. A. and Harris, Charles R. and Archibald, Anne M. and Ribeiro, Ant{\^o}nio H. and Pedregosa, Fabian and {van Mulbregt}, Paul and {SciPy 1.0 Contributors}},
 %   title     = {SciPy 1.0: Fundamental Algorithms for Scientific Computing in Python},
@@ -99,4 +99,24 @@ The electric field is uniform in space.
 %   pages     = {261--272},
 %   year      = {2020},
 %   doi       = {10.1038/s41592-019-0686-2}
+% }
+
+% @book{hairerwannerII,
+%   author    = {Hairer, Ernst and Wanner, Gerhard},
+%   title     = {Solving Ordinary Differential Equations II: Stiff and Differential--Algebraic Problems},
+%   edition   = {2nd},
+%   publisher = {Springer},
+%   address   = {Berlin, Heidelberg},
+%   year      = {1996},
+%   doi       = {10.1007/978-3-662-09947-6}
+% }
+
+% @book{boyd2001,
+%   author    = {Boyd, John P.},
+%   title     = {Chebyshev and Fourier Spectral Methods},
+%   edition   = {2nd},
+%   publisher = {Dover Publications},
+%   year      = {2001},
+%   address   = {Mineola, NY},
+%   isbn      = {978-0-486-49582-2}
 % }
