@@ -1,7 +1,5 @@
 \section{Numerical procedure} %Aleksandr's section
 
-\addQ{Have you used any literature in developing this procedure? If so, let's cite it. }
-
 Here we described the numerical method used to solve the %one-dimensional 
 hydrodynamic transport equations for the quantities of interest---the particle density $n(x,t)$ and the momentum density $p(x,t)=mnu$---which read:
 %The partial differential equation (PDE) system solved is as follows:
@@ -10,7 +8,7 @@ hydrodynamic transport equations for the quantities of interest---the particle d
 \partial_t p &= -\gamma(n) p 
 - \partial_x \left( \frac{1}{2} U n^2 + \frac{p^2}{m n} \right) %\notag \\
 %&\quad 
-+ e n \addQ{E_{\mathrm{eff}}(t) }
++ e n E }
 + D_p \partial_{x}^2 p, \label{eq:p_eq}
 \end{align}
 where $\xi=(x,t)$. 
@@ -21,48 +19,84 @@ The results shown in Fig. 2 and Fig. 3 have been produced by the numerical proce
 The quantities of interest are the density $n(x,t)$ and the momentum density $p(x,t)=mnu$.
 %Periodic boundary conditions are imposed at $x=0$ and $x=L$.
 We use a mesh in both $x$ and $t$. 
-Spatial derivatives are calculated in Fourier space for maximal accuracy, whereas the time evolution is \addQ{advanced} using a stiff, adaptive-step Backward Differentiation Formula (BDF) integrator.
+Spatial derivatives are computed in Fourier space for high accuracy on periodic domains, and time integration uses a stiff Backward Differentiation Formula (BDF) method. The solver automatically adjusts the time step to satisfy the prescribed error tolerances. 
 Throughout, divisions by $n$ are regularized with $n_{\min}=10^{-7}$ in denominators; this has no discernible effect on converged solutions but avoids numerical singularities.
 
 %All fields 
 %Both $n(x)$ and $p(x)$ were represented by discrete Fourier series on an equispaced grid of $N_x$ points. 
 The functions $n(x)$ and $p(x)$ were represented as discrete Fourier series evaluated on an equispaced grid of 
 $N_x$ points.
-\addQ{Increasing $N_x$ %discretization time causing 
-results in a linear growth of the run-time, %. At the same time, 
-we thus aimed} to maintain a resolution of at least 30–50 grid points per full oscillation of $n(x)$ and $p(x)$.
+Each right-hand-side evaluation scales as $\mathcal{O}(N_x \log N_x)$ due to FFTs. We therefore target 30–50 grid points per dominant wavelength - enough to resolve active scales without over-resolving the grid.
 
 For improved numerical accuracy and reduced computational cost, the spatial derivatives in Eqs. \eqref{eq:n_eq} and \eqref{eq:p_eq} are computed in Fourier space by multiplying the field by $ik$ and $-k^2$, for the first and second derivatives, respectively, and subsequently transforming back to physical space. 
 Nonlinear products (such as the pressure and damping contributions) are formed pointwise in $x$ space and returned to $k$ space by Fast Fourier Transform (FFT).
 
-To control aliasing from these nonlinearities we apply the Orszag 2/3 truncation rule: after each right-hand-side evaluation we zero all modes with $|k|> (2/3)k_{\max}$, where $k_{\max}=\pi/\Delta x$ and $\Delta x=L/N_x$. When fields are multiplied, \addQ{the nonlinear math} generates artificial high-frequency waves that can wrap around and show up where they don't belong. By keeping only the lowest two-thirds of Fourier modes and zeroing the rest, we stop those fake signals from leaking into the range of interest. %we care about.
+To control aliasing from these nonlinearities we apply the Orszag 2/3 truncation rule: after each right-hand-side evaluation we zero all modes with $|k|> (2/3)k_{\max}$, where $k_{\max}=\pi/\Delta x$ and $\Delta x=L/N_x$ \cite{orszag1971}. 
 
-The semi-discrete system is studied using a \addQ{variable-order} BDF integrator implemented through the \emph{solve\_ivp} function with the BDF method, based on SciPy library. The solver used the relative and absolute tolerances $\mathrm{rtol}=10^{-4}$ and $\mathrm{atol}=10^{-7}$. These tolerance values were determined through numerical experiments as optimal: reducing them further increases runtime, while loosening them may introduce numerical artifacts. Therefore, when accuracy concerns arise, %it is recommended to 
+On a finite grid, quadratic products generate Fourier interactions beyond the Nyquist wavenumber \cite{canuto1988}. These spurious components appear at incorrect lower frequencies or wavelengths unless they are filtered out.
+Keeping only the lowest two–thirds of modes guarantees \cite{orszag1971} that every quadratic interaction of retained modes either stays within the allowed range or falls completely outside it, where it is removed.
+
+
+We implement the method of lines: first discretize space, which turns the PDEs into a large system of ODEs in time. The system is integrated in time using a \emph{BDF} integrator implemented through the \emph{solve\_ivp} function from the SciPy library \cite{virtanen2020scipy}. This method automatically adjusts how many past time levels it uses during the run, allowing it to maintain accuracy and stability for stiff problems. The solver used the relative and absolute tolerances $\mathrm{rtol}=10^{-4}$ and $\mathrm{atol}=10^{-7}$. These tolerance values were determined through numerical experiments as optimal: reducing them further increases runtime, while loosening them may introduce numerical artifacts. Therefore, when accuracy concerns arise, 
 we refine the spatial discretization $N_x$ and adjust the tolerance parameters accordingly.
 
-\addQ{Only the time step adapts, in response to the local error estimator.}
-The spatial discretization is fixed once a run begins: both the number of grid points $N_x$ and the domain length $L$ remain constant for the duration of the simulation. 
+
+The BDF integrator automatically adjusts the time step (and the method order) using a local error estimate so that the weighted local truncation error remains within the specified tolerances. The spatial discretization is fixed once a run begins: both the number of grid points $N_x$ and the domain length $L$ remain constant for the duration of the simulation. 
 
 The domain is chosen so that the discrete wavenumber set $\{k_m=2\pi m/L\}$ contains the most unstable linear wavenumber $k^*$ predicted by the stability analysis and does not vary with time.
 We first pick an integer %$M \in \mathbb{N}$ 
-\addQ{$1<M<15$} representing the intended number of wavelengths in the box and set
+$1<M<15$ representing the intended number of wavelengths in the box and set
 \begin{equation} 
  L=\frac{2\pi M}{k^*}
 \end{equation}
 so that $k^*$ coincides exactly with the grid mode $k_M$.
 We then select $N_x$ large enough that the de-aliased band retains not only $k^*$ but also its first few harmonics; in practice we enforce $M\le N_x/8$.
-The box size and initial conditions is decided before the run and is not altered during simulation.
+The box size and initial conditions are decided before the run and are not altered during the simulation.
 
 Simulations start from a spatially uniform drifting state, $n(x,0)=\bar n$ and $p(x,0)=m\bar nu_d$.
 To seed pattern formation we add a small, deterministic superposition of cosine modes,
-\addQ{[Why are there no sine modes?]}
-\begin{align}
- n(x,0)&=\bar n + A_n\sum_{j\in\mathcal S}\cos\Big(\tfrac{2\pi j}{L}x\Big),
-\\
- p(x,0)&=m\bar nu_d + A_p\sum_{j\in\mathcal S}\cos\Big(\tfrac{2\pi j}{L}x\Big),
-\end{align}
-where $\mathcal S$ is a finite set of low integers (for example $\{3,5,8,13,21\}$) and $A_n,A_p$ are small amplitudes (typically $0.03$). As shown on Fig. 2, regardless of initial conditions, the system
-converges to the same spatial pattern. 
+{\small
+\begin{equation}
+\begin{aligned}
+n(x,0)&=\bar n+\sum_{j\in\mathcal S}(a_j\cos\tfrac{2\pi jx}{L}+b_j\sin\tfrac{2\pi jx}{L}),\\[-2pt]
+p(x,0)&=m\bar n u_d+\sum_{j\in\mathcal S}(a'_j\cos\tfrac{2\pi jx}{L}+b'_j\sin\tfrac{2\pi jx}{L}).
+\end{aligned}
+\end{equation}
+}
+
+where $\mathcal S$ is a finite set of low integers (for example $\{3,5,8,13,21\}$) and the coefficients $a_j$, $a'_j$, etc., are small, typically $\lesssim0.2\bar{n}$. As shown in Fig. 2, the system converges to the same spatial pattern regardless of the initial conditions.
 
 The density-dependent damping is implemented as Eq.\textcolor{red}{~5}. The pressure entering the momentum balance is Eq.\textcolor{red}{~9}. 
 The electric field is uniform in space.
+
+% Please see the citations to insert below:
+% @article{orszag1971,
+%   author    = {Orszag, Steven A.},
+%   title     = {Elimination of aliasing in finite-difference schemes by filtering high-wavenumber components},
+%   journal   = {Journal of the Atmospheric Sciences},
+%   volume    = {28},
+%   number    = {6},
+%   pages     = {1074--1074},
+%   year      = {1971},
+%   publisher = {American Meteorological Society},
+%   doi       = {10.1175/1520-0469(1971)028<1074:EOAIFS>2.0.CO;2}
+% }
+
+% @book{canuto1988,
+%   author    = {Canuto, Claudio and Hussaini, M. Y. and Quarteroni, Alfio and Zang, Thomas A.},
+%   title     = {Spectral Methods in Fluid Dynamics},
+%   publisher = {Springer},
+%   address   = {Berlin, Heidelberg},
+%   year      = {1988},
+%   doi       = {10.1007/978-3-642-84108-8}
+% }
+
+% @article{virtanen2020scipy,
+%   author    = {Virtanen, Pauli and Gommers, Ralf and Oliphant, Travis E. and Haberland, Matt and Reddy, Tyler and Cournapeau, David and Burovski, Evgeni and Peterson, Pearu and Weckesser, Warren and Bright, Jonathan and van der Walt, St{\'e}fan J. and Brett, Matthew and Wilson, Joshua and Millman, K. Jarrod and Mayorov, Nikolay and Nelson, Andrew R. J. and Jones, Eric and Kern, Robert and Larson, Eric and Carey, C J. and Polat, Ilhan and Feng, Yu and Moore, Eric W. and {VanderPlas}, Jake and Laxalde, Denis and Perktold, Josef and Cimrman, Robert and Henriksen, Ian and Quintero, E. A. and Harris, Charles R. and Archibald, Anne M. and Ribeiro, Ant{\^o}nio H. and Pedregosa, Fabian and {van Mulbregt}, Paul and {SciPy 1.0 Contributors}},
+%   title     = {SciPy 1.0: Fundamental Algorithms for Scientific Computing in Python},
+%   journal   = {Nature Methods},
+%   volume    = {17},
+%   pages     = {261--272},
+%   year      = {2020},
+%   doi       = {10.1038/s41592-019-0686-2}
+% }
