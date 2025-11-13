@@ -12,7 +12,7 @@ hydrodynamic transport equations for the quantities of interest---the particle d
 + D_p \partial_{x}^2 p, \label{eq:p_eq}
 \end{align}
 where $\xi=(x,t)$ and $E$ is a spatially uniform driving field to sustain the prescribed drift $u_d$. 
-We non-dimensionalize the problem by setting $m=e=1$ and, in this paper, work with $n(\xi)$ and $p(\xi)$ defined on a finite interval $0<x<L$, obeying Eqs.\eqref{eq:n_eq} and \eqref{eq:p_eq} with periodic boundary conditions, $n(\xi)_{x=0}=n(\xi)_{x=L}$, $p(\xi)_{x=0}=p(\xi)_{x=L}$.
+In simulations, we non-dimensionalize the problem by setting $m=e=1$ and, in this paper, work with $n(\xi)$ and $p(\xi)$ defined on a finite interval $0<x<L$, obeying Eqs.\eqref{eq:n_eq} and \eqref{eq:p_eq} with periodic boundary conditions, $n(\xi)_{x=0}=n(\xi)_{x=L}$, $p(\xi)_{x=0}=p(\xi)_{x=L}$.
 %We solve numerically the one-dimensional hydrodynamic system \eqref{eq:n_eq}-\eqref{eq:p_eq} on a periodic interval $x\in[0,L)$. 
 
 The results shown in Fig. 2 and Fig. 3 have been produced by the numerical procedure summarized below.
@@ -28,8 +28,7 @@ The functions $n(x)$ and $p(x)$ were represented as discrete Fourier series eval
 $N_x$ points.
 Each right-hand side evaluation scales as $\mathcal{O}(N_x \log N_x)$ due to FFTs. Because accurate wave resolution is required, we choose around 30–50 grid points per dominant wavelength to capture active scales without over-resolving the grid.
 
-For improved numerical accuracy and reduced computational cost, the spatial derivatives in Eqs. \eqref{eq:n_eq} and \eqref{eq:p_eq} are computed in Fourier space by multiplying the field by $ik$ and $-k^2$, for the first and second derivatives, respectively, and subsequently transforming back to physical space. 
-Nonlinear products (such as the pressure and damping contributions) are formed pointwise in $x$ space and returned to $k$ space by Fast Fourier Transform (FFT).
+For improved numerical accuracy, we compute the spatial derivatives in Eqs.~\eqref{eq:n_eq} and \eqref{eq:p_eq} in Fourier space. For a given target accuracy, this allows us to use fewer grid points than low-order finite differences, which can reduce the overall computational cost. Specifically, we obtain the first and second derivatives by multiplying the field by $ik$ and $-k^2$, respectively, and then transforming back to physical space. Nonlinear products (such as the pressure and damping contributions) are formed pointwise in $x$ space and returned to $k$ space by Fast Fourier Transform (FFT).
 
 To control aliasing from these nonlinearities we apply the Orszag 2/3 truncation rule: after each right-hand-side evaluation we zero all modes with $|k|> (2/3)k_{\max}$, where $k_{\max}=\pi/\Delta x$ and $\Delta x=L/N_x$ \cite{orszag1971}. 
 
@@ -43,14 +42,14 @@ we refine the spatial discretization $N_x$ and adjust the tolerance parameters a
 
 The BDF integrator automatically adjusts the time step (and the method order) using a local error estimate so that the weighted local truncation error remains within the specified tolerances. The spatial discretization is fixed once a run begins: both the number of grid points $N_x$ and the domain length $L$ remain constant for the duration of the simulation. 
 
-The domain is chosen so that the discrete wavenumber set $\{k_m=2\pi m/L\}$ contains the most unstable linear wavenumber $k^*$ predicted by the stability analysis and does not vary with time.
+The domain length $L$ is chosen so that the discrete wavenumber set $\{k_m=2\pi m/L\}$ contains the most unstable linear wavenumber $k^*$. Once chosen, $L$ and $N_x$ are kept fixed during the simulation..
 We first pick an integer %$M \in \mathbb{N}$ 
 $1<M<15$ representing the intended number of wavelengths in the box and set
 \begin{equation} 
  L=\frac{2\pi M}{k^*}
 \end{equation}
 so that $k^*$ coincides exactly with the grid mode $k_M$.
-We then select $N_x$ large enough that the de-aliased band retains not only $k^*$ but also its first few harmonics; in practice we enforce $M\le N_x/8$.
+We then select $N_x$ large enough that the de-aliased band retains not only $k^*$ but also its first few harmonics; in practice we enforce $M\le N_x/9$.
 The box size and initial conditions are decided before the run and are not altered during the simulation.
 
 Simulations start from a spatially uniform drifting state, $n(x,0)=\bar n$ and $p(x,0)=m\bar nu_d$.
@@ -64,7 +63,7 @@ p(x,0)&=m\bar n u_d+\sum_{j\in\mathcal S}(a'_j\cos\tfrac{2\pi jx}{L}+b'_j\sin\tf
 \end{equation}
 }
 
-where $\mathcal S$ is a finite set of low integers (for example $\{3,5,8,13,21\}$) and the coefficients $a_j$, $a'_j$, etc., are moderate, typically $\lesssim0.2\bar{n}$. As shown in Fig. 2, the system converges to the same spatial pattern regardless of the initial conditions.
+where $\mathcal S$ is a finite set of low integers (for example $\{3,5,8,13,21\}$) and the coefficients $a_j$, $a'_j$, etc., are moderate, typically $a_j, b_j \lesssim0.2\bar{n}$ and $a'_j, b'_j \lesssim0.2m\bar{n}u_d$. As shown in Fig. 2, the system converges to the same spatial pattern regardless of the initial conditions.
 
 The density-dependent damping is implemented as Eq.\textcolor{red}{~5}. The pressure entering the momentum balance is Eq.\textcolor{red}{~9}. 
 The electric field is uniform in space.
@@ -100,7 +99,7 @@ The electric field is uniform in space.
 %   year      = {2020},
 %   doi       = {10.1038/s41592-019-0686-2}
 % }
-
+% 
 % @book{hairerwannerII,
 %   author    = {Hairer, Ernst and Wanner, Gerhard},
 %   title     = {Solving Ordinary Differential Equations II: Stiff and Differential--Algebraic Problems},
@@ -110,7 +109,7 @@ The electric field is uniform in space.
 %   year      = {1996},
 %   doi       = {10.1007/978-3-662-09947-6}
 % }
-
+% 
 % @book{boyd2001,
 %   author    = {Boyd, John P.},
 %   title     = {Chebyshev and Fourier Spectral Methods},
@@ -120,3 +119,12 @@ The electric field is uniform in space.
 %   address   = {Mineola, NY},
 %   isbn      = {978-0-486-49582-2}
 % }
+% 
+% @book{trefethen2000,
+%   author    = {Trefethen, Lloyd N.},
+%   title     = {Spectral Methods in MATLAB},
+%   publisher = {Society for Industrial and Applied Mathematics},
+%   year      = {2000},
+%   address   = {Philadelphia, PA},
+%   isbn      = {978-0-89871-465-4}
+% % }
