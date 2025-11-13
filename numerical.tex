@@ -18,8 +18,8 @@ We non-dimensionalize the problem by setting $m=e=1$ and, in this paper, work wi
 The results shown in Fig. 2 and Fig. 3 have been produced by the numerical procedure summarized below.
 The quantities of interest are the density $n(\xi)$ and the momentum density $p(\xi)=mnu$.
 %Periodic boundary conditions are imposed at $x=0$ and $x=L$.
-We discretize space and time is integrated adaptively.
-Spatial derivatives are computed in Fourier space (e.g., \cite{trefethen2000,boyd2001,canuto1988}) for high accuracy on periodic domains, and time integration uses a stiff Backward Differentiation Formula (BDF) method\cite{hairerwannerII}. The solver automatically adjusts the time step to satisfy the prescribed error tolerances. 
+We discretize space, and integrate in time adaptively.
+Spatial derivatives are computed in Fourier space (e.g., \cite{trefethen2000,boyd2001,canuto1988}) for high accuracy on periodic domains, and time integration uses a stiff Backward Differentiation Formula (BDF) method~\cite{hairerwannerII}. The solver automatically adjusts the time step to satisfy the prescribed error tolerances. 
 Throughout, divisions by $n$ are regularized with $n_{\min}=10^{-7}$ in denominators; this has no discernible effect on converged solutions but avoids numerical singularities.
 
 %All fields 
@@ -37,7 +37,7 @@ On a finite grid, quadratic products generate Fourier interactions beyond the Ny
 Keeping only the lowest two–thirds of modes guarantees \cite{orszag1971} that every quadratic interaction of retained modes either stays within the allowed range or falls completely outside it, where it is removed.
 
 
-We apply the method of lines by discretizing space, thereby converting the PDEs into a large system of ODEs in time. The system is integrated in time using a \emph{BDF} integrator implemented through the \emph{solve\_ivp} function from the SciPy library \cite{virtanen2020scipy}. This method automatically adjusts how many past time levels it uses during the run, allowing it to maintain accuracy and stability for stiff problems. The solver used the relative and absolute tolerances $\mathrm{rtol}=10^{-4}$ and $\mathrm{atol}=10^{-7}$. These tolerance values were determined through numerical experiments as optimal: reducing them further increases runtime, while loosening them may introduce numerical artifacts. Therefore, when accuracy concerns arise, 
+We apply the method of lines by discretizing space, thereby converting the PDEs into a large system of ODEs in time. The system is integrated in time using a \emph{BDF} integrator implemented through the \emph{solve\_ivp} function from the SciPy library \cite{virtanen2020scipy}. This method automatically adjusts how many past time levels it uses during the run, allowing it to maintain accuracy and stability for stiff problems. The solver uses the relative and absolute tolerances $\mathrm{rtol}=10^{-4}$ and $\mathrm{atol}=10^{-7}$. These tolerance values were determined through numerical experiments as optimal: reducing them further increases runtime, while loosening them may introduce numerical artifacts. Therefore, when accuracy concerns arise, 
 we refine the spatial discretization $N_x$ and adjust the tolerance parameters accordingly.
 
 
