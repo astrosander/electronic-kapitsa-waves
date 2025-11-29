@@ -88,6 +88,11 @@ class P:
     n_floor: float = 1e-7
     dealias_23: bool = True
 
+    # Boundary condition type
+    # "periodic" (default) - old behavior with FFT-based periodic derivatives
+    # "ds_open" - Dyakonov-Shur-like open boundaries (fixed n at source, fixed j at drain)
+    bc_type: str = "ds_open"
+
     seed_amp_n: float = 0.030  # Small amplitude perturbation
     seed_mode: int = 7  # New mode for cos(6πx/L) + cos(10πx/L) + cos(14πx/L)
     seed_amp_p: float = 0.030  # Small amplitude perturbation
@@ -110,7 +115,12 @@ _fft_cache = {}
 def _update_global_arrays():
     """Update global arrays based on current par.Nx"""
     global x, dx, k, ik, k2, _kc, _nz_mask
-    x = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+    # For periodic BC: endpoint=False (wraps around)
+    # For open BC: endpoint=True (includes boundary points at x=0 and x=L)
+    if par.bc_type == "periodic":
+        x = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+    else:
+        x = np.linspace(0.0, par.L, par.Nx, endpoint=True)
     dx = x[1] - x[0]
     k = 2*np.pi*fftfreq(par.Nx, d=dx)
     ik = 1j*k
@@ -118,20 +128,80 @@ def _update_global_arrays():
     _kc = par.Nx//3
     _nz_mask = (k2 != 0)
 
+def Dx_fd(f):
+    """
+    First derivative with simple 2nd-order finite differences
+    on a non-periodic interval [0, L). At the boundaries we use
+    one-sided first-order approximations.
+    """
+    global x, dx
+    if x is None or len(x) != len(f):
+        _update_global_arrays()
+    h = dx
+    out = np.empty_like(f)
+
+    # interior: central differences
+    out[1:-1] = (f[2:] - f[:-2]) / (2.0 * h)
+
+    # left boundary (x ≈ 0): forward difference
+    out[0] = (f[1] - f[0]) / h
+
+    # right boundary (x ≈ L): backward difference
+    out[-1] = (f[-1] - f[-2]) / h
+
+    return out
+
+def Dxx_fd(f):
+    """
+    Second derivative with 2nd-order finite differences.
+    At boundaries we use one-sided 2nd-order approximations.
+    """
+    global x, dx
+    if x is None or len(x) != len(f):
+        _update_global_arrays()
+    h = dx
+    out = np.empty_like(f)
+
+    # interior: central 2nd derivative
+    out[1:-1] = (f[2:] - 2.0 * f[1:-1] + f[:-2]) / (h * h)
+
+    # left boundary: 2nd-order one-sided (uses points 0,1,2)
+    out[0] = (f[2] - 2.0 * f[1] + f[0]) / (h * h)
+
+    # right boundary: symmetric at the right end (N-3,N-2,N-1)
+    out[-1] = (f[-1] - 2.0 * f[-2] + f[-3]) / (h * h)
+
+    return out
+
 def Dx(f):  
     # Ensure arrays are up to date
-    if k is None or len(k) != len(f):
-        _update_global_arrays()
-    return (ifft(ik * fft(f, workers=NTHREADS), workers=NTHREADS)).real
+    if par.bc_type == "periodic":
+        global k, ik
+        if k is None or len(k) != len(f):
+            _update_global_arrays()
+        return (ifft(ik * fft(f, workers=NTHREADS), workers=NTHREADS)).real
+    else:
+        # non-periodic, use finite differences
+        return Dx_fd(f)
 
 def Dxx(f): 
     # Ensure arrays are up to date
-    if k2 is None or len(k2) != len(f):
-        _update_global_arrays()
-    return (ifft((-k2) * fft(f, workers=NTHREADS), workers=NTHREADS)).real
+    if par.bc_type == "periodic":
+        global k2
+        if k2 is None or len(k2) != len(f):
+            _update_global_arrays()
+        return (ifft((-k2) * fft(f, workers=NTHREADS), workers=NTHREADS)).real
+    else:
+        # non-periodic, use finite differences
+        return Dxx_fd(f)
 
 def filter_23(f):
-    if not par.dealias_23: return f
+    if not par.dealias_23: 
+        return f
+    if par.bc_type != "periodic":
+        # For non-periodic boundaries, skip spectral dealiasing
+        # or replace by a real-space smoother if needed.
+        return f
     fh = fft(f, workers=NTHREADS)
     kc = len(f)//3  # Use actual array length instead of par.Nx
     fh[kc:-kc] = 0.0
@@ -526,11 +596,31 @@ def rhs(t, y, E_base):
     dp_dt = -Gamma_spatial(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p)
     dp_dt = filter_23(dp_dt)
 
+    # === Dyakonov–Shur-like open boundary conditions ===
+    if par.bc_type != "periodic":
+        # Left (x ≈ 0): fix density n(0,t) = nbar0
+        # We keep n[0] equal to its initial value by forcing its time derivative to zero.
+        dn_dt[0] = 0.0
+
+        # Right (x ≈ L): fix current j(L,t) = n0*u_d => p(L,t) = m*n0*u_d
+        # We keep p[-1] equal to its initial value by forcing its time derivative to zero.
+        dp_dt[-1] = 0.0
+
+        # Optional "relax-to-BC" variant if you prefer:
+        # alpha = 10.0  # relaxation rate
+        # dn_dt[0] = alpha * (par.nbar0 - n[0])
+        # dp_dt[-1] = alpha * (par.m * par.nbar0 * par.u_d - p[-1])
+
     return np.concatenate([dn_dt, dp_dt])
 
 def initial_fields():
     # Create spatial grid with current Nx
-    x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+    # For periodic BC: endpoint=False (wraps around)
+    # For open BC: endpoint=True (includes boundary points at x=0 and x=L)
+    if par.bc_type == "periodic":
+        x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+    else:
+        x_local = np.linspace(0.0, par.L, par.Nx, endpoint=True)
     
     # Get uniform background profiles (no Gaussian perturbations)
     nbar = np.full_like(x_local, par.nbar0)  # Uniform background density
@@ -630,6 +720,13 @@ def initial_fields():
             kx1 = 2*np.pi*34 / par.L
             kx2 = 2*np.pi*55 / par.L
             p0 += par.seed_amp_p * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
+    
+    # Enforce DS-like boundary conditions in initial fields
+    if par.bc_type != "periodic":
+        # Source: fix density at x≈0
+        n0[0] = par.nbar0
+        # Drain: fix current j(L,t) = j0 -> p(L,t) = m * nbar0 * u_d
+        p0[-1] = par.m * par.nbar0 * par.u_d
     
     return n0, p0
 
@@ -844,8 +941,11 @@ def run_once(tag="seed_mode", worker_id=0):
     plot_period_detection(n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], 
                          par.L, u_momentum_final, par.u_d, tag=tag)
 
-    # Create local spatial grid for plotting
-    x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+    # Create local spatial grid for plotting (use same logic as solver)
+    if par.bc_type == "periodic":
+        x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+    else:
+        x_local = np.linspace(0.0, par.L, par.Nx, endpoint=True)
     dx_local = x_local[1] - x_local[0]
     
     extent=[x_local.min(), x_local.max(), sol.t.min(), sol.t.max()]
@@ -1246,7 +1346,7 @@ def run_single_diffusion_worker(w, u_d, Dn, Dp, base_params, worker_id=0):
     Dn_str = f"{Dn:.2f}".replace('.', 'p')  # e.g., 0.25 -> 0p25
     Dp_str = f"{Dp:.2f}".replace('.', 'p')  # e.g., 0.05 -> 0p05
     
-    local_par.outdir = f"multiple_u_d/diffusion_sweep/w={w_str}_Dn={Dn_str}_Dp={Dp_str}_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})/out_drift_ud{u_d_str}"
+    local_par.outdir = f"multiple_u_d/non-periodic/w={w_str}_Dn={Dn_str}_Dp={Dp_str}_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})/out_drift_ud{u_d_str}"
     
     # Keep t_final fixed
     local_par.t_final = 20*10.0/u_d
@@ -1467,7 +1567,7 @@ def run_multiple_ud():
     
     print(f"{'='*60}")
 
-def detect_missing_simulations(base_dir="multiple_u_d/diffusion_sweep"):
+def detect_missing_simulations(base_dir="multiple_u_d/non-periodic"):
     """
     Detect missing simulations in the diffusion sweep directory.
     
@@ -1569,7 +1669,7 @@ def check_and_run_missing_simulations():
                 Dp_str = f"{diff_combo['Dp']:.2f}".replace('.', 'p')
                 
                 folder_name = f"w={w_str}_Dn={Dn_str}_Dp={Dp_str}_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.03, seed_amp_p=0.03)"
-                folder_path = os.path.join("multiple_u_d/diffusion_sweep", folder_name)
+                folder_path = os.path.join("multiple_u_d/non-periodic", folder_name)
                 out_dir = os.path.join(folder_path, f"out_drift_ud{u_d_str}")
                 
                 is_missing = False
@@ -1694,43 +1794,42 @@ def run_single_Dn_half_simulation():
     print(f"{'='*80}")
 
 if __name__ == "__main__":
-    # run_all_modes_snapshots(tag="seed_modes_1to5")
-    
-    # Example: Test localized dissipation perturbation
-    # To test increased dissipation at x=x0:
-    par.lambda_diss = 0.0      # Positive = increased damping
-    par.sigma_diss =  -1.0       # Width of perturbation
-    par.x0 = 12.5               # Location of perturbation
-    
-    # Set seed_mode to 7 for cos(6πx/L) + cos(10πx/L) + cos(14πx/L) perturbations
-    par.seed_mode = 7
-    par.seed_amp_n = 0.030  # Small amplitude perturbation
-    par.seed_amp_p = 0.030  # Small amplitude perturbation (can set to 0 if only perturbing n)
-    
-    # par.Nx = 10000  # High spatial resolution
-    par.L = 10.0    # System size
-    par.t_final = 50.0  # Final time
-    # par.max_step = 0.0005  # Maximum time step
+    # --- Set up a single DS-open test run ---
+    par.bc_type = "ds_open"      # <--- NEW: enable open/DS boundaries
 
+    # Geometry and resolution
+    par.L = 10.0
+    par.Nx = 1024*4#256
 
-    # Ensure NO potential perturbations are active for seed_mode == 2
-    par.use_nbar_gaussian = False
-    par.nbar_amp = 0.0
+    # Time settings
+    par.t_final = 10.0   # keep modest for a quick test
+    par.n_save = 1024*4#128
+
+    # Physics parameters
+    par.u_d = 0.5        # drift velocity
     par.include_poisson = False
-    par.lambda_gauss = 0.0      # Disable time-independent Gaussian perturbation
-    par.sigma_gauss = 2.0       # Width of Gaussian (not used when lambda_gauss=0)
-    par.x0_gauss = 12.5          # Center at x=12.5 (not used when lambda_gauss=0)
-    
-    #   run_once(tag="increased_dissipation")
-    # run_multiple_ud()  # Comment out the u_d sweep
-    # run_multiple_w()     # Run the w parameter sweep
-    # run_diffusion_parameter_sweep()  # Run the diffusion parameter sweep
-    
-    # Run single simulation for Dn_half with w=0.14 and u_d from 0.1 to 2.0
-    run_single_Dn_half_simulation()
+    par.lambda_diss = 0.0
+    par.lambda_gauss = 0.0
+    par.use_nbar_gaussian = False
 
-    #
-    # To test decreased dissipation (can drive instabilities):
-    #   par.lambda_diss = -0.5     # Negative = decreased damping
-    #   par.sigma_diss = 2.0
-    #   run_once(tag="decreased_dissipation")
+    # Small perturbation on top of uniform background
+    par.seed_mode = 2
+    par.seed_amp_n = 0.02
+    par.seed_amp_p = 0.02
+
+    par.outdir = "out_ds_open_test"
+
+    # Make sure grids are consistent with current Nx, L
+    _update_global_arrays()
+
+    # Run ONE simulation
+    t, n_t, p_t = run_once(tag="ds_open_test", worker_id=0)
+
+    # --- Quick boundary-condition sanity check ---
+    print("\n[BC check]")
+    print("  n(0, t0)   = {:.6g}, n(0, t_end)   = {:.6g}"
+          .format(n_t[0, 0], n_t[0, -1]))
+    print("  p(L, t0)   = {:.6g}, p(L, t_end)   = {:.6g}"
+          .format(p_t[-1, 0], p_t[-1, -1]))
+    print("  target p(L) = {:.6g} (m*n0*u_d)"
+          .format(par.m * par.nbar0 * par.u_d))
