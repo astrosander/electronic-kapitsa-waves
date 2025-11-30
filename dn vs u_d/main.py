@@ -598,12 +598,12 @@ def apply_ds_open_relaxation(n, p, dn_dt, dp_dt):
     left_mask[:N_bc]  = 1.0
     right_mask[-N_bc:] = 1.0
 
-    # Optional: taper the mask so it's strongest at the edges
-    # This makes the transition smoother and more numerically stable
-    if N_bc >= 2:
-        w = np.linspace(1.0, 0.0, N_bc)
-        left_mask[:N_bc]  *= w
-        right_mask[-N_bc:] *= w[::-1]
+    # Optional taper – disabled for a stronger, flat reservoir
+    # Uncomment below if you want smoother transitions
+    # if N_bc >= 2:
+    #     w = np.linspace(1.0, 0.0, N_bc)
+    #     left_mask[:N_bc]  *= w
+    #     right_mask[-N_bc:] *= w[::-1]
 
     n_eq_source  = par.nbar0
     p_eq_drain   = par.m * par.nbar0 * par.u_d
@@ -618,7 +618,25 @@ def apply_ds_open_relaxation(n, p, dn_dt, dp_dt):
     # Drain: pin momentum/current, leave density mostly free
     dp_dt += gamma_p * right_mask * (p_eq_drain - p)
 
-    return dn_dt, dp_dt 
+    return dn_dt, dp_dt
+
+def enforce_ds_open_bc_state(n, p):
+    """
+    Hard Dirichlet boundary conditions for DS/open case.
+    This is applied directly to the *state* arrays (n, p),
+    typically after each explicit RK step.
+
+    - Source (x ≈ 0): fix density to nbar0
+    - Drain (x ≈ L): fix momentum/current to m * nbar0 * u_d
+    """
+    if par.bc_type != "ds_open":
+        return
+
+    # Left: density contact
+    n[0] = par.nbar0
+
+    # Right: momentum/current contact
+    p[-1] = par.m * par.nbar0 * par.u_d
 
 def rhs(t, y, E_base):
     N = par.Nx
@@ -988,6 +1006,13 @@ def integrate_explicit_ds_open(y0, t_span, t_eval, E_base, worker_id=0):
         np.clip(n, par.n_floor, n_cap, out=n)
         # soft ceiling on momentum
         np.clip(p, -p_cap, p_cap, out=p)
+
+        # Hard DS/open Dirichlet BC on the *state*
+        enforce_ds_open_bc_state(n, p)
+
+        # write back into y (n and p are views, so this updates y)
+        y[:N] = n
+        y[N:] = p
 
         # write output if we just hit / passed an output time
         while out_idx < n_out and t >= T[out_idx] - 1e-12:
@@ -2108,8 +2133,9 @@ if __name__ == "__main__":
     par.tau_bc_n = 0.5       # relax n on timescale ~0.5
     par.tau_bc_p = 0.5       # relax p on timescale ~0.5
 
-    # Drift maintenance
-    par.maintain_drift = "field"
+    # Drift maintenance: use feedback to keep <u> ≈ u_d
+    par.maintain_drift = "feedback"
+    par.Kp = 0.15   # feedback gain (tweak if needed)
 
     par.outdir = "out_ds_open_unstable_M07"
 
