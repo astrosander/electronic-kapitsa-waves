@@ -1806,27 +1806,34 @@ def run_single_Dn_half_simulation():
 
 if __name__ == "__main__":
     # --- Set up a single DS-open test run ---
-    par.bc_type = "periodic"      # <--- NEW: enable open/DS boundaries
+    par.bc_type = "ds_open"      # <--- NEW: enable open/DS boundaries
 
     # Geometry and resolution
     par.L = 10.0
-    par.Nx = 256
+    par.Nx = 1012#256
 
     # Physics parameters
-    par.u_d =  5.245# 0.5        # drift velocity
+    par.u_d =  1.0# 0.5        # drift velocity
     par.include_poisson = False
     par.lambda_diss = 0.0
     par.lambda_gauss = 0.0
     par.use_nbar_gaussian = False
     
     # Time settings
-    par.t_final = 10*par.L/par.u_d#10.0/5.245   # keep modest for a quick test
-    par.n_save = 512#128
+    par.t_final = 5#10*par.L/par.u_d#10.0/5.245   # keep modest for a quick test
+    par.n_save = 800#128
+    
+    # par.rtol=3e-2
+    # par.U      = 5.0
+    # par.Gamma0 = 0.002
+    # par.w      = 1.0
+    # par.Dn = 0.01
+    # par.Dp = 0.01
 
     # Small perturbation on top of uniform background
     par.seed_mode = 2
-    par.seed_amp_n = 0.03
-    par.seed_amp_p = 0.03
+    par.seed_amp_n = 3e-3
+    par.seed_amp_p = 3e-3
 
     par.outdir = "out_ds_open_test"
 
