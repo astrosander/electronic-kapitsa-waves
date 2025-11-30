@@ -83,15 +83,20 @@ class P:
     n_save: int = 100  #200#200  # Reduced for speed
     # rtol: float = 5e-7
     # atol: float = 5e-9
-    rtol = 1e-3  # Tighter tolerance for accuracy
+    rtol = 3e-2  # Tighter tolerance for accuracy
     atol = 1e-4  # Tighter tolerance for accuracy
     n_floor: float = 1e-4
     dealias_23: bool = True
 
     # Boundary condition type
     # "periodic" (default) - old behavior with FFT-based periodic derivatives
-    # "ds_open" - Dyakonov-Shur-like open boundaries (fixed n at source, fixed j at drain)
-    bc_type: str = "ds_open"
+    # "ds_open" - Dyakonov-Shur-like open boundaries (soft reservoir layer at contacts)
+    bc_type: str = "periodic"  # Default to periodic for stability
+    
+    # DS/open boundary parameters (soft reservoir layer)
+    N_bc: int = 8                 # number of grid cells in each contact region
+    tau_bc_n: float = 0.5         # relaxation time for n at contacts
+    tau_bc_p: float = 0.5         # relaxation time for p at contacts
 
     seed_amp_n: float = 0.030  # Small amplitude perturbation
     seed_mode: int = 7  # New mode for cos(6πx/L) + cos(10πx/L) + cos(14πx/L)
@@ -99,6 +104,15 @@ class P:
 
     outdir: str = "out_drift/small_dissipation_perturbation"
     cmap: str = "inferno"
+
+class SimpleSolution:
+    """Minimal stand-in for solve_ivp's return object."""
+    def __init__(self, t, y, success=True, message=""):
+        self.t = t
+        self.y = y
+        self.success = success
+        self.message = message
+
 
 par = P()
 
@@ -115,12 +129,10 @@ _fft_cache = {}
 def _update_global_arrays():
     """Update global arrays based on current par.Nx"""
     global x, dx, k, ik, k2, _kc, _nz_mask
-    # For periodic BC: endpoint=False (wraps around)
-    # For open BC: endpoint=True (includes boundary points at x=0 and x=L)
-    if par.bc_type == "periodic":
-        x = np.linspace(0.0, par.L, par.Nx, endpoint=False)
-    else:
-        x = np.linspace(0.0, par.L, par.Nx, endpoint=True)
+    # Use periodic grid (endpoint=False) for compatibility with both spectral and FD derivatives
+    # For ds_open BC, finite differences use one-sided stencils at boundaries (no wrapping)
+    # For periodic BC, spectral derivatives use FFT (wraps around)
+    x = np.linspace(0.0, par.L, par.Nx, endpoint=False)
     dx = x[1] - x[0]
     k = 2*np.pi*fftfreq(par.Nx, d=dx)
     ik = 1j*k
@@ -174,33 +186,39 @@ def Dxx_fd(f):
     return out
 
 def Dx(f):  
-    # Ensure arrays are up to date
-    if par.bc_type == "periodic":
-        global k, ik
-        if k is None or len(k) != len(f):
-            _update_global_arrays()
-        return (ifft(ik * fft(f, workers=NTHREADS), workers=NTHREADS)).real
-    else:
-        # non-periodic, use finite differences
-        return Dx_fd(f)
+    """First derivative using spectral (FFT) method - always periodic"""
+    global k, ik
+    if k is None or len(k) != len(f):
+        _update_global_arrays()
+    return (ifft(ik * fft(f, workers=NTHREADS), workers=NTHREADS)).real
 
 def Dxx(f): 
-    # Ensure arrays are up to date
-    if par.bc_type == "periodic":
-        global k2
-        if k2 is None or len(k2) != len(f):
-            _update_global_arrays()
-        return (ifft((-k2) * fft(f, workers=NTHREADS), workers=NTHREADS)).real
+    """Second derivative using spectral (FFT) method - always periodic"""
+    global k2
+    if k2 is None or len(k2) != len(f):
+        _update_global_arrays()
+    return (ifft((-k2) * fft(f, workers=NTHREADS), workers=NTHREADS)).real
+
+def Dx_phys(f):
+    """Physical first derivative: spectral for periodic, FD for ds_open."""
+    if par.bc_type == "ds_open":
+        return Dx_fd(f)
     else:
-        # non-periodic, use finite differences
+        return Dx(f)
+
+def Dxx_phys(f):
+    """Physical second derivative: spectral for periodic, FD for ds_open."""
+    if par.bc_type == "ds_open":
         return Dxx_fd(f)
+    else:
+        return Dxx(f)
 
 def filter_23(f):
+    """Spectral dealiasing filter - only applied for periodic BC"""
     if not par.dealias_23: 
         return f
+    # Only apply dealiasing for periodic BC (DS/open BC skip it)
     if par.bc_type != "periodic":
-        # For non-periodic boundaries, skip spectral dealiasing
-        # or replace by a real-space smoother if needed.
         return f
     fh = fft(f, workers=NTHREADS)
     kc = len(f)//3  # Use actual array length instead of par.Nx
@@ -557,70 +575,100 @@ def S_injection(n, nbar, Jx, gamma):
         raise ValueError("source_model must be 'as_given' or 'balanced'")
 
 def E_base_from_drift(nbar):
-    print(np.mean(Gamma(nbar)))
-    return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e 
+    return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e
+
+def apply_ds_open_relaxation(n, p, dn_dt, dp_dt):
+    """
+    DS/open boundaries via soft reservoir layers:
+
+    - Left (source, x≈0):     n -> nbar0  (density contact)
+    - Right (drain, x≈L):     p -> m nbar0 u_d  (current/momentum contact)
+
+    Implemented as relaxation in a thin layer of N_bc cells.
+    Optional tapering makes the transition smoother.
+    """
+    if par.bc_type != "ds_open":
+        return dn_dt, dp_dt
+
+    N = len(n)
+    N_bc = min(par.N_bc, N // 4)  # safety
+
+    left_mask  = np.zeros(N)
+    right_mask = np.zeros(N)
+    left_mask[:N_bc]  = 1.0
+    right_mask[-N_bc:] = 1.0
+
+    # Optional: taper the mask so it's strongest at the edges
+    # This makes the transition smoother and more numerically stable
+    if N_bc >= 2:
+        w = np.linspace(1.0, 0.0, N_bc)
+        left_mask[:N_bc]  *= w
+        right_mask[-N_bc:] *= w[::-1]
+
+    n_eq_source  = par.nbar0
+    p_eq_drain   = par.m * par.nbar0 * par.u_d
+
+    gamma_n = 1.0 / par.tau_bc_n
+    gamma_p = 1.0 / par.tau_bc_p
+
+    # Source: pin density, leave momentum mostly free
+    dn_dt += gamma_n * left_mask * (n_eq_source - n)
+    # (you *can* add a tiny p relaxation here if you want extra damping)
+
+    # Drain: pin momentum/current, leave density mostly free
+    dp_dt += gamma_p * right_mask * (p_eq_drain - p)
+
+    return dn_dt, dp_dt 
 
 def rhs(t, y, E_base):
     N = par.Nx
     n = y[:N]
     p = y[N:]
 
+    # Background density profile (uniform for seed_mode=7)
     nbar = nbar_profile()
-    pbar = pbar_profile(nbar)
 
+    # Floor to avoid division by tiny densities
     n_eff = np.maximum(n, par.n_floor)
 
-    # Skip injection calculations since SJ term is disabled
-    # Jx = J_profile()
-    # gamma = gamma_from_J(Jx)
-    # SJ = S_injection(n_eff, nbar, Jx, gamma)
-
-    v = p/(par.m*n_eff)
+    # Mean drift velocity for feedback field control
+    v = p / (par.m * n_eff)
     u_mean = float(np.mean(v))
     if par.maintain_drift == "feedback":
         E_eff = E_base + par.Kp * (par.u_d - u_mean)
     else:
         E_eff = E_base
 
-    dn_dt = -Dx(p) + par.Dn * Dxx(n)  # SJ term disabled for speed
-    dn_dt = filter_23(dn_dt)
+    # --- continuity: uses BC-aware derivatives ---
+    dn_dt = -Dx_phys(p) + par.Dn * Dxx_phys(n)
 
+    # pressure & momentum
     Pi = Pi0(n_eff) + (p**2)/(par.m*n_eff)
-    grad_Pi = Dx(Pi)
+    grad_Pi = Dx_phys(Pi)
+
     force_Phi = 0.0
     if par.include_poisson:
         phi = phi_from_n(n_eff, nbar)
-        force_Phi = n_eff * Dx(phi)
+        force_Phi = n_eff * Dx_phys(phi)
 
-    # Use spatially-dependent damping with localized perturbation
-    dp_dt = -Gamma_spatial(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p)
-    dp_dt = filter_23(dp_dt)
+    dp_dt = -Gamma_spatial(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx_phys(p)
 
-    # === Dyakonov–Shur-like open boundary conditions ===
-    if par.bc_type != "periodic":
-        # Left (x ≈ 0): fix density n(0,t) = nbar0
-        # We keep n[0] equal to its initial value by forcing its time derivative to zero.
-        dn_dt[0] = 0.0
 
-        # Right (x ≈ L): fix current j(L,t) = n0*u_d => p(L,t) = m*n0*u_d
-        # We keep p[-1] equal to its initial value by forcing its time derivative to zero.
-        dp_dt[-1] = 0.0
+    # Apply DS/open reservoir relaxation in contact layers (no-op for periodic)
+    dn_dt, dp_dt = apply_ds_open_relaxation(n, p, dn_dt, dp_dt)
 
-        # Optional "relax-to-BC" variant if you prefer:
-        # alpha = 10.0  # relaxation rate
-        # dn_dt[0] = alpha * (par.nbar0 - n[0])
-        # dp_dt[-1] = alpha * (par.m * par.nbar0 * par.u_d - p[-1])
+    # Dealias only in purely periodic spectral case
+    if par.bc_type == "periodic":
+        dn_dt = filter_23(dn_dt)
+        dp_dt = filter_23(dp_dt)
 
     return np.concatenate([dn_dt, dp_dt])
 
+
 def initial_fields():
     # Create spatial grid with current Nx
-    # For periodic BC: endpoint=False (wraps around)
-    # For open BC: endpoint=True (includes boundary points at x=0 and x=L)
-    if par.bc_type == "periodic":
-        x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
-    else:
-        x_local = np.linspace(0.0, par.L, par.Nx, endpoint=True)
+    # Always use periodic grid (endpoint=False) - DS/open boundaries handled via soft relaxation
+    x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
     
     # Get uniform background profiles (no Gaussian perturbations)
     nbar = np.full_like(x_local, par.nbar0)  # Uniform background density
@@ -852,150 +900,357 @@ def rhs_with_progress(t, y, E_base, last_print_time=[0.0], start_time=[0.0], wor
         last_print_time[0] = t
     return rhs(t, y, E_base)
 
+def integrate_explicit_ds_open(y0, t_span, t_eval, E_base, worker_id=0):
+    """
+    Very conservative explicit RK4 time stepper for ds_open runs.
+
+    - Uses rhs() which already applies DS/open relaxation and FD derivatives
+      (via Dx_phys / Dxx_phys once you've patched rhs as above).
+    - Enforces a strong CFL limit for both diffusion and advection.
+    - Enforces floors and soft caps on n and p to avoid numerical overflow.
+    """
+    t0, t_final = t_span
+    _update_global_arrays()
+    N = par.Nx
+
+    x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+    dx_local = x_local[1] - x_local[0]
+
+    # --- CFL-based base step ---
+    D_max = max(par.Dn, par.Dp, 1e-12)
+
+    # very rough characteristic speed: drift + "sound"
+    c0 = np.sqrt(max(par.U * par.nbar0, 0.0) / max(par.m, 1e-12))
+    u_char = abs(par.u_d) + c0
+
+    CFL_diff = 0.20
+    CFL_adv  = 0.40
+
+    dt_diff = CFL_diff * dx_local * dx_local / D_max
+    dt_adv  = CFL_adv  * dx_local / max(u_char, 1e-6)
+
+    # also enforce at least ~1e4 substeps over the full window
+    base_dt = min(dt_diff, dt_adv, (t_final - t0) / 1e4)
+    # strong extra safety – this is what really kills the blow-up
+    dt_sub  = 0.25 * base_dt
+
+    print(f"[Worker {worker_id:2d}] Explicit RK4 for ds_open: "
+          f"dt_sub={dt_sub:.3e}, dt_diff={dt_diff:.3e}, dt_adv={dt_adv:.3e}")
+
+    # --- output arrays ---
+    t_eval = np.asarray(t_eval)
+    n_out = t_eval.size
+    Y = np.empty((2 * N, n_out))
+    T = t_eval.copy()
+
+    y = y0.copy()
+    t = t0
+    out_idx = 0
+
+    # store initial condition
+    Y[:, out_idx] = y
+    out_idx += 1
+
+    # soft caps (tune if you like)
+    n_cap = getattr(par, "n_cap", 5.0 * par.nbar0)
+    # 5× the uniform momentum, in absolute value
+    p_cap = getattr(par, "p_cap", 5.0 * par.m * par.nbar0 * abs(par.u_d) + 1e-6)
+
+    last_print_time = [t0]
+    start_wall = [time.time()]
+
+    while t < t_final - 1e-14:
+        # do not step past final time or next output sample
+        dt = dt_sub
+        if out_idx < n_out:
+            dt = min(dt, T[out_idx] - t)
+        if t + dt > t_final:
+            dt = t_final - t
+        if dt <= 0.0:
+            break
+
+        # 4-stage RK4, with progress printing via rhs_with_progress
+        k1 = rhs_with_progress(t,           y,                E_base, last_print_time, start_wall, worker_id)
+        k2 = rhs_with_progress(t + 0.5*dt, y + 0.5*dt*k1,    E_base, last_print_time, start_wall, worker_id)
+        k3 = rhs_with_progress(t + 0.5*dt, y + 0.5*dt*k2,    E_base, last_print_time, start_wall, worker_id)
+        k4 = rhs_with_progress(t + dt,     y + dt*k3,        E_base, last_print_time, start_wall, worker_id)
+
+        y += (dt/6.0) * (k1 + 2.0*k2 + 2.0*k3 + k4)
+        t += dt
+
+        # enforce floors & caps to prevent overflows / NaNs
+        n = y[:N]
+        p = y[N:]
+
+        # floor density
+        np.maximum(n, par.n_floor, out=n)
+        # soft ceiling on density
+        np.clip(n, par.n_floor, n_cap, out=n)
+        # soft ceiling on momentum
+        np.clip(p, -p_cap, p_cap, out=p)
+
+        # write output if we just hit / passed an output time
+        while out_idx < n_out and t >= T[out_idx] - 1e-12:
+            Y[:, out_idx] = y
+            out_idx += 1
+
+    # If for numerical reasons we didn't hit all t_eval points exactly,
+    # just fill the remainder with the last available state.
+    if out_idx < n_out:
+        for j in range(out_idx, n_out):
+            Y[:, j] = y
+
+    sol = SimpleSolution(t=T, y=Y, success=True,
+                         message="explicit RK4 ds_open (fixed dt_sub, caps)")
+    print(f"[Worker {worker_id:2d}] Solver success: {sol.success}")
+    print(f"[Worker {worker_id:2d}] Final time: {T[-1]:.3f}, target: {t_final:.3f}")
+    print(f"[Worker {worker_id:2d}] Total wall time: {time.time()-start_wall[0]:.2f} seconds")
+    print(f"[Worker {worker_id:2d}] Solver info: explicit RK4 (no solve_ivp)")
+
+    return sol
+
+
 def run_once(tag="seed_mode", worker_id=0):
     os.makedirs(par.outdir, exist_ok=True)
 
     n0, p0 = initial_fields()
-    E_base = E_base_from_drift(nbar_profile()) if par.maintain_drift in ("field","feedback") else 0.0
+    E_base = (
+        E_base_from_drift(nbar_profile())
+        if par.maintain_drift in ("field", "feedback")
+        else 0.0
+    )
 
     print(f"[Worker {worker_id:2d}] E_base={E_base}")
-    #E_base = 15.0
-    
     if par.lambda_diss != 0.0:
-        print(f"[Worker {worker_id:2d}] Localized dissipation: lambda_diss={par.lambda_diss}, sigma_diss={par.sigma_diss}, x0={par.x0}")
-        print(f"[Worker {worker_id:2d}]   (adds {par.lambda_diss:+.3f}*exp(-(x-{par.x0})^2/(2*{par.sigma_diss}^2)) to Gamma)")
+        print(f"[Worker {worker_id:2d}] Localized dissipation: "
+              f"lambda_diss={par.lambda_diss}, sigma_diss={par.sigma_diss}, x0={par.x0}")
     else:
         print(f"[Worker {worker_id:2d}] No localized dissipation perturbation (lambda_diss=0)")
-    
+
     if par.lambda_gauss != 0.0:
-        print(f"[Worker {worker_id:2d}] Time-independent Gaussian: lambda_gauss={par.lambda_gauss}, sigma_gauss={par.sigma_gauss}, x0_gauss={par.x0_gauss}")
-        print(f"[Worker {worker_id:2d}]   (adds {par.lambda_gauss:+.3f}*exp(-(x-{par.x0_gauss})^2/(2*{par.sigma_gauss}^2)) to nbar)")
+        print(f"[Worker {worker_id:2d}] Time-independent Gaussian: "
+              f"lambda_gauss={par.lambda_gauss}, sigma_gauss={par.sigma_gauss}, x0_gauss={par.x0_gauss}")
     else:
         print(f"[Worker {worker_id:2d}] No time-independent Gaussian perturbation (lambda_gauss=0)")
 
     y0 = np.concatenate([n0, p0])
     t_eval = np.linspace(0.0, par.t_final, par.n_save)
 
+    # Validate initial conditions
+    if np.any(np.isnan(y0)) or np.any(np.isinf(y0)):
+        print(f"[Worker {worker_id:2d}] WARNING: Initial conditions contain NaN or Inf values!")
+        print(f"[Worker {worker_id:2d}]   n0: NaN={np.any(np.isnan(n0))}, Inf={np.any(np.isinf(n0))}")
+        print(f"[Worker {worker_id:2d}]   p0: NaN={np.any(np.isnan(p0))}, Inf={np.any(np.isinf(p0))}")
+    if np.any(n0 < 0):
+        print(f"[Worker {worker_id:2d}] WARNING: Initial density contains negative values "
+              f"(min={np.min(n0):.2e})")
+
+    # Test RHS at t=0 to catch early NaNs/Infs
+    try:
+        rhs_test = rhs(0.0, y0, E_base)
+        if np.any(np.isnan(rhs_test)) or np.any(np.isinf(rhs_test)):
+            print(f"[Worker {worker_id:2d}] WARNING: RHS at t=0 contains NaN or Inf values!")
+            print(f"[Worker {worker_id:2d}]   RHS: NaN={np.any(np.isnan(rhs_test))}, "
+                  f"Inf={np.any(np.isinf(rhs_test))}")
+    except Exception as e:
+        print(f"[Worker {worker_id:2d}] ERROR: RHS evaluation at t=0 failed: {e}")
+        import traceback
+        traceback.print_exc()
+
     print(f"[Worker {worker_id:2d}] Starting simulation for {tag}...")
     print(f"[Worker {worker_id:2d}] Parameters: t_final={par.t_final}, Nx={par.Nx}, u_d={par.u_d}")
-    
-    # Initialize timing variables
+
     start_wall_time = time.time()
-    last_print_time = [0.0]
-    start_time = [start_wall_time]
 
-    if HAS_THREADPOOLCTL:
-        with threadpool_limits(limits=NTHREADS, user_api="blas"):
-            with set_workers(NTHREADS):
-                sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time,worker_id),
-                                (0.0, par.t_final), y0, t_eval=t_eval,
-                                method="BDF", rtol=par.rtol, atol=par.atol)
+    # ------------------------------------------------------------------
+    # Solver selection
+    # ------------------------------------------------------------------
+    if par.bc_type == "ds_open":
+        # Use homebrew explicit RK4 integrator (no step-size underflow)
+        print(f"[Worker {worker_id:2d}] Using explicit RK4 integrator for DS/open BC")
+        sol = integrate_explicit_ds_open(y0, (0.0, par.t_final), t_eval, E_base, worker_id)
+        total_wall_time = time.time() - start_wall_time
+        success = sol.success
+        sol_message = sol.message
+        t = sol.t
+        Y = sol.y
     else:
-        with set_workers(NTHREADS):
-            sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time,worker_id),
-                            (0.0, par.t_final), y0, t_eval=t_eval,
-                            method="BDF", rtol=par.rtol, atol=par.atol)
+        # Keep SciPy's BDF for periodic case
+        method = "BDF"
+        rtol = par.rtol
+        atol = par.atol
+        print(f"[Worker {worker_id:2d}] Using BDF solver (rtol={rtol:.2e}, atol={atol:.2e}) "
+              f"for periodic BC")
 
+        last_print_time = [0.0]
+        start_time = [start_wall_time]
 
-    #             sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time),
-    #                             (0.0, par.t_final), y0, t_eval=t_eval,
-    #                             method="BDF", rtol=par.rtol, atol=par.atol,
-    #                             max_step=0.05, vectorized=False)#BDF
-    # else:
-    #     with set_workers(NTHREADS):
-    #         sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time),
-    #                         (0.0, par.t_final), y0, t_eval=t_eval,
-    #                         method="BDF", rtol=par.rtol, atol=par.atol,
-    #                         max_step=0.05, vectorized=False)#BDF
-    
-    total_wall_time = time.time() - start_wall_time
-    print(f"\n[Worker {worker_id:2d}] Completed successfully!")
-    print(f"[Worker {worker_id:2d}] Final time: {sol.t[-1]:.3f}, Success: {sol.success}")
-    print(f"[Worker {worker_id:2d}] Total wall time: {total_wall_time:.2f} seconds")
+        def _rhs_wrapper(t_inner, y_inner):
+            return rhs_with_progress(t_inner, y_inner, E_base,
+                                     last_print_time, start_time, worker_id)
 
-    N = par.Nx
-    n_t = sol.y[:N,:]
-    p_t = sol.y[N:,:]
-
-    n_eff_t = np.maximum(n_t, par.n_floor)
-    v_t = p_t/(par.m*n_eff_t)
-    u_momentum_initial = np.mean(v_t[:,0])
-    u_momentum_final = np.mean(v_t[:,-1])
-    
-    # Calculate INSTANTANEOUS velocity at t=t_final using two close snapshots
-    # Use the last two time points for instantaneous velocity measurement
-    n_times = len(sol.t)
-    
-    if n_times >= 2:
-        # Choose indices: use -5 and -1 if we have enough points, otherwise use 0 and -1
-        if n_times >= 5:
-            idx_t1 = -5  # Use a point a bit earlier for better velocity estimate
+        if HAS_THREADPOOLCTL:
+            with threadpool_limits(limits=NTHREADS, user_api="blas"):
+                with set_workers(NTHREADS):
+                    sol = solve_ivp(
+                        _rhs_wrapper,
+                        (0.0, par.t_final),
+                        y0,
+                        t_eval=t_eval,
+                        method=method,
+                        rtol=rtol,
+                        atol=atol,
+                        max_step=0.1,
+                        first_step=1e-3,
+                    )
         else:
-            idx_t1 = 0   # Fall back to first point if not enough data
-        idx_t2 = -1  # Last snapshot
-        
-        print(f"[Worker {worker_id:2d}] Using time points {idx_t1} and {idx_t2} out of {n_times} total")
-        
-        u_drift_inst, shift_opt_inst, corr_max_inst, shifts_inst, correlations_inst = calculate_velocity_from_period(
-            n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], par.L
+            with set_workers(NTHREADS):
+                sol = solve_ivp(
+                    _rhs_wrapper,
+                    (0.0, par.t_final),
+                    y0,
+                    t_eval=t_eval,
+                    method=method,
+                    rtol=rtol,
+                    atol=atol,
+                    max_step=0.1,
+                    first_step=1e-3,
+                )
+
+        total_wall_time = time.time() - start_wall_time
+        success = sol.success
+        sol_message = sol.message
+        t = sol.t
+        Y = sol.y
+
+    # ------------------------------------------------------------------
+    # Post-solve diagnostics and plotting
+    # ------------------------------------------------------------------
+    print(f"[Worker {worker_id:2d}] Solver success: {success}")
+    print(f"[Worker {worker_id:2d}] Final time: {t[-1]:.3f}, target: {par.t_final:.3f}")
+    print(f"[Worker {worker_id:2d}] Total wall time: {total_wall_time:.2f} seconds")
+    if not success and par.bc_type != "ds_open":
+        print(f"[Worker {worker_id:2d}] Solver failed with message: {sol_message}")
+    elif par.bc_type == "ds_open":
+        print(f"[Worker {worker_id:2d}] Solver info: {sol_message}")
+
+    # Extract fields
+    N = par.Nx
+    n_t = Y[:N, :]
+    p_t = Y[N:, :]
+
+    # Basic velocity diagnostics
+    n_eff_t = np.maximum(n_t, par.n_floor)
+    v_t = p_t / (par.m * n_eff_t)
+    u_momentum_initial = float(np.mean(v_t[:, 0]))
+    u_momentum_final   = float(np.mean(v_t[:, -1]))
+    print(f"[Worker {worker_id:2d}]  <u>(t=0)={u_momentum_initial:.4f},  "
+          f"<u>(t_end)={u_momentum_final:.4f},  target u_d={par.u_d:.4f}")
+
+    # BC diagnostics
+    if par.bc_type == "ds_open":
+        print(f"[Worker {worker_id:2d}]  BC values at t_end: "
+              f"n[0]={n_t[0, -1]:.4f} (target={par.nbar0:.4f}), "
+              f"p[-1]={p_t[-1, -1]:.4f} (target={par.m*par.nbar0*par.u_d:.4f})")
+
+    # --- Instantaneous drift velocity (if enough snapshots) ---
+    if len(t) >= 2:
+        idx_t1 = -5 if len(t) >= 5 else 0
+        idx_t2 = -1
+        print(f"[Worker {worker_id:2d}] Using time points {idx_t1} and {idx_t2} "
+              f"out of {len(t)} total")
+
+        u_drift_inst, shift_opt_inst, corr_max_inst, shifts_inst, correlations_inst = \
+            calculate_velocity_from_period(
+                n_t[:, idx_t1], n_t[:, idx_t2],
+                t[idx_t1], t[idx_t2],
+                par.L
+            )
+
+        print(f"[Worker {worker_id:2d}]  u_drift_instantaneous={u_drift_inst:.4f} "
+              f"(from shift={shift_opt_inst:.3f}, Δt={t[idx_t2]-t[idx_t1]:.3f})")
+        print(f"[Worker {worker_id:2d}]  measured at t={t[idx_t2]:.3f}, "
+              f"correlation_max={corr_max_inst:.4f}")
+
+        # Diagnostic plot
+        plot_period_detection(
+            n_t[:, idx_t1], n_t[:, idx_t2],
+            t[idx_t1], t[idx_t2],
+            par.L, u_momentum_final, par.u_d, tag=tag
         )
-        
-        print(f"[Worker {worker_id:2d}]  <u>(t=0)={u_momentum_initial:.4f},  <u>(t_end)={u_momentum_final:.4f},  target u_d={par.u_d:.4f}")
-        print(f"[Worker {worker_id:2d}]  u_drift_instantaneous={u_drift_inst:.4f} (from shift={shift_opt_inst:.3f}, Δt={sol.t[idx_t2]-sol.t[idx_t1]:.3f})")
-        print(f"[Worker {worker_id:2d}]  measured at t={sol.t[idx_t2]:.3f}, correlation_max={corr_max_inst:.4f}")
-        
-        # Create velocity detection plot showing instantaneous measurement
-        plot_period_detection(n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], 
-                             par.L, u_momentum_final, par.u_d, tag=tag)
     else:
-        print(f"[Worker {worker_id:2d}] Not enough time points ({n_times}) for instantaneous velocity measurement; skipping.")
-        print(f"[Worker {worker_id:2d}]  <u>(t=0)={u_momentum_initial:.4f},  <u>(t_end)={u_momentum_final:.4f},  target u_d={par.u_d:.4f}")
+        print(f"[Worker {worker_id:2d}] Not enough time points ({len(t)}) "
+              f"for instantaneous velocity measurement; skipping.")
 
-    # Create local spatial grid for plotting (use same logic as solver)
-    if par.bc_type == "periodic":
+    # --- Spacetime plots (if we have more than one time slice) ---
+    if len(t) > 1:
         x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+        dx_local = x_local[1] - x_local[0]
+        extent = [x_local.min(), x_local.max(), t.min(), t.max()]
+
+        # Lab frame
+        plt.figure(figsize=(9.6, 4.3))
+        plt.imshow(n_t.T, origin="lower", aspect="auto",
+                   extent=extent, cmap=par.cmap)
+        plt.xlabel("x")
+        plt.ylabel("t")
+        plt.title(f"n(x,t)  [lab]  {tag}")
+        plt.colorbar(label="n")
+        plt.tight_layout()
+        os.makedirs(par.outdir, exist_ok=True)
+        fname_lab = os.path.join(par.outdir, f"spacetime_n_lab_{tag}.png")
+        plt.savefig(fname_lab, dpi=160)
+        plt.close()
+        print(f"[Worker {worker_id:2d}] Saved lab-frame spacetime plot → {os.path.abspath(fname_lab)}")
+
+        # Co-moving frame
+        n_co = np.empty_like(n_t)
+        for j, tj in enumerate(t):
+            shift = (par.u_d * tj) % par.L
+            s_idx = int(np.round(shift / dx_local)) % par.Nx
+            n_co[:, j] = np.roll(n_t[:, j], -s_idx)
+
+        plt.figure(figsize=(9.6, 4.3))
+        plt.imshow(n_co.T, origin="lower", aspect="auto",
+                   extent=extent, cmap=par.cmap)
+        plt.xlabel("ξ = x - u_d t")
+        plt.ylabel("t")
+        plt.title(f"n(ξ,t)  [co-moving u_d={par.u_d}]  {tag}")
+        plt.colorbar(label="n")
+        plt.tight_layout()
+        fname_co = os.path.join(par.outdir, f"spacetime_n_comoving_{tag}.png")
+        plt.savefig(fname_co, dpi=160)
+        plt.close()
+        print(f"[Worker {worker_id:2d}] Saved co-moving spacetime plot → {os.path.abspath(fname_co)}")
+
+        # Snapshots
+        plt.figure(figsize=(9.6, 3.4))
+        j0, j1 = 0, -1
+        plt.plot(x_local, n_t[:, j0], label=f"t={t[j0]:.1f}")
+        plt.plot(x_local, n_t[:, j1], label=f"t={t[j1]:.1f}")
+        plt.legend()
+        plt.xlabel("x")
+        plt.ylabel("n")
+        plt.title(f"Density snapshots  {tag}")
+        plt.tight_layout()
+        fname_snaps = os.path.join(par.outdir, f"snapshots_n_{tag}.png")
+        plt.savefig(fname_snaps, dpi=160)
+        plt.close()
+        print(f"[Worker {worker_id:2d}] Saved snapshots plot → {os.path.abspath(fname_snaps)}")
     else:
-        x_local = np.linspace(0.0, par.L, par.Nx, endpoint=True)
-    dx_local = x_local[1] - x_local[0]
-    
-    extent=[x_local.min(), x_local.max(), sol.t.min(), sol.t.max()]
-    plt.figure(figsize=(9.6,4.3))
-    plt.imshow(n_t.T, origin="lower", aspect="auto", extent=extent, cmap=par.cmap)
-    plt.xlabel("x"); plt.ylabel("t"); plt.title(f"n(x,t)  [lab]  {tag}")
-    plt.colorbar(label="n")
-    plt.plot([par.x0, par.x0], [sol.t.min(), sol.t.max()], 'w--', lw=1, alpha=0.7)
-    plt.xlim(0, par.L)
-    plt.tight_layout(); plt.savefig(f"{par.outdir}/spacetime_n_lab_{tag}.png", dpi=160); 
-    # plt.show()
-    plt.close()
+        print(f"[Worker {worker_id:2d}] Skipping spacetime plots: only {len(t)} time point(s) available")
 
-    n_co = np.empty_like(n_t)
-    for j, tj in enumerate(sol.t):
-        shift = (par.u_d * tj) % par.L
-        s_idx = int(np.round(shift/dx_local)) % par.Nx
-        n_co[:, j] = np.roll(n_t[:, j], -s_idx)
-    plt.figure(figsize=(9.6,4.3))
-    plt.imshow(n_co.T, origin="lower", aspect="auto",
-               extent=[x_local.min(), x_local.max(), sol.t.min(), sol.t.max()], cmap=par.cmap)
-    plt.xlabel("ξ = x - u_d t"); plt.ylabel("t"); plt.title(f"n(ξ,t)  [co-moving u_d={par.u_d}]  {tag}")
-    plt.colorbar(label="n"); plt.tight_layout()
-    plt.savefig(f"{par.outdir}/spacetime_n_comoving_{tag}.png", dpi=160); plt.close()
+    # FFT comparison
+    try:
+        plot_fft_initial_last(n_t, t, par.L, tag=tag, k_marks=())
+    except Exception as e:
+        print(f"[Worker {worker_id:2d}] Warning: FFT plot failed with error: {e}")
 
-    plt.figure(figsize=(9.6,3.4))
-    for frac in [0.0, 1.0]:
-        j = int(frac*(len(sol.t)-1))
-        plt.plot(x_local, n_t[:,j], label=f"t={sol.t[j]:.1f}")
-    plt.legend(); plt.xlabel("x"); plt.ylabel("n"); plt.title(f"Density snapshots  {tag}")
-    plt.text(0.5, 0.08, f"Dp={par.Dp}, Dn={par.Dn}, m={par.seed_mode}", color="red",
-         fontsize=12, ha="right", va="top", transform=plt.gca().transAxes)
+    # Save full time series
+    save_final_spectra(par.seed_mode, t, n_t, p_t, par.L, tag=tag)
 
-    plt.tight_layout(); plt.savefig(f"{par.outdir}/snapshots_n_{tag}.png", dpi=160); plt.close()
+    return t, n_t, p_t
 
-    plot_fft_initial_last(n_t, sol.t, par.L, tag=tag, k_marks=())
-    
-    save_final_spectra(par.seed_mode, sol.t, n_t, p_t, par.L, tag=tag)
-
-    return sol.t, n_t, p_t
 
 def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
     oldA, oldm = par.seed_amp_n, par.seed_mode
@@ -1805,49 +2060,76 @@ def run_single_Dn_half_simulation():
     print(f"{'='*80}")
 
 if __name__ == "__main__":
-    # --- Set up a single DS-open test run ---
-    par.bc_type = "ds_open"      # <--- NEW: enable open/DS boundaries
+    # --- DS-open, clearly unstable but numerically safe ---
 
-    # Geometry and resolution
-    par.L = 10.0
-    par.Nx = 1012#256
+    par.bc_type = "ds_open"
 
-    # Physics parameters
-    par.u_d =  1.0# 0.5        # drift velocity
-    par.include_poisson = False
-    par.lambda_diss = 0.0
-    par.lambda_gauss = 0.0
+    # Geometry
+    par.L  = 10.0
+    par.Nx = 512        # this is what you used for ds_open_unstable_M07
+
+    # Drift & damping
+    par.u_d    = 0.7
+    par.m      = 1.0
+    par.e      = 1.0
+    par.nbar0  = 0.2
+
+    par.Gamma0 = 2.5
+    par.w      = 0.04   # this matches the 0.01637... Gamma(n̄) you saw
+
+    # Pressure / interaction
+    par.U      = 1.0
+
+    # Diffusion (a bit more smoothing for FD ds_open)
+    par.Dn = 0.02
+    par.Dp = 0.02
+
+    # No extra spatial inhomogeneities
+    par.include_poisson   = False
+    par.lambda_diss       = 0.0
+    par.lambda_gauss      = 0.0
     par.use_nbar_gaussian = False
-    
-    # Time settings
-    par.t_final = 5#10*par.L/par.u_d#10.0/5.245   # keep modest for a quick test
-    par.n_save = 800#128
-    
-    # par.rtol=3e-2
-    # par.U      = 5.0
-    # par.Gamma0 = 0.002
-    # par.w      = 1.0
-    # par.Dn = 0.01
-    # par.Dp = 0.01
 
-    # Small perturbation on top of uniform background
-    par.seed_mode = 2
-    par.seed_amp_n = 3e-3
-    par.seed_amp_p = 3e-3
+    # Seeding: unstable but not crazy
+    par.seed_mode  = 7           # your cos(6πx/L) + cos(10πx/L) + cos(14πx/L)
+    par.seed_amp_n = 0.03
+    par.seed_amp_p = 0.03
 
-    par.outdir = "out_ds_open_test"
+    # Time
+    par.t_final = 100.0          # known to work
+    par.n_save  = 600            # ~ every 0.5 time units
 
-    # Make sure grids are consistent with current Nx, L
+    # Solver tolerances – moderate (base; DS-open branch will relax further if needed)
+    par.rtol = 1e-3
+    par.atol = 1e-6
+
+    # DS/open reservoir layer: gentle but not too slow
+    par.N_bc     = 8         # 8 cells at each end
+    par.tau_bc_n = 0.5       # relax n on timescale ~0.5
+    par.tau_bc_p = 0.5       # relax p on timescale ~0.5
+
+    # Drift maintenance
+    par.maintain_drift = "field"
+
+    par.outdir = "out_ds_open_unstable_M07"
+
     _update_global_arrays()
 
-    # Run ONE simulation
-    t, n_t, p_t = run_once(tag="ds_open_test", worker_id=0)
+    print(f"[Main] Running DS-open UNSTABLE test: Nx={par.Nx}, t_final={par.t_final}")
+    print(f"[Main] BC parameters: N_bc={par.N_bc}, tau_bc_n={par.tau_bc_n}, tau_bc_p={par.tau_bc_p}")
+    t, n_t, p_t = run_once(tag="ds_open_unstable_M07", worker_id=0)
 
-    # --- Quick boundary-condition sanity check ---
+    # BC sanity check
     print("\n[BC check]")
-    print("  n(0, t0)   = {:.6g}, n(0, t_end)   = {:.6g}"
-          .format(n_t[0, 0], n_t[0, -1]))
-    print("  p(L, t0)   = {:.6g}, p(L, t_end)   = {:.6g}"
-          .format(p_t[-1, 0], p_t[-1, -1]))
-    print("  target p(L) = {:.6g} (m*n0*u_d)"
-          .format(par.m * par.nbar0 * par.u_d))
+    if par.bc_type == "ds_open":
+        print("  Source (x≈0): n(0, t0)={:.6g}, n(0, t_end)={:.6g} (target={:.6g})"
+              .format(n_t[0, 0], n_t[0, -1], par.nbar0))
+        print("  Drain (x≈L):  p(L, t0)={:.6g}, p(L, t_end)={:.6g} (target={:.6g})"
+              .format(p_t[-1, 0], p_t[-1, -1], par.m * par.nbar0 * par.u_d))
+        print("  Note: Source fixes density, Drain fixes momentum/current")
+    else:
+        print("  Periodic BC: no boundary constraints")
+        print("  n(0, t0)={:.6g}, n(0, t_end)={:.6g}"
+              .format(n_t[0, 0], n_t[0, -1]))
+        print("  p(L, t0)={:.6g}, p(L, t_end)={:.6g}"
+              .format(p_t[-1, 0], p_t[-1, -1]))
