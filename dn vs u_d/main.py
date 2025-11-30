@@ -17,6 +17,18 @@ import multiprocessing as mp
 from functools import partial
 import copy
 
+import matplotlib as mpl
+mpl.rcParams.update({
+    "text.usetex": False,          # use MathText (portable)
+    "font.family": "STIXGeneral",  # match math fonts
+    "font.size": 14,
+    "mathtext.fontset": "stix",
+    "axes.unicode_minus": False,   # proper minus sign
+    "axes.labelsize": 18,           # axis label text
+    "xtick.labelsize": 16,          # x-tick labels
+    "ytick.labelsize": 16,          # y-tick labels
+})
+
 # Import spectral analysis helpers
 try:
     from spectral_analysis import load_spectral_evolution, plot_spectral_evolution, plot_spectral_growth_rates, compare_spectral_evolution
@@ -1214,17 +1226,18 @@ def run_once(tag="seed_mode", worker_id=0):
         extent = [x_local.min(), x_local.max(), t.min(), t.max()]
 
         # Lab frame
-        plt.figure(figsize=(9.6, 4.3))
+        plt.figure(figsize=(9.6, 5.0))
         plt.imshow(n_t.T, origin="lower", aspect="auto",
                    extent=extent, cmap=par.cmap)
-        plt.xlabel("x")
-        plt.ylabel("t")
-        plt.title(f"n(x,t)  [lab]  {tag}")
-        plt.colorbar(label="n")
+        plt.xlabel("$x$")
+        plt.ylabel("$t$")
+        plt.title(f"$n(x,t)$  [lab]")
+        plt.colorbar(label="$n$")
         plt.tight_layout()
         os.makedirs(par.outdir, exist_ok=True)
         fname_lab = os.path.join(par.outdir, f"spacetime_n_lab_{tag}.png")
-        plt.savefig(fname_lab, dpi=160)
+        plt.savefig(fname_lab, dpi=300)
+        plt.show()
         plt.close()
         print(f"[Worker {worker_id:2d}] Saved lab-frame spacetime plot → {os.path.abspath(fname_lab)}")
 
@@ -1248,18 +1261,24 @@ def run_once(tag="seed_mode", worker_id=0):
         plt.close()
         print(f"[Worker {worker_id:2d}] Saved co-moving spacetime plot → {os.path.abspath(fname_co)}")
 
-        # Snapshots
-        plt.figure(figsize=(9.6, 3.4))
-        j0, j1 = 0, -1
-        plt.plot(x_local, n_t[:, j0], label=f"t={t[j0]:.1f}")
-        plt.plot(x_local, n_t[:, j1], label=f"t={t[j1]:.1f}")
+        # Snapshots at 0%, 20%, 40%, 60%, 80%, 100%
+        plt.figure(figsize=(9.6, 5.0))
+        percentages = [0, 20, 40, 60, 80, 100]
+        # Modern color palette (using tab10 colormap)
+        colors = plt.cm.tab10(np.linspace(0, 1, len(percentages)))
+        for i, pct in enumerate(percentages):
+            idx = int((pct / 100) * (len(t) - 1))
+            idx = min(idx, len(t) - 1)  # Ensure we don't go out of bounds
+            plt.plot(x_local, n_t[:, idx], label=f"$t={t[idx]:.1f}/{par.t_final:.1f}$", 
+                    color=colors[i], linewidth=2)
         plt.legend()
-        plt.xlabel("x")
-        plt.ylabel("n")
-        plt.title(f"Density snapshots  {tag}")
+        plt.xlabel("$x$")
+        plt.ylabel("$n$")
+        plt.title(f"Density snapshots")
+        plt.xlim(0, par.L)
         plt.tight_layout()
         fname_snaps = os.path.join(par.outdir, f"snapshots_n_{tag}.png")
-        plt.savefig(fname_snaps, dpi=160)
+        plt.savefig(fname_snaps, dpi=300)
         plt.close()
         print(f"[Worker {worker_id:2d}] Saved snapshots plot → {os.path.abspath(fname_snaps)}")
     else:
@@ -2091,7 +2110,7 @@ if __name__ == "__main__":
 
     # Geometry
     par.L  = 10.0
-    par.Nx = 512        # this is what you used for ds_open_unstable_M07
+    par.Nx = 512*4        # this is what you used for ds_open_unstable_M07
 
     # Drift & damping
     par.u_d    = 0.7
@@ -2117,8 +2136,8 @@ if __name__ == "__main__":
 
     # Seeding: unstable but not crazy
     par.seed_mode  = 7           # your cos(6πx/L) + cos(10πx/L) + cos(14πx/L)
-    par.seed_amp_n = 0.03
-    par.seed_amp_p = 0.03
+    par.seed_amp_n = 0.01
+    par.seed_amp_p = 0.01
 
     # Time
     par.t_final = 100.0          # known to work
