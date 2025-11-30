@@ -56,12 +56,12 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.5#/10#0.03
+    Dn: float = 0.1#/10#0.03
     Dp: float = 0.1
 
     J0: float = 1.0#0.04
     sigma_J: float = 2.0**1/2#6.0
-    x0: float = 12.5
+    x0: float = 10
     source_model: str = "as_given"
     
     # Localized dissipation perturbation parameters
@@ -71,7 +71,7 @@ class P:
     # Time-independent Gaussian density perturbation
     lambda_gauss: float = 0.0  # Amplitude of Gaussian density perturbation
     sigma_gauss: float = 2.0   # Width of Gaussian density perturbation
-    x0_gauss: float = 12.5      # Center of Gaussian density perturbation
+    x0_gauss: float = 10      # Center of Gaussian density perturbation
 
     use_nbar_gaussian: bool = False
     nbar_amp: float = 0.0
@@ -83,9 +83,9 @@ class P:
     n_save: int = 100  #200#200  # Reduced for speed
     # rtol: float = 5e-7
     # atol: float = 5e-9
-    rtol = 1e-4  # Tighter tolerance for accuracy
-    atol = 1e-7  # Tighter tolerance for accuracy
-    n_floor: float = 1e-7
+    rtol = 1e-3  # Tighter tolerance for accuracy
+    atol = 1e-4  # Tighter tolerance for accuracy
+    n_floor: float = 1e-4
     dealias_23: bool = True
 
     # Boundary condition type
@@ -924,22 +924,32 @@ def run_once(tag="seed_mode", worker_id=0):
     
     # Calculate INSTANTANEOUS velocity at t=t_final using two close snapshots
     # Use the last two time points for instantaneous velocity measurement
-    idx_t1 = -5  # Second-to-last snapshot
-    idx_t2 = -1  # Last snapshot
-
-    print(f"[Worker {worker_id:2d}] len=",len(sol.t), idx_t1, idx_t2)
+    n_times = len(sol.t)
     
-    u_drift_inst, shift_opt_inst, corr_max_inst, shifts_inst, correlations_inst = calculate_velocity_from_period(
-        n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], par.L
-    )
-    
-    print(f"[Worker {worker_id:2d}]  <u>(t=0)={u_momentum_initial:.4f},  <u>(t_end)={u_momentum_final:.4f},  target u_d={par.u_d:.4f}")
-    print(f"[Worker {worker_id:2d}]  u_drift_instantaneous={u_drift_inst:.4f} (from shift={shift_opt_inst:.3f}, Δt={sol.t[idx_t2]-sol.t[idx_t1]:.3f})")
-    print(f"[Worker {worker_id:2d}]  measured at t={sol.t[idx_t2]:.3f}, correlation_max={corr_max_inst:.4f}")
-    
-    # Create velocity detection plot showing instantaneous measurement
-    plot_period_detection(n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], 
-                         par.L, u_momentum_final, par.u_d, tag=tag)
+    if n_times >= 2:
+        # Choose indices: use -5 and -1 if we have enough points, otherwise use 0 and -1
+        if n_times >= 5:
+            idx_t1 = -5  # Use a point a bit earlier for better velocity estimate
+        else:
+            idx_t1 = 0   # Fall back to first point if not enough data
+        idx_t2 = -1  # Last snapshot
+        
+        print(f"[Worker {worker_id:2d}] Using time points {idx_t1} and {idx_t2} out of {n_times} total")
+        
+        u_drift_inst, shift_opt_inst, corr_max_inst, shifts_inst, correlations_inst = calculate_velocity_from_period(
+            n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], par.L
+        )
+        
+        print(f"[Worker {worker_id:2d}]  <u>(t=0)={u_momentum_initial:.4f},  <u>(t_end)={u_momentum_final:.4f},  target u_d={par.u_d:.4f}")
+        print(f"[Worker {worker_id:2d}]  u_drift_instantaneous={u_drift_inst:.4f} (from shift={shift_opt_inst:.3f}, Δt={sol.t[idx_t2]-sol.t[idx_t1]:.3f})")
+        print(f"[Worker {worker_id:2d}]  measured at t={sol.t[idx_t2]:.3f}, correlation_max={corr_max_inst:.4f}")
+        
+        # Create velocity detection plot showing instantaneous measurement
+        plot_period_detection(n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], 
+                             par.L, u_momentum_final, par.u_d, tag=tag)
+    else:
+        print(f"[Worker {worker_id:2d}] Not enough time points ({n_times}) for instantaneous velocity measurement; skipping.")
+        print(f"[Worker {worker_id:2d}]  <u>(t=0)={u_momentum_initial:.4f},  <u>(t_end)={u_momentum_final:.4f},  target u_d={par.u_d:.4f}")
 
     # Create local spatial grid for plotting (use same logic as solver)
     if par.bc_type == "periodic":
@@ -954,6 +964,7 @@ def run_once(tag="seed_mode", worker_id=0):
     plt.xlabel("x"); plt.ylabel("t"); plt.title(f"n(x,t)  [lab]  {tag}")
     plt.colorbar(label="n")
     plt.plot([par.x0, par.x0], [sol.t.min(), sol.t.max()], 'w--', lw=1, alpha=0.7)
+    plt.xlim(0, par.L)
     plt.tight_layout(); plt.savefig(f"{par.outdir}/spacetime_n_lab_{tag}.png", dpi=160); 
     # plt.show()
     plt.close()
@@ -1795,27 +1806,27 @@ def run_single_Dn_half_simulation():
 
 if __name__ == "__main__":
     # --- Set up a single DS-open test run ---
-    par.bc_type = "ds_open"      # <--- NEW: enable open/DS boundaries
+    par.bc_type = "periodic"      # <--- NEW: enable open/DS boundaries
 
     # Geometry and resolution
     par.L = 10.0
-    par.Nx = 1024*4#256
-
-    # Time settings
-    par.t_final = 10.0   # keep modest for a quick test
-    par.n_save = 1024*4#128
+    par.Nx = 256
 
     # Physics parameters
-    par.u_d = 0.5        # drift velocity
+    par.u_d =  5.245# 0.5        # drift velocity
     par.include_poisson = False
     par.lambda_diss = 0.0
     par.lambda_gauss = 0.0
     par.use_nbar_gaussian = False
+    
+    # Time settings
+    par.t_final = 10*par.L/par.u_d#10.0/5.245   # keep modest for a quick test
+    par.n_save = 512#128
 
     # Small perturbation on top of uniform background
     par.seed_mode = 2
-    par.seed_amp_n = 0.02
-    par.seed_amp_p = 0.02
+    par.seed_amp_n = 0.03
+    par.seed_amp_p = 0.03
 
     par.outdir = "out_ds_open_test"
 
