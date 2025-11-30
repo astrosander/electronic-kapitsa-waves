@@ -109,6 +109,8 @@ class P:
     N_bc: int = 8                 # number of grid cells in each contact region
     tau_bc_n: float = 0.5         # relaxation time for n at contacts
     tau_bc_p: float = 0.5         # relaxation time for p at contacts
+    use_hard_bc_clamp: bool = False  # If True: hybrid (soft relaxation + hard Dirichlet at edges)
+                                     # If False: purely soft (relaxation only, no hard clamping)
 
     seed_amp_n: float = 0.030  # Small amplitude perturbation
     seed_mode: int = 7  # New mode for cos(6πx/L) + cos(10πx/L) + cos(14πx/L)
@@ -600,6 +602,10 @@ def apply_ds_open_relaxation(n, p, dn_dt, dp_dt):
 
     Implemented as relaxation in a thin layer of N_bc cells.
     Optional tapering makes the transition smoother.
+    
+    This is the "soft" part of the BC. If par.use_hard_bc_clamp=True,
+    this works together with enforce_ds_open_bc_state() for a hybrid scheme.
+    If par.use_hard_bc_clamp=False, this is the only BC enforcement (purely soft).
     """
     if par.bc_type != "ds_open":
         return dn_dt, dp_dt
@@ -642,9 +648,14 @@ def enforce_ds_open_bc_state(n, p):
 
     - Source (x ≈ 0): fix density to nbar0
     - Drain (x ≈ L): fix momentum/current to m * nbar0 * u_d
+    
+    Can be disabled by setting par.use_hard_bc_clamp = False for purely soft BCs.
     """
     if par.bc_type != "ds_open":
         return
+    
+    if not par.use_hard_bc_clamp:
+        return  # Purely soft BC: no hard clamping
 
     # Left: density contact
     n[0] = par.nbar0
@@ -802,7 +813,8 @@ def initial_fields():
             p0 += par.seed_amp_p * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
     
     # Enforce DS-like boundary conditions in initial fields
-    if par.bc_type != "periodic":
+    # Only apply hard clamping if enabled (for hybrid BC mode)
+    if par.bc_type != "periodic" and par.use_hard_bc_clamp:
         # Source: fix density at x≈0
         n0[0] = par.nbar0
         # Drain: fix current j(L,t) = j0 -> p(L,t) = m * nbar0 * u_d
@@ -1060,6 +1072,13 @@ def run_once(tag="seed_mode", worker_id=0):
     )
 
     print(f"[Worker {worker_id:2d}] E_base={E_base}")
+    
+    # BC mode diagnostics
+    if par.bc_type == "ds_open":
+        bc_mode = "hybrid (soft relaxation + hard Dirichlet)" if par.use_hard_bc_clamp else "purely soft (relaxation only)"
+        print(f"[Worker {worker_id:2d}] DS/open BC mode: {bc_mode}")
+        print(f"[Worker {worker_id:2d}]   N_bc={par.N_bc}, tau_bc_n={par.tau_bc_n}, tau_bc_p={par.tau_bc_p}")
+    
     if par.lambda_diss != 0.0:
         print(f"[Worker {worker_id:2d}] Localized dissipation: "
               f"lambda_diss={par.lambda_diss}, sigma_diss={par.sigma_diss}, x0={par.x0}")
@@ -2127,8 +2146,8 @@ if __name__ == "__main__":
     par.U      = 1.0
 
     # Diffusion (a bit more smoothing for FD ds_open)
-    par.Dn = 0.02
-    par.Dp = 0.02
+    par.Dn = 0.001
+    par.Dp = 0.001
 
     # No extra spatial inhomogeneities
     par.include_poisson   = False
@@ -2142,7 +2161,7 @@ if __name__ == "__main__":
     par.seed_amp_p = 0.01
 
     # Time
-    par.t_final = 100.0          # known to work
+    par.t_final = 30.0          # known to work
     par.n_save  = 600            # ~ every 0.5 time units
 
     # Solver tolerances – moderate (base; DS-open branch will relax further if needed)
