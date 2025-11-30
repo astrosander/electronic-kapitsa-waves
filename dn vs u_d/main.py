@@ -198,6 +198,7 @@ def Dxx_fd(f):
     return out
 
 def Dx(f):  
+    return Dx_fd(f)
     """First derivative using spectral (FFT) method - always periodic"""
     global k, ik
     if k is None or len(k) != len(f):
@@ -205,6 +206,7 @@ def Dx(f):
     return (ifft(ik * fft(f, workers=NTHREADS), workers=NTHREADS)).real
 
 def Dxx(f): 
+    return Dxx_fd(f)
     """Second derivative using spectral (FFT) method - always periodic"""
     global k2
     if k2 is None or len(k2) != len(f):
