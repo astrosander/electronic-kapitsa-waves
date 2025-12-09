@@ -132,8 +132,8 @@ def apply_bc_inplace(n, j, n_prev, cfg, CGC, dt, n0, j0):
     W = float(cfg.get("W_um", 1.0)) * 1e-6
     dt_bc = float(cfg.get("dt_bc_s", dt))
     coef = 1.0 / (W * CGC * dt_bc)
-    j[0] = Cs * coef * (n[0] - n_prev[0])
-    j[-1] = -Cd * coef * (n[-1] - n_prev[-1])
+    j[0] = j0 + Cs * coef * (n[0] - n_prev[0])
+    j[-1] = j0 - Cd * coef * (n[-1] - n_prev[-1])
 
 def compute_dt(n, j, alpha, dx, cfg):
     if float(cfg.get("dt_s", 0.0)) > 0.0:
@@ -305,7 +305,6 @@ def debug_print_10x10(data):
     for it in ti:
         vals = n_store[it, xi]
         print(f"  t={t_store[it]*1e12:.3f} ps: {vals}")
-
 
 def plot_and_save(cfg, data):
     outdir = str(cfg.get("outdir", "")).strip()
