@@ -351,6 +351,31 @@ def plot_and_save(cfg, data):
             plt.show()
         plt.close()
 
+    if bool(cfg.get("plot_spacetime", True)) and n_store.size and t_store.size >= 2:
+        plt.figure()
+        num_times = n_store.shape[0]
+        if num_times >= 5:
+            t_indices = np.linspace(0, num_times - 1, 5, dtype=int)
+        else:
+            t_indices = np.arange(num_times)
+        x_nm = x * 1e9
+        for t_idx in t_indices:
+            if bool(cfg.get("plot_spacetime_norm", True)):
+                plt.plot(x_nm, n_store[t_idx] / n0, label=f"t={t_store[t_idx]*1e12:.3f} ps")
+            else:
+                plt.plot(x_nm, n_store[t_idx], label=f"t={t_store[t_idx]*1e12:.3f} ps")
+        plt.xlabel("$x$ (nm)")
+        if bool(cfg.get("plot_spacetime_norm", True)):
+            plt.ylabel("$n/n_0$")
+        else:
+            plt.ylabel("$n$ ($m^{{-2}$})")
+        plt.legend()
+        if outdir:
+            plt.savefig(os.path.join(outdir, f"n_snapshots_{label}.png"), dpi=200, bbox_inches="tight")
+        else:
+            plt.show()
+        plt.close()
+
     if bool(cfg.get("plot_spectrum", False)) and J_trace.size > 256:
         y = J_trace - np.mean(J_trace)
         if t_trace.size > 1:
