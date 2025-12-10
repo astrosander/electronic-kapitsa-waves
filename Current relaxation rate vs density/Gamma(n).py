@@ -38,11 +38,11 @@ mpl.rcParams.update({
 })
 
 mpl.rcParams.update({
-    "text.usetex": False,          # use MathText (portable)
-    "font.family": "STIXGeneral",  # match math fonts
+    "text.usetex": False,
+    "font.family": "STIXGeneral",
     "font.size": 12,
     "mathtext.fontset": "stix",
-    "axes.unicode_minus": False,   # proper minus sign
+    "axes.unicode_minus": False,
 })
 
 
@@ -57,7 +57,7 @@ gamma1 = gamma1_eV * eV
 
 mstar = gamma1 / (2.0 * vF**2)
 
-a = 1.0
+a = 1
 C = 1.0*10
 
 n_min = 1e9
@@ -93,7 +93,7 @@ def Gamma_inter(T, mu):
 
 temperatures = np.array([20, 30, 40, 50, 70, 90, 110, 140, 170, 200, 250, 300])
 
-INCLUDE_INTERBAND = True
+INCLUDE_INTERBAND = False
 USE_COLORBAR = True
 
 cmap = plt.get_cmap("plasma")
@@ -147,12 +147,32 @@ for T in temperatures:
 ax.set_xlim(n_min, n_max)
 ax.set_ylim(y_min, y_max)
 
+n_ref = np.sqrt(n_min * n_max)
+y_ref = np.sqrt(y_min * y_max)
+
+n_slope1 = np.logspace(np.log10(n_min), np.log10(n_max), 100)
+y_slope1 = y_ref * (n_slope1 / n_ref)**2*20
+ax.loglog(n_slope1, y_slope1, 'k:', alpha=0.4, linewidth=1.0, zorder=0)
+n_text1 = n_max * 0.1
+y_text1 = y_ref * (n_text1 / n_ref)**2*30
+ax.text(n_text1, y_text1, r'$n^2$', rotation=45, ha='left', va='bottom', 
+        fontsize=7, alpha=0.9, color='#2C3E50')
+
+n_slope_neg1_full = np.logspace(np.log10(n_min), np.log10(n_max), 100)
+mask_neg1 = n_slope_neg1_full > 1e12
+n_slope_neg1 = n_slope_neg1_full[mask_neg1]
+y_slope_neg1 = y_ref * (n_slope_neg1 / n_ref)**(-1)*9
+ax.loglog(n_slope_neg1, y_slope_neg1, 'k:', alpha=0.4, linewidth=1.0, zorder=0)
+n_text_neg1 = max(5e11 * 1.1, n_max * 0.5)
+y_text_neg1 = y_ref * (n_text_neg1 / n_ref)**(-1)*6
+ax.text(n_text_neg1, y_text_neg1, r'$n^{-1}$', rotation=-45, ha='left', va='top', 
+        fontsize=7, alpha=0.9, color='#2C3E50')
+
 ax.set_xlabel(r"density $n$ (cm$^{-2}$)", color="#2C3E50")
 ax.set_ylabel(r"current relaxation rate $\Gamma_J$ (s$^{-1}$)", color="#2C3E50")
 
 ax.minorticks_on()
 
-# Set log scale formatters for both axes
 ax.xaxis.set_major_formatter(LogFormatter())
 ax.yaxis.set_major_formatter(LogFormatter())
 ax.xaxis.set_minor_formatter(LogFormatter(minor_thresholds=(2, 0.4)))
