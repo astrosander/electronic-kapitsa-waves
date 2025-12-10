@@ -61,8 +61,8 @@ a = 1
 C = 1.0*10
 
 n_min = 1e9
-n_max = 6e12
-Npts  = 700
+n_max = 1e14
+Npts  = 700000
 
 n_cm2 = np.linspace(n_min, n_max, Npts)
 n_m2  = n_cm2 * 1e4
@@ -70,29 +70,38 @@ n_m2  = n_cm2 * 1e4
 eps_F = np.pi * hbar**2 * n_m2 / (g * mstar)
 mu = eps_F
 
-eta = 2.0 * eps_F / gamma1
-
 def gamma_ee(T, mu):
     x = kB * T
-    return (x / hbar) * (x / (x + a * mu))
+    mu_shifted = mu + x / a
+    return (x / hbar) * (x / (x + a * mu_shifted))
 
 def S_col(T, mu):
     x = kB * T
-    mu_safe = np.maximum(mu, 1e-40)
-    return np.minimum(1.0, C * (x / mu_safe)**2)
+    mu_shifted = mu + x / a
+    mu_safe = np.maximum(mu_shifted, 1e-40)
+    return C * (x / mu_safe)**2
 
-def Gamma_intra_corrected(T, mu, eta):
+def Gamma_intra_corrected(T, mu, eps_F):
+    x = kB * T
+    eps_F_shifted = eps_F + x / a
+    eta = 2.0 * eps_F_shifted / gamma1
     return gamma_ee(T, mu) * (eta**2) * S_col(T, mu)
 
-def Gamma_intra_uncorrected(T, mu, eta):
+def Gamma_intra_uncorrected(T, mu, eps_F):
+    x = kB * T
+    eps_F_shifted = eps_F + x / a
+    eta = 2.0 * eps_F_shifted / gamma1
     return gamma_ee(T, mu) * (eta**2)
 
 def Gamma_inter(T, mu):
     x = kB * T
-    return (x / hbar) * np.exp(-mu / np.maximum(x, 1e-40))
+    mu_shifted = mu + x / a
+    return (x / hbar) * np.exp(-mu_shifted / np.maximum(x, 1e-40))
 
+# temperatures = np.array([20, 30, 40, 50, 70, 90, 110, 140, 170, 200, 250, 300])
 temperatures = np.array([20, 30, 40, 50, 70, 90, 110, 140, 170, 200, 250, 300])
-
+temperatures = temperatures/10
+temperatures = np.array([2, 4, 8, 16, 32])
 INCLUDE_INTERBAND = False
 USE_COLORBAR = True
 
@@ -116,17 +125,17 @@ def lighten_color(color, factor=0.6):
     lightened = color_rgb + (white - color_rgb) * (1 - factor)
     return tuple(lightened)
 
-fig, ax = plt.subplots(figsize=(3.4*img_scale, 2.6*img_scale))
+fig, ax = plt.subplots(figsize=(2.6*img_scale, 3.4*img_scale))
 ax.set_facecolor("#FAFAFA")
 
 y_min = np.inf
 y_max = -np.inf
 
 for T in temperatures:
-    color = cmap(norm(T))
+    color = cmap(norm(T)*0.5)
 
-    Gintra_c = Gamma_intra_corrected(T, mu, eta)
-    Gintra_u = Gamma_intra_uncorrected(T, mu, eta)
+    Gintra_c = Gamma_intra_corrected(T, mu, eps_F)
+    Gintra_u = Gamma_intra_uncorrected(T, mu, eps_F)
 
     if INCLUDE_INTERBAND:
         Gtot_c = Gintra_c + Gamma_inter(T, mu)
@@ -141,8 +150,8 @@ for T in temperatures:
     ax.loglog(n_cm2, Gtot_c, color=color, linewidth=1.4, alpha=0.9)
 
     light_color = lighten_color(color, factor=0.5)
-    ax.loglog(n_cm2, Gtot_u, color=light_color, 
-                ls="--", alpha=UNCORRECTED_ALPHA, linewidth=UNCORRECTED_LINEWIDTH)
+    # ax.loglog(n_cm2, Gtot_u, color=light_color, 
+    #             ls="--", alpha=UNCORRECTED_ALPHA, linewidth=UNCORRECTED_LINEWIDTH)
 
 ax.set_xlim(n_min, n_max)
 ax.set_ylim(y_min, y_max)
@@ -152,19 +161,19 @@ y_ref = np.sqrt(y_min * y_max)
 
 n_slope1 = np.logspace(np.log10(n_min), np.log10(n_max), 100)
 y_slope1 = y_ref * (n_slope1 / n_ref)**2*20
-ax.loglog(n_slope1, y_slope1, 'k:', alpha=0.4, linewidth=1.0, zorder=0)
+# ax.loglog(n_slope1, y_slope1, 'k:', alpha=0.4, linewidth=1.0, zorder=0)
 n_text1 = n_max * 0.1
 y_text1 = y_ref * (n_text1 / n_ref)**2*30
-ax.text(n_text1, y_text1, r'$n^2$', rotation=45, ha='left', va='bottom', 
-        fontsize=7, alpha=0.9, color='#2C3E50')
+# ax.text(n_text1, y_text1, r'$n^2$', rotation=45, ha='left', va='bottom', 
+#         fontsize=7, alpha=0.9, color='#2C3E50')
 
 n_slope_neg1_full = np.logspace(np.log10(n_min), np.log10(n_max), 100)
 mask_neg1 = n_slope_neg1_full > 1e12
 n_slope_neg1 = n_slope_neg1_full[mask_neg1]
-y_slope_neg1 = y_ref * (n_slope_neg1 / n_ref)**(-1)*9
-ax.loglog(n_slope_neg1, y_slope_neg1, 'k:', alpha=0.4, linewidth=1.0, zorder=0)
+y_slope_neg1 = y_ref * (n_slope_neg1 / n_ref)**(-1)*3
+ax.loglog(n_slope_neg1, y_slope_neg1,  alpha=0.4, linewidth=1.0, zorder=0)
 n_text_neg1 = max(5e11 * 1.1, n_max * 0.5)
-y_text_neg1 = y_ref * (n_text_neg1 / n_ref)**(-1)*6
+y_text_neg1 = y_ref * (n_text_neg1 / n_ref)**(-1)*3
 ax.text(n_text_neg1, y_text_neg1, r'$n^{-1}$', rotation=-45, ha='left', va='top', 
         fontsize=7, alpha=0.9, color='#2C3E50')
 
@@ -195,7 +204,7 @@ else:
 
 fig.tight_layout(pad=0.4)
 
-fig.savefig("GammaJ_vs_n_BLG_PRB.pdf", dpi=300)
+fig.savefig("GammaJ_vs_n_BLG_PRB.svg", dpi=300)
 fig.savefig("GammaJ_vs_n_BLG_PRB.png", dpi=300)
 
 plt.show()
