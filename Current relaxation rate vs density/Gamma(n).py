@@ -1,8 +1,9 @@
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+from matplotlib.ticker import LogFormatter, LogLocator
 
-img_scale = 1.8
+img_scale = 1.3
 mpl.rcParams.update({
     "figure.figsize": (3.4*img_scale, 2.6*img_scale),
     "figure.dpi": 150,
@@ -35,6 +36,15 @@ mpl.rcParams.update({
     "figure.facecolor": "#FFFFFF",
     "mathtext.fontset": "stixsans",
 })
+
+mpl.rcParams.update({
+    "text.usetex": False,          # use MathText (portable)
+    "font.family": "STIXGeneral",  # match math fonts
+    "font.size": 12,
+    "mathtext.fontset": "stix",
+    "axes.unicode_minus": False,   # proper minus sign
+})
+
 
 hbar = 1.054_571_817e-34
 kB   = 1.380_649e-23
@@ -128,10 +138,10 @@ for T in temperatures:
     y_min = min(y_min, np.nanmin(Gtot_c), np.nanmin(Gtot_u))
     y_max = max(y_max, np.nanmax(Gtot_c), np.nanmax(Gtot_u))
 
-    ax.semilogy(n_cm2, Gtot_c, color=color, linewidth=1.4, alpha=0.9)
+    ax.loglog(n_cm2, Gtot_c, color=color, linewidth=1.4, alpha=0.9)
 
     light_color = lighten_color(color, factor=0.5)
-    ax.semilogy(n_cm2, Gtot_u, color=light_color, 
+    ax.loglog(n_cm2, Gtot_u, color=light_color, 
                 ls="--", alpha=UNCORRECTED_ALPHA, linewidth=UNCORRECTED_LINEWIDTH)
 
 ax.set_xlim(n_min, n_max)
@@ -139,10 +149,14 @@ ax.set_ylim(y_min, y_max)
 
 ax.set_xlabel(r"density $n$ (cm$^{-2}$)", color="#2C3E50")
 ax.set_ylabel(r"current relaxation rate $\Gamma_J$ (s$^{-1}$)", color="#2C3E50")
-ax.set_title(r"$\Gamma_J(n)$ with (solid) / without (dashed) collinear suppression", 
-             color="#2C3E50", pad=8)
 
 ax.minorticks_on()
+
+# Set log scale formatters for both axes
+ax.xaxis.set_major_formatter(LogFormatter())
+ax.yaxis.set_major_formatter(LogFormatter())
+ax.xaxis.set_minor_formatter(LogFormatter(minor_thresholds=(2, 0.4)))
+ax.yaxis.set_minor_formatter(LogFormatter(minor_thresholds=(2, 0.4)))
 
 ax.tick_params(colors="#2C3E50")
 
@@ -150,7 +164,7 @@ if USE_COLORBAR:
     sm = mpl.cm.ScalarMappable(norm=norm, cmap=cmap)
     sm.set_array([])
     cbar = fig.colorbar(sm, ax=ax, pad=0.02, fraction=0.05)
-    cbar.set_label("T (K)", color="#2C3E50")
+    cbar.set_label("$T$ (K)", color="#2C3E50")
     cbar.ax.tick_params(colors="#2C3E50")
     cbar.outline.set_edgecolor("#2C3E50")
     cbar.outline.set_linewidth(0.8)
