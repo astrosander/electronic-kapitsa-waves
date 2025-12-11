@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib as mpl
 import matplotlib.pyplot as plt
-from matplotlib.ticker import LogFormatter, LogLocator
+from matplotlib.ticker import LogFormatter, LogLocator, FuncFormatter
 
 img_scale = 1.3
 mpl.rcParams.update({
@@ -104,8 +104,9 @@ temperatures = temperatures/10
 temperatures = np.array([2, 4, 8, 16, 32])
 INCLUDE_INTERBAND = False
 
+from matplotlib.colors import LogNorm
 cmap = plt.get_cmap("plasma")
-norm = mpl.colors.Normalize(vmin=temperatures.min(), vmax=temperatures.max())
+norm = LogNorm(vmin=temperatures.min(), vmax=temperatures.max())
 
 UNCORRECTED_ALPHA = 0.5
 UNCORRECTED_LINEWIDTH = 1.0
@@ -131,7 +132,9 @@ y_min = np.inf
 y_max = -np.inf
 
 for T in temperatures:
-    color = cmap(norm(T)*0.5)
+    norm_val = np.clip(norm(T), 0, 1)
+    color_val = 0.1 + norm_val * 0.6
+    color = cmap(color_val)
 
     Gintra_c = Gamma_intra_corrected(T, mu, eps_F)
     Gintra_u = Gamma_intra_uncorrected(T, mu, eps_F)
@@ -143,25 +146,40 @@ for T in temperatures:
         Gtot_c = Gintra_c
         Gtot_u = Gintra_u
 
-    y_min = min(y_min, np.nanmin(Gtot_c), np.nanmin(Gtot_u))
-    y_max = max(y_max, np.nanmax(Gtot_c), np.nanmax(Gtot_u))
+    y_min = min(y_min, np.nanmin(Gtot_c))
+    y_max = max(y_max, np.nanmax(Gtot_c))
 
     ax.loglog(n_cm2, Gtot_c, color=color, linewidth=1.4, alpha=0.9)
+    
+    x_label = n_max*0.4
+    y_label = Gtot_c[-1]*1.5
+    ax.text(x_label, y_label, f'{T} K', color=color, fontsize=12, 
+            ha='right', va='center', alpha=0.9)
 
     light_color = lighten_color(color, factor=0.5)
     # ax.loglog(n_cm2, Gtot_u, color=light_color, 
     #             ls="--", alpha=UNCORRECTED_ALPHA, linewidth=UNCORRECTED_LINEWIDTH)
 
-ax.set_xlim(n_min, n_max)
-ax.set_ylim(y_min, y_max)
+x_min = n_min
+x_max = n_max
+
+ax.set_xlim(x_min, x_max)
+# ax.set_ylim(y_min, y_max)
+ax.set_ylim(100, 1e11)
 
 ax.set_xlabel(r"density $n$ (cm$^{-2}$)", color="#2C3E50")
 ax.set_ylabel(r"current relaxation rate $\Gamma_J$ (s$^{-1}$)", color="#2C3E50")
 
 ax.minorticks_on()
 
-ax.xaxis.set_major_formatter(LogFormatter())
-ax.yaxis.set_major_formatter(LogFormatter())
+def format_power_of_10(x, pos):
+    if x <= 0:
+        return ''
+    exp = int(np.log10(x))
+    return r'$10^{' + str(exp) + r'}$'
+
+ax.xaxis.set_major_formatter(FuncFormatter(format_power_of_10))
+ax.yaxis.set_major_formatter(FuncFormatter(format_power_of_10))
 ax.xaxis.set_minor_formatter(LogFormatter(minor_thresholds=(2, 0.4)))
 ax.yaxis.set_minor_formatter(LogFormatter(minor_thresholds=(2, 0.4)))
 
