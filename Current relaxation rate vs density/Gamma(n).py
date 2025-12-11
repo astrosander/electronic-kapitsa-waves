@@ -7,29 +7,31 @@ img_scale = 1.3
 mpl.rcParams.update({
     "figure.figsize": (3.4*img_scale, 2.6*img_scale),
     "figure.dpi": 150,
-    "savefig.dpi": 300,
-    "font.size": 9,
+    "savefig.dpi": 600,
+    "savefig.bbox": "tight",
+    "savefig.pad_inches": 0.05,
+    "font.size": 10,
     "font.family": "sans-serif",
-    "axes.labelsize": 9,
-    "axes.titlesize": 9,
-    "legend.fontsize": 7.5,
-    "axes.linewidth": 0.8,
-    "lines.linewidth": 1.4,
-    "xtick.labelsize": 8,
-    "ytick.labelsize": 8,
+    "axes.labelsize": 10,
+    "axes.titlesize": 10,
+    "legend.fontsize": 8,
+    "axes.linewidth": 1.0,
+    "lines.linewidth": 1.8,
+    "xtick.labelsize": 9,
+    "ytick.labelsize": 9,
     "xtick.direction": "in",
     "ytick.direction": "in",
-    "xtick.major.size": 3.5,
-    "ytick.major.size": 3.5,
-    "xtick.minor.size": 2.0,
-    "ytick.minor.size": 2.0,
-    "xtick.major.width": 0.7,
-    "ytick.major.width": 0.7,
+    "xtick.major.size": 4.0,
+    "ytick.major.size": 4.0,
+    "xtick.minor.size": 2.5,
+    "ytick.minor.size": 2.5,
+    "xtick.major.width": 0.8,
+    "ytick.major.width": 0.8,
     "xtick.minor.width": 0.6,
     "ytick.minor.width": 0.6,
     "axes.grid": True,
-    "grid.alpha": 0.15,
-    "grid.linewidth": 0.6,
+    "grid.alpha": 0.2,
+    "grid.linewidth": 0.7,
     "grid.linestyle": "-",
     "axes.edgecolor": "#2C3E50",
     "axes.facecolor": "#FFFFFF",
@@ -149,12 +151,12 @@ for T in temperatures:
     y_min = min(y_min, np.nanmin(Gtot_c))
     y_max = max(y_max, np.nanmax(Gtot_c))
 
-    ax.loglog(n_cm2, Gtot_c, color=color, linewidth=1.4, alpha=0.9)
+    ax.loglog(n_cm2, Gtot_c, color=color, linewidth=1.8, alpha=0.95)
     
     x_label = n_max*0.4
     y_label = Gtot_c[-1]*1.5
     ax.text(x_label, y_label, f'{T} K', color=color, fontsize=12, 
-            ha='right', va='center', alpha=0.9)
+            ha='right', va='center', alpha=0.95, weight='medium')
 
     light_color = lighten_color(color, factor=0.5)
     # ax.loglog(n_cm2, Gtot_u, color=light_color, 
@@ -167,8 +169,8 @@ ax.set_xlim(x_min, x_max)
 # ax.set_ylim(y_min, y_max)
 ax.set_ylim(100, 1e11)
 
-ax.set_xlabel(r"density $n$ (cm$^{-2}$)", color="#2C3E50")
-ax.set_ylabel(r"current relaxation rate $\Gamma_J$ (s$^{-1}$)", color="#2C3E50")
+ax.set_xlabel(r"density $n$ (cm$^{-2}$)", color="#2C3E50", fontsize=10)
+ax.set_ylabel(r"current relaxation rate $\Gamma_J$ (s$^{-1}$)", color="#2C3E50", fontsize=10)
 
 ax.minorticks_on()
 
@@ -185,9 +187,10 @@ ax.yaxis.set_minor_formatter(LogFormatter(minor_thresholds=(2, 0.4)))
 
 ax.tick_params(colors="#2C3E50")
 
-fig.tight_layout(pad=0.4)
+fig.tight_layout(pad=0.5)
 
-fig.savefig("GammaJ_vs_n_BLG_PRB.svg", dpi=300)
-fig.savefig("GammaJ_vs_n_BLG_PRB.png", dpi=300)
+fig.savefig("GammaJ_vs_n_BLG_PRB.pdf", dpi=600, bbox_inches='tight', pad_inches=0.05)
+fig.savefig("GammaJ_vs_n_BLG_PRB.svg", dpi=600, bbox_inches='tight', pad_inches=0.05)
+fig.savefig("GammaJ_vs_n_BLG_PRB.png", dpi=600, bbox_inches='tight', pad_inches=0.05)
 
 plt.show()
