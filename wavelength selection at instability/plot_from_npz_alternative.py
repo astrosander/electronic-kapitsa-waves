@@ -62,12 +62,12 @@ if not isinstance(axes, (list, np.ndarray)):
 # Publication-ready spacing: more room for labels and ticks
 fig.subplots_adjust(left=0.10, right=0.95, top=0.96, bottom=0.12, hspace=0.08)
 
-# --- Styles: 1 strong color + 1 muted neutral ---
-# Final selected pattern: strong accent color (universal attractor)
-final_color = "#009E73"  # Teal/bluish green - robust, selected, universal (colorblind-safe)
+# --- Styles: Modern orange and blue ---
+# Final selected pattern: modern orange (universal attractor)
+final_color = "#FF6B35"  # Modern vibrant orange - robust, selected, universal
 
-# Initial conditions: muted neutral gray (clearly secondary)
-seed_color = "#999999"  # Medium gray - transient, unimportant
+# Initial conditions: modern blue (clearly secondary)
+seed_color = "#3B82F6"  # Modern vibrant blue - transient, initial state
 
 # Axes and labels: plain black or very dark gray
 axis_color = "black"  # Standard black for axes/ticks/labels
@@ -76,8 +76,8 @@ grid_color = "#E0E0E0"  # Very light gray for gridlines
 # Line weights and styles for visual hierarchy (publication-ready)
 seed_lw, final_lw = 1.6, 2.6  # Final is thicker to emphasize selection (increased for print)
 seed_alpha, final_alpha = 1.0, 1.0  # Both fully opaque
-seed_linestyle = "--"  # Dashed for initial conditions (grayscale-safe)
-final_linestyle = "-"  # Solid for final pattern
+seed_linestyle = "-"  # Solid line for initial conditions
+final_linestyle = "-"  # Solid line for final pattern
 
 # Legend labels (clear semantics)
 label_init = "initial condition"
@@ -108,7 +108,7 @@ for idx, (ax, fn) in enumerate(zip(axes, npz_files)):
     mode_num = int(fn.split('_m')[1].split('_')[0])
 
     # Two snapshots: t=0 and t=final with clear visual hierarchy
-    # Plot initial seed: muted gray, thin, dashed (clearly secondary)
+    # Plot initial seed: modern blue, thin, solid (clearly secondary)
     ax.plot(x, n[:, 0],
             color=seed_color, 
             linewidth=seed_lw, 
@@ -118,7 +118,7 @@ for idx, (ax, fn) in enumerate(zip(axes, npz_files)):
             label=label_init if idx == 0 else None, 
             zorder=2)
     
-    # Plot final profile: strong teal, thick, solid (strongly emphasized - universal attractor)
+    # Plot final profile: modern orange, thick, solid (strongly emphasized - universal attractor)
     ax.plot(x, n[:, -1],
             color=final_color, 
             linewidth=final_lw, 
