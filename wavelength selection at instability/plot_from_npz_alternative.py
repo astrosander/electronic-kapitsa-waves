@@ -57,19 +57,22 @@ if not isinstance(axes, (list, np.ndarray)):
 # Larger plot area with more space for panels
 fig.subplots_adjust(left=0.08, right=0.95, top=0.964, bottom=0.10, hspace=0.05)
 
-# --- Styles: Modern publication-ready color scheme ---
-# Initial conditions: cool, desaturated blue (recedes visually)
-seed_color = "#56B4E9"  # Light blue - transient, unimportant
-# Final selected pattern: warm, saturated orange (emphasized)
-final_color = "#E69F00"  # Burnt orange/amber - robust, selected, universal
+# --- Styles: 1 strong color + 1 muted neutral ---
+# Final selected pattern: strong accent color (universal attractor)
+final_color = "#009E73"  # Teal/bluish green - robust, selected, universal (colorblind-safe)
 
-# Neutral grays for axes and labels
-axis_color = "#4B5563"  # Dark gray for axes/ticks/labels
-grid_color = "#D1D5DB"   # Light gray for gridlines
+# Initial conditions: muted neutral gray (clearly secondary)
+seed_color = "#999999"  # Medium gray - transient, unimportant
 
-# Line weights and transparency for visual hierarchy
-seed_lw, final_lw = 1.2, 2.8  # Final is much thicker to emphasize selection
-seed_alpha, final_alpha = 1.0, 1.00  # Initial conditions more transparent
+# Axes and labels: plain black or very dark gray
+axis_color = "black"  # Standard black for axes/ticks/labels
+grid_color = "#E0E0E0"  # Very light gray for gridlines
+
+# Line weights and styles for visual hierarchy
+seed_lw, final_lw = 1.4, 2.4  # Final is thicker to emphasize selection
+seed_alpha, final_alpha = 1.0, 1.0  # Both fully opaque
+seed_linestyle = "--"  # Dashed for initial conditions (grayscale-safe)
+final_linestyle = "-"  # Solid for final pattern
 
 # Legend labels (clear semantics)
 label_init = "initial condition"
@@ -100,37 +103,39 @@ for idx, (ax, fn) in enumerate(zip(axes, npz_files)):
     mode_num = int(fn.split('_m')[1].split('_')[0])
 
     # Two snapshots: t=0 and t=final with clear visual hierarchy
-    # Plot initial seed: cool blue, thin, transparent (de-emphasized)
+    # Plot initial seed: muted gray, thin, dashed (clearly secondary)
     ax.plot(x, n[:, 0],
             color=seed_color, 
             linewidth=seed_lw, 
             alpha=seed_alpha,
+            linestyle=seed_linestyle,
             solid_capstyle="round",
             label=label_init if idx == 0 else None, 
             zorder=2)
     
-    # Plot final profile: warm orange, thick, solid (strongly emphasized)
+    # Plot final profile: strong teal, thick, solid (strongly emphasized - universal attractor)
     ax.plot(x, n[:, -1],
             color=final_color, 
             linewidth=final_lw, 
             alpha=final_alpha,
+            linestyle=final_linestyle,
             solid_capstyle="round",
             label=label_final if idx == 0 else None, 
             zorder=4)
     
-    # Subtle y-only grid with neutral gray
-    ax.grid(axis="y", color=grid_color, alpha=0.3, linewidth=0.5)
+    # Very light grid or none (minimal visual interference)
+    ax.grid(axis="y", color=grid_color, alpha=0.2, linewidth=0.5)
 
-    # Inward ticks; modest number of ticks with neutral gray
+    # Inward ticks; modest number of ticks
     ax.tick_params(which="both", direction="in", length=3, colors=axis_color)
     ax.yaxis.set_major_locator(MaxNLocator(4))
     ax.xaxis.set_minor_locator(MultipleLocator(0.5))
     
-    # Set axis spine colors to neutral gray
+    # Set axis spine colors to black
     for spine in ax.spines.values():
         spine.set_color(axis_color)
 
-    # Panel letter + mode formula in single box with neutral gray text
+    # Panel letter + mode formula in single box with black text
     letter = next(letters)
     label = mode_labels.get(mode_num, fr"Mode {mode_num}")
     combined_text = f"{letter} {label}"
@@ -146,7 +151,7 @@ for idx, (ax, fn) in enumerate(zip(axes, npz_files)):
 
     ax.set_xlim(*xlim)
 
-# Shared labels with neutral gray
+# Shared labels in black
 axes[-1].set_xlabel(r"Distance $x$", fontsize=22, color=axis_color)
 fig.text(0.02, 0.5, "Modulation amplitude", rotation=90, va="center", fontsize=22, color=axis_color)
 
