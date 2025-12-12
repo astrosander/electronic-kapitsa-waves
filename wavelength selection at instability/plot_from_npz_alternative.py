@@ -31,12 +31,12 @@ mpl.rcParams.update({
     "mathtext.fontset": "cm",        # Computer Modern math font
     "mathtext.rm": "serif",          # Math text in serif
     "axes.unicode_minus": False,     # Proper minus sign
-    "font.size": 20,                 # Base font size (increased for publication)
+    "font.size": 24,                 # Base font size (increased for publication)
     "axes.labelsize": 24,            # Axis labels (increased for visibility)
     "axes.titlesize": 24,
-    "xtick.labelsize": 16,           # Tick labels (significantly increased)
-    "ytick.labelsize": 16,           # Tick labels (significantly increased)
-    "legend.fontsize": 20,           # Legend (increased)
+    "xtick.labelsize": 22,           # Tick labels (larger for better visibility)
+    "ytick.labelsize": 22,           # Tick labels (larger for better visibility)
+    "legend.fontsize": 24,           # Legend (increased)
     "axes.linewidth": 1.2,           # Thicker axes for visibility
     "xtick.major.width": 1.2,        # Thicker major ticks
     "ytick.major.width": 1.2,
@@ -60,7 +60,7 @@ if not isinstance(axes, (list, np.ndarray)):
     axes = [axes]
 
 # Publication-ready spacing: more room for labels and ticks
-fig.subplots_adjust(left=0.10, right=0.95, top=0.96, bottom=0.12, hspace=0.08)
+fig.subplots_adjust(left=0.10, right=0.95, top=0.94, bottom=0.12, hspace=0.08)
 
 # --- Styles: Modern orange and blue ---
 # Final selected pattern: optimistic orange (universal attractor)
@@ -74,7 +74,7 @@ axis_color = "black"  # Standard black for axes/ticks/labels
 grid_color = "#E0E0E0"  # Very light gray for gridlines
 
 # Line weights and styles for visual hierarchy (publication-ready)
-seed_lw, final_lw = 2.0, 2.6  # Final is thicker to emphasize selection (increased for print)
+seed_lw, final_lw = 2.6, 2.6  # Final is thicker to emphasize selection (increased for print)
 seed_alpha, final_alpha = 1.0, 1.0  # Both fully opaque
 seed_linestyle = "-"  # Solid line for initial conditions
 final_linestyle = "-"  # Solid line for final pattern
@@ -133,7 +133,7 @@ for idx, (ax, fn) in enumerate(zip(axes, npz_files)):
 
     # Publication-ready ticks: larger, more visible
     ax.tick_params(which="major", direction="in", length=5, width=1.2, 
-                   labelsize=16, colors=axis_color, pad=4)
+                   labelsize=22, colors=axis_color, pad=4)
     ax.tick_params(which="minor", direction="in", length=3, width=0.8, 
                    colors=axis_color)
     ax.yaxis.set_major_locator(MaxNLocator(4))
@@ -151,7 +151,7 @@ for idx, (ax, fn) in enumerate(zip(axes, npz_files)):
     ax.text(0.01, 0.92, combined_text, transform=ax.transAxes,
             ha="left", va="top", color=axis_color, zorder=5,
             bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.7, edgecolor='none'), 
-            fontsize=20, fontweight='normal')
+            fontsize=24, fontweight='normal')
     
     # Optionally harmonize y-lims across panels (comment out if not desired)
     # if idx == 0:
@@ -163,14 +163,14 @@ for idx, (ax, fn) in enumerate(zip(axes, npz_files)):
 
 # Shared labels in black - publication-ready sizes
 axes[-1].set_xlabel(r"Distance $x$", fontsize=24, color=axis_color, 
-                    fontweight='normal', labelpad=8)
-fig.text(0.02, 0.5, "Modulation amplitude", rotation=90, va="center", 
+                    fontweight='normal', labelpad=12)
+fig.text(0.01, 0.52, "Modulation amplitude", rotation=90, va="center", 
          fontsize=24, color=axis_color, fontweight='normal')
 
 # LaTeX-style legend at top - publication-ready
 handles, labels = axes[0].get_legend_handles_labels()
 fig.legend(handles, labels, loc="upper center", ncol=2, frameon=False, 
-           borderpad=0.3, handlelength=2.8, fontsize=20, columnspacing=1.2)
+           borderpad=0.6, handlelength=2.8, fontsize=24, columnspacing=1.2)
 
 # fig.legend(handles, labels, loc="upper center", ncol=2, frameon=False, 
 #            borderpad=0.1, handlelength=2.0, columnspacing=1.5, handletextpad=0.5)
