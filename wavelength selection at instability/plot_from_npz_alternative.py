@@ -60,7 +60,7 @@ if not isinstance(axes, (list, np.ndarray)):
     axes = [axes]
 
 # Publication-ready spacing: more room for labels and ticks
-fig.subplots_adjust(left=0.10, right=0.95, top=0.94, bottom=0.12, hspace=0.08)
+fig.subplots_adjust(left=0.10, right=0.95, top=0.98, bottom=0.12, hspace=0.08)
 
 # --- Styles: Modern orange and blue ---
 # Final selected pattern: optimistic orange (universal attractor)
@@ -78,10 +78,6 @@ seed_lw, final_lw = 2.6, 2.6  # Final is thicker to emphasize selection (increas
 seed_alpha, final_alpha = 1.0, 1.0  # Both fully opaque
 seed_linestyle = "-"  # Solid line for initial conditions
 final_linestyle = "-"  # Solid line for final pattern
-
-# Legend labels (clear semantics)
-label_init = "initial condition"
-label_final = "long-time state"
 
 # Mode labels for panel text
 mode_labels = {
@@ -115,7 +111,6 @@ for idx, (ax, fn) in enumerate(zip(axes, npz_files)):
             alpha=seed_alpha,
             linestyle=seed_linestyle,
             solid_capstyle="round",
-            label=label_init if idx == 0 else None, 
             zorder=2)
     
     # Plot final profile: modern orange, thick, solid (strongly emphasized - universal attractor)
@@ -125,8 +120,31 @@ for idx, (ax, fn) in enumerate(zip(axes, npz_files)):
             alpha=final_alpha,
             linestyle=final_linestyle,
             solid_capstyle="round",
-            label=label_final if idx == 0 else None, 
             zorder=4)
+    
+    # Add time labels in each panel (combined in one box with two lines)
+    # Position in upper right corner
+    x_pos = 0.87  # Near right edge in axes coordinates
+    y_pos = 0.90  # Upper position in axes coordinates
+    
+    # Combined label with newline - two lines in one box
+    combined_text = "t=0 s\nt=100 s"
+    
+    # Create background box first (with transparent text for sizing)
+    ax.text(x_pos, y_pos, combined_text, fontsize=24, color='white', alpha=0.01,
+            transform=ax.transAxes, ha="left", va="top", zorder=5,
+            bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.9, edgecolor='none'))
+    
+    # Overlay colored text for each line, precisely aligned
+    # Top line: t=0 s in blue
+    ax.text(x_pos, y_pos, "t=0 s", fontsize=24, color=seed_color,
+            transform=ax.transAxes, ha="left", va="top", zorder=6)
+    
+    # Bottom line: t=100 s in orange (positioned one line down)
+    # Increased spacing to prevent overlap - for fontsize 20, need ~0.045-0.05
+    line_spacing = 0.2
+    ax.text(x_pos, y_pos - line_spacing, "t=100 s", fontsize=24, color=final_color,
+            transform=ax.transAxes, ha="left", va="top", zorder=6)
     
     # Very light grid or none (minimal visual interference)
     ax.grid(axis="y", color=grid_color, alpha=0.2, linewidth=0.5)
@@ -164,13 +182,8 @@ for idx, (ax, fn) in enumerate(zip(axes, npz_files)):
 # Shared labels in black - publication-ready sizes
 axes[-1].set_xlabel(r"Distance $x$", fontsize=24, color=axis_color, 
                     fontweight='normal', labelpad=12)
-fig.text(0.01, 0.52, "Modulation amplitude", rotation=90, va="center", 
+fig.text(0.01, 0.55, "Modulation amplitude", rotation=90, va="center", 
          fontsize=24, color=axis_color, fontweight='normal')
-
-# LaTeX-style legend at top - publication-ready
-handles, labels = axes[0].get_legend_handles_labels()
-fig.legend(handles, labels, loc="upper center", ncol=2, frameon=False, 
-           borderpad=0.6, handlelength=2.8, fontsize=24, columnspacing=1.2)
 
 # fig.legend(handles, labels, loc="upper center", ncol=2, frameon=False, 
 #            borderpad=0.1, handlelength=2.0, columnspacing=1.5, handletextpad=0.5)
