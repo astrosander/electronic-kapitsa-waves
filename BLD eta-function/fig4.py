@@ -160,4 +160,8 @@ ax2.yaxis.set_minor_formatter(LogFormatter(minor_thresholds=(2, 0.4)))
 
 fig.tight_layout(pad=0.5)
 
+# Save in high DPI PNG and SVG formats
+fig.savefig('fig4.png', dpi=600, format='png', bbox_inches='tight', pad_inches=0.05)
+fig.savefig('fig4.svg', dpi=600, format='svg', bbox_inches='tight', pad_inches=0.05)
+
 plt.show()
