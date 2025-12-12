@@ -63,8 +63,8 @@ if not isinstance(axes, (list, np.ndarray)):
 fig.subplots_adjust(left=0.10, right=0.95, top=0.96, bottom=0.12, hspace=0.08)
 
 # --- Styles: Modern orange and blue ---
-# Final selected pattern: modern orange (universal attractor)
-final_color = "#FF6B35"  # Modern vibrant orange - robust, selected, universal
+# Final selected pattern: optimistic orange (universal attractor)
+final_color = "#FF9121"  # Bright, cheerful, optimistic orange (between FF8C42 and FF9500) - robust, selected, universal
 
 # Initial conditions: modern blue (clearly secondary)
 seed_color = "#3B82F6"  # Modern vibrant blue - transient, initial state
@@ -74,7 +74,7 @@ axis_color = "black"  # Standard black for axes/ticks/labels
 grid_color = "#E0E0E0"  # Very light gray for gridlines
 
 # Line weights and styles for visual hierarchy (publication-ready)
-seed_lw, final_lw = 1.6, 2.6  # Final is thicker to emphasize selection (increased for print)
+seed_lw, final_lw = 2.0, 2.6  # Final is thicker to emphasize selection (increased for print)
 seed_alpha, final_alpha = 1.0, 1.0  # Both fully opaque
 seed_linestyle = "-"  # Solid line for initial conditions
 final_linestyle = "-"  # Solid line for final pattern
