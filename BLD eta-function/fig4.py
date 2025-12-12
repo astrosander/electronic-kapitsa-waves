@@ -1,48 +1,84 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# n in cm^-2
-n = np.array([1, 2, 3, 4, 5]) * 1e12
+hbar = 1.054571817e-34
+kB   = 1.380649e-23
+eV   = 1.602176634e-19
 
-# ---- data read off the attached figure (Fig. 4) ----
-# critical velocity u_c in m/s
-uc = {
-    10:  np.array([0.48, 0.69, 0.88, 1.04, 1.18]) * 1e6,
-    50:  np.array([0.51, 0.73, 0.91, 1.07, 1.21]) * 1e6,
-    150: np.array([0.60, 0.83, 1.00, 1.15, 1.29]) * 1e6,
-}
+vF     = 1.0e6
+gamma1 = 0.39 * eV
+g      = 4
 
-# instability wavelength lambda in microns (µm)
-lam_um = {
-    10:  np.array([150, 400, 700, 1000, 1400]),
-    50:  np.array([7, 17, 30, 42, 56]),
-    150: np.array([1.0, 2.0, 3.5, 5.0, 6.5]),
-}
+mstar = gamma1 / (2 * vF**2)
+U     = 2 * np.pi * hbar**2 / (g * mstar)
+
+a_interp = 1.0
+
+def kF_from_n(n_m2: np.ndarray) -> np.ndarray:
+    return np.sqrt(4 * np.pi * n_m2 / g)
+
+def eps_low_band(k: np.ndarray) -> np.ndarray:
+    return 0.5 * (np.sqrt(gamma1**2 + 4 * (hbar * vF * k)**2) - gamma1)
+
+def v_group(k: np.ndarray) -> np.ndarray:
+    return (2 * hbar * vF**2 * k) / np.sqrt(gamma1**2 + 4 * (hbar * vF * k)**2)
+
+def eta_of_n(n_m2: np.ndarray) -> np.ndarray:
+    kF = kF_from_n(n_m2)
+    v  = v_group(kF)
+    v_gal = (hbar * kF) / mstar
+    chi = v - v_gal
+    return np.abs(chi) / np.maximum(np.abs(v), 1e-30)
+
+def gamma_ee(T: float, mu: np.ndarray, a: float = 1.0) -> np.ndarray:
+    x = kB * T
+    return (x / hbar) * (x / (x + a * mu))
+
+def gamma_total(n_m2: np.ndarray, T: float, a: float = 1.0) -> np.ndarray:
+    mu = eps_low_band(kF_from_n(n_m2))
+    eta = eta_of_n(n_m2)
+    return gamma_ee(T, mu, a=a) * eta**2
+
+def u0_of_n(n_m2: np.ndarray) -> np.ndarray:
+    return np.sqrt(U * n_m2 / mstar)
 
 temps = [10, 50, 150]
 
-fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.5, 9), sharex=True)
+n_cm2 = np.linspace(1e12, 5e12, 300)
+n_m2  = n_cm2 * 1e4
 
-# --- top: u_c vs n ---
+u0 = u0_of_n(n_m2)
+
+uc_dict = {}
+lam_um_dict = {}
+
 for T in temps:
-    ax1.plot(n, uc[T], marker="o", linewidth=1.8, label=f"T={T} K")
+    gam = gamma_total(n_m2, T, a=a_interp)
+    R = np.gradient(np.log(gam), np.log(n_m2))
+    uc = u0 / np.maximum(np.abs(R), 1e-30)
+    lam = 4 * np.pi * u0 / np.maximum(gam, 1e-30)
 
+    uc_dict[T] = uc
+    lam_um_dict[T] = lam * 1e6
+
+fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(7.5, 9.0), sharex=True)
+
+for T in temps:
+    ax1.plot(n_cm2, uc_dict[T], linewidth=2, label=f"T={T} K")
 ax1.set_title("Critical velocity vs density")
-ax1.set_ylabel("Critical velocity u_c (m/s)")
-ax1.ticklabel_format(axis="y", style="sci", scilimits=(6, 6))
-ax1.grid(True, linestyle="--", alpha=0.5)
+ax1.set_ylabel("Critical velocity $u_c$ (m/s)")
+ax1.grid(True, which="both", linestyle="--", alpha=0.5)
+ax1.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
 ax1.legend(loc="upper left")
 
-# --- bottom: lambda vs n (log y) ---
 for T in temps:
-    ax2.plot(n, lam_um[T], marker="o", linewidth=1.8, label=f"T={T} K")
-
+    ax2.plot(n_cm2, lam_um_dict[T], linewidth=2, label=f"T={T} K")
 ax2.set_title("Instability wavelength vs density")
-ax2.set_xlabel(r"n (cm$^{-2}$)")
-ax2.set_ylabel("Wavelength λ (µm)")
+ax2.set_xlabel(r"$n$ (cm$^{-2}$)")
+ax2.set_ylabel(r"Wavelength $\lambda$ ($\mu$m)")
 ax2.set_yscale("log")
-ax2.ticklabel_format(axis="x", style="sci", scilimits=(12, 12))
 ax2.grid(True, which="both", linestyle="--", alpha=0.5)
+ax2.ticklabel_format(axis='x', style='sci', scilimits=(0, 0))
 ax2.legend(loc="lower right")
 
 plt.tight_layout()
