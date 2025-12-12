@@ -57,22 +57,19 @@ if not isinstance(axes, (list, np.ndarray)):
 # Larger plot area with more space for panels
 fig.subplots_adjust(left=0.08, right=0.95, top=0.964, bottom=0.10, hspace=0.05)
 
-# --- Styles: Optimistic palette with joyful final curves ---
-# Tol Bright palette - CVD-safe, print-ready
-seed_colors = ["#4477AA", "#EE6677", "#228833", "#CCBB44", "#66CCEE", "#AA3377", "#BBBBBB"]
-final_color = "#56B4E9"  # Okabe-Ito green (cheerful, growth-coded)
+# --- Styles: Modern publication-ready color scheme ---
+# Initial conditions: cool, desaturated blue (recedes visually)
+seed_color = "#56B4E9"  # Light blue - transient, unimportant
+# Final selected pattern: warm, saturated orange (emphasized)
+final_color = "#E69F00"  # Burnt orange/amber - robust, selected, universal
 
-# Soften (tint) seed colors toward white to make them feel lighter than the final line
-seed_colors_soft = [tint(c, 0.25) for c in seed_colors]  # lighter but still visible
+# Neutral grays for axes and labels
+axis_color = "#4B5563"  # Dark gray for axes/ticks/labels
+grid_color = "#D1D5DB"   # Light gray for gridlines
 
 # Line weights and transparency for visual hierarchy
-seed_lw, final_lw = 1.8, 2.1
-seed_alpha, final_alpha = 0.90, 1.00
-
-# All solid lines for clarity
-linestyles = ["-"] * len(seed_colors)
-markers = [None] * len(seed_colors)
-markevery = 25
+seed_lw, final_lw = 1.2, 2.8  # Final is much thicker to emphasize selection
+seed_alpha, final_alpha = 1.0, 1.00  # Initial conditions more transparent
 
 # Legend labels (clear semantics)
 label_init = "initial condition"
@@ -80,12 +77,12 @@ label_final = "long-time state"
 
 # Mode labels for panel text
 mode_labels = {
-    1: r"$\cos(3x)+\cos(5x)$",
-    2: r"$\cos(5x)+\cos(8x)$",
-    3: r"$\cos(8x)+\cos(15x)$",
-    4: r"$\cos(7x)+\cos(13x)$",
-    5: r"$\cos(21x)+\cos(34x)$",
-    6: r"$\cos(34x)+\cos(55x)$",
+    1: "",
+    2: "",
+    3: "",
+    4: "",
+    5: "",
+    6: "",
 }
 
 # Optional: fix common xlim or derive from data
@@ -103,9 +100,7 @@ for idx, (ax, fn) in enumerate(zip(axes, npz_files)):
     mode_num = int(fn.split('_m')[1].split('_')[0])
 
     # Two snapshots: t=0 and t=final with clear visual hierarchy
-    seed_color = seed_colors_soft[idx % len(seed_colors)]  # Soft but visible color per panel
-    
-    # Plot initial seed: clearly visible but secondary
+    # Plot initial seed: cool blue, thin, transparent (de-emphasized)
     ax.plot(x, n[:, 0],
             color=seed_color, 
             linewidth=seed_lw, 
@@ -114,17 +109,8 @@ for idx, (ax, fn) in enumerate(zip(axes, npz_files)):
             label=label_init if idx == 0 else None, 
             zorder=2)
     
-    # Plot final profile: optimistic with gentle halo
-    # 1) Soft underpaint to add warmth
+    # Plot final profile: warm orange, thick, solid (strongly emphasized)
     ax.plot(x, n[:, -1],
-            color=final_color, 
-            linewidth=final_lw + 1.0, 
-            alpha=0.15,
-            solid_capstyle="round", 
-            zorder=3)
-    
-    # 2) Main stroke + gentle white halo
-    final_line, = ax.plot(x, n[:, -1],
             color=final_color, 
             linewidth=final_lw, 
             alpha=final_alpha,
@@ -132,27 +118,25 @@ for idx, (ax, fn) in enumerate(zip(axes, npz_files)):
             label=label_final if idx == 0 else None, 
             zorder=4)
     
-    # Slim white halo (narrower & lighter so seed stays visible)
-    final_line.set_path_effects([
-        pe.Stroke(linewidth=final_lw + 1.0, foreground="white", alpha=0.65),
-        pe.Normal()
-    ])
-    
-    # Subtle y-only grid for comparison (lighter so it doesn't hide initial curve)
-    ax.grid(axis="y", alpha=0.15, linewidth=0.5)
+    # Subtle y-only grid with neutral gray
+    ax.grid(axis="y", color=grid_color, alpha=0.3, linewidth=0.5)
 
-    # Inward ticks; modest number of ticks
-    ax.tick_params(which="both", direction="in", length=3)
+    # Inward ticks; modest number of ticks with neutral gray
+    ax.tick_params(which="both", direction="in", length=3, colors=axis_color)
     ax.yaxis.set_major_locator(MaxNLocator(4))
     ax.xaxis.set_minor_locator(MultipleLocator(0.5))
+    
+    # Set axis spine colors to neutral gray
+    for spine in ax.spines.values():
+        spine.set_color(axis_color)
 
-    # Panel letter + mode formula in single box
+    # Panel letter + mode formula in single box with neutral gray text
     letter = next(letters)
     label = mode_labels.get(mode_num, fr"Mode {mode_num}")
     combined_text = f"{letter} {label}"
     ax.text(0.01, 0.92, combined_text, transform=ax.transAxes,
-            ha="left", va="top", color="black", zorder=5,
-            bbox=dict(boxstyle='round,pad=0.15', facecolor='white', alpha=0.6, edgecolor='none'), fontsize=18)
+            ha="left", va="top", color=axis_color, zorder=5,
+            bbox=dict(boxstyle='round,pad=0.15', facecolor='white', alpha=0.6, edgecolor='none'), fontsize=24)
 
     # Optionally harmonize y-lims across panels (comment out if not desired)
     # if idx == 0:
@@ -162,9 +146,9 @@ for idx, (ax, fn) in enumerate(zip(axes, npz_files)):
 
     ax.set_xlim(*xlim)
 
-# Shared labels
-axes[-1].set_xlabel(r"Distance $x$", fontsize=22)
-fig.text(0.02, 0.5, "Modulation amplitude", rotation=90, va="center", fontsize=22)
+# Shared labels with neutral gray
+axes[-1].set_xlabel(r"Distance $x$", fontsize=22, color=axis_color)
+fig.text(0.02, 0.5, "Modulation amplitude", rotation=90, va="center", fontsize=22, color=axis_color)
 
 # LaTeX-style legend at top
 handles, labels = axes[0].get_legend_handles_labels()
