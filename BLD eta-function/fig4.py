@@ -89,7 +89,7 @@ def gamma_total(n_m2: np.ndarray, T: float, a: float = 1.0) -> np.ndarray:
 def u0_of_n(n_m2: np.ndarray) -> np.ndarray:
     return np.sqrt(U * n_m2 / mstar)
 
-temps = [10, 25, 50, 75, 100, 150, 200]
+temps = [15, 30, 50, 100, 200]
 
 n_cm2 = np.linspace(1e10, 1e12, 300)
 n_m2  = n_cm2 * 1e4
@@ -115,28 +115,34 @@ fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(3.4*img_scale, 5.2*img_scale), sha
 ax1.set_facecolor("#FAFAFA")
 ax2.set_facecolor("#FAFAFA")
 
+dsdsa = 0.95
+dasda = 1.00
+
 for T in temps:
     norm_val = np.clip(norm(T), 0, 1)
     color_val = 0.1 + norm_val * 0.6
     color = cmap(color_val)
     ax1.plot(n_cm2, uc_dict[T], color=color, linewidth=1.8, alpha=0.95, zorder=1)
-    x_label = n_cm2[-1] * 0.95
-    y_label = uc_dict[T][-1]
-    ax1.text(x_label, y_label, f'{T} K', color=color, fontsize=9, 
-             ha='right', va='center', weight='medium', zorder=10)
+    x_label = n_cm2[-1] * dsdsa#0.95
+    dsdsa -= 0.08
+    y_label = uc_dict[T][-1]*dasda
+    dasda-= 0.06
+    # ax1.text(x_label, y_label, f'{T} K', color=color, fontsize=9, 
+    #          ha='right', va='center', weight='medium', zorder=10)
 
 ax1.set_ylabel(r"Critical velocity $u_c$ (m/s)", color="#2C3E50", fontsize=10)
 ax1.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
 ax1.minorticks_on()
 ax1.tick_params(colors="#2C3E50")
-
+dadas=1.0
 for T in temps:
     norm_val = np.clip(norm(T), 0, 1)
     color_val = 0.1 + norm_val * 0.6
     color = cmap(color_val)
     ax2.plot(n_cm2, lam_um_dict[T], color=color, linewidth=1.8, alpha=0.95, zorder=1)
     x_label = n_cm2[-1] * 0.95
-    y_label = lam_um_dict[T][-1] * 1.5
+    dadas+=0.05
+    y_label = lam_um_dict[T][-1] * 1.5*dadas
     ax2.text(x_label, y_label, f'{T} K', color=color, fontsize=9, 
              ha='right', va='center', weight='medium', zorder=10)
 
