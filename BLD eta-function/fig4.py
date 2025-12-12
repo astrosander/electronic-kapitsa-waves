@@ -127,8 +127,15 @@ for T in temps:
     dsdsa -= 0.08
     y_label = uc_dict[T][-1]*dasda
     dasda-= 0.06
-    # ax1.text(x_label, y_label, f'{T} K', color=color, fontsize=9, 
-    #          ha='right', va='center', weight='medium', zorder=10)
+    
+    # Create background box first (with transparent text for sizing)
+    ax1.text(x_label, y_label, f'{T} K', fontsize=12, color='white', alpha=0.01,
+             ha='right', va='center', weight='medium', zorder=5,
+             bbox=dict(boxstyle='round,pad=0.4', facecolor='white', alpha=0.7, edgecolor='none'))
+    
+    # Overlay colored text on top
+    ax1.text(x_label, y_label, f'{T} K', color=color, fontsize=12, 
+             ha='right', va='center', weight='medium', zorder=6)
 
 ax1.set_ylabel(r"Critical velocity $u_c$ (m/s)", color="#2C3E50", fontsize=10)
 ax1.ticklabel_format(axis='y', style='sci', scilimits=(0, 0))
@@ -141,9 +148,9 @@ for T in temps:
     color = cmap(color_val)
     ax2.plot(n_cm2, lam_um_dict[T], color=color, linewidth=1.8, alpha=0.95, zorder=1)
     x_label = n_cm2[-1] * 0.95
-    dadas+=0.05
+    dadas+=0.07
     y_label = lam_um_dict[T][-1] * 1.5*dadas
-    ax2.text(x_label, y_label, f'{T} K', color=color, fontsize=9, 
+    ax2.text(x_label, y_label, f'{T} K', color=color, fontsize=12, 
              ha='right', va='center', weight='medium', zorder=10)
 
 ax2.set_xlabel(r"density $n$ (cm$^{-2}$)", color="#2C3E50", fontsize=10)
