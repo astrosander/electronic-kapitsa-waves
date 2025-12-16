@@ -97,7 +97,7 @@ for Theta in Thetas:
         eigs[Theta][m] = Fourier_transform2(dist_normed * dV_th[1:], th_i[1:], dV_th, m)
 
 # ---- Plot eigenvalues as in your original script (Figure-1 style) ----
-f10, ax10 = plt.subplots()
+f10, ax10 = plt.subplots(figsize=(8*0.9, 6*0.9))
 
 for m in ms:
     y = []
@@ -130,6 +130,26 @@ if k == 0:
               np.log((np.array(y) - np.array(y0))/(np.array(Thetas)**power))[5:],
               label="m = 1", linestyle="--", linewidth=1.5, color="gray")
 
+x_ref = np.linspace(-4.7, -3.0, 100)  
+y_center = (2.2 + (-3.0)) / 2
+x_center = -3.0  # middle of x-range for ln(T/T_F) < -2
+
+x_ref = np.linspace(-4.7, -3.0, 100)  
+y_ref_2 = 1.9 + 0.0 * (x_ref - x_center)
+ax10.plot(x_ref, y_ref_2, 'r--', alpha=0.6, linewidth=1.5, label=r'$T^2$')
+
+x_ref = np.linspace(-4.7, -3.0, 100)  
+y_ref_33 = 0.68 + 1.3 * (x_ref - x_center)
+ax10.plot(x_ref, y_ref_33, 'b-.', alpha=0.6, linewidth=1.5, label=r'$T^{3.3}$')
+
+x_ref = np.linspace(-4.5, -3, 100)  
+y_ref_39 = y_center + 1.9 * (x_ref - x_center)
+ax10.plot(x_ref, y_ref_39, 'm:', alpha=0.6, linewidth=1.5, label=r'$T^{3.9}$')
+
+x_ref = np.linspace(-4.7, -2.0, 100)  
+y_ref_4 = -3 + 2.0 * (x_ref - x_center)
+ax10.plot(x_ref, y_ref_4, 'g:', alpha=0.6, linewidth=2, label=r'$T^4$')
+
 ax10.set_xlim(-4.7, 0.5)
 ax10.set_ylim(-3.0, 2.2)
 ax10.set_xlabel(r'Temperature, $\ln (T/T_F)$')
@@ -138,5 +158,5 @@ ax10.legend()
 
 f10.tight_layout()
 f10.savefig('./Eigenvals.svg')
-f10.savefig('./Eigenvals.png')
+f10.savefig('./Eigenvals.png', dpi=300)
 print("Saved: ./Eigenvals.svg", flush=True)
