@@ -13,3 +13,7 @@ snapshots_n_*.png
 spacetime_n_comoving_*.png
 spacetime_n_lab_*.png
 
+
+*.p
+*.nbc
+*.nbi
