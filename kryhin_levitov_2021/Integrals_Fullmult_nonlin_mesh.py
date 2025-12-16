@@ -15,22 +15,23 @@ import numpy as np
 # ----------------------- Parameters (match original as close as possible) -----------------------
 N_p   = 40
 N_th  = 100
-N0_th = 101          # NOTE: original Fig-1 script uses 101; use 201 if you want that variant.
+N0_th = 201          # NOTE: original Fig-1 script uses 101; use 201 if you want that variant.
 
 # Temperatures used in the eigenvalue figure script
-Thetas = [0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
-          0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28]
+# Thetas = [0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
+#           0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28]
+Thetas = np.geomspace(0.0025, 1.28, 30).tolist()
 
 # I1 loss-term midpoint grid (same as your original int_I1_1)
-NP_LOSS   = 100
-NTHP_LOSS = 50
-NTHV_LOSS = 50
+NP_LOSS   = 160
+NTHP_LOSS = 64
+NTHV_LOSS = 64
 
 # Gain-term angular quadrature replacing quad (increase to 2048 for even closer match)
-NPHI_GAIN = 1024
+NPHI_GAIN = 4096#1024
 
 # Mesh precision (same as your original)
-DIM1MESH_P = 1000
+DIM1MESH_P = 2000
 
 BASE_DIR = os.path.join(os.getcwd(), "Matrixes")
 # ----------------------------------------------------------------------------------------------
