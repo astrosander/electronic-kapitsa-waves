@@ -50,88 +50,44 @@ def u_star_for(scan=(0,5.0,0.01)):
         u+=st
     return None
 
-U0 = 1.5
-eta_p = 0#0.1
-eta_n = 0#0.1#*0.01
+U0 = 0.9
 # n = 0.05#0.2
 # w = 0.1
-n = 0.2
-w = 0.2#0.4
-gamma0 = 3.0
-m = 1.0
-kmin = -100
-kmax = 100
+n = 0.94
+w = 0.28#0.4
+gamma0 = 16.5
+m = 1.3
+kmin = -7
+kmax = -kmin
 N = 20000
 
 fig, ax = plt.subplots(figsize=(10, 6))
 
 L = 10.0  # Physical box size
 
-print("Calculating u_star...")
-u_star = u_star_for()
+# Fixed velocity
+u_c = 2.0
+print(f"Using velocity u_c = {u_c:.4f}")
 
-if u_star is not None:
-    u_d_min = u_star - 0.005
-    u_d_max = u_star + 0.005
-    print(f"Critical drift velocity u_star = {u_star:.6f}")
+# Define two diffusion coefficient sets with different colors for omega_plus and omega_minus
+diffusion_sets = [
+    {'eta_p': 0.0, 'eta_n': 0.0, 'color_plus': '#2E86AB', 'color_minus': '#A23B72'},  # blue and purple
+    {'eta_p': 0.1, 'eta_n': 0.1, 'color_plus': '#F24236', 'color_minus': '#FF6B35'}   # red and orange
+]
+
+for diff_idx, diff_set in enumerate(diffusion_sets):
+    eta_p = diff_set['eta_p']
+    eta_n = diff_set['eta_n']
+    color_plus = diff_set['color_plus']
+    color_minus = diff_set['color_minus']
     
-    # Verify u_star has exactly one intersection with zero
-    k_test = np.linspace(-8, 8, 1000)
-    gamma = gamma0 * np.exp(-n / w)
-    Dp, Dn = eta_p, eta_n
-    p = n * u_star
-    Pn = n * U0 - p**2 / (n**2 * m)
-    Pp = 2 * p / (n * m)
-    Gamma_n = -gamma / w
-    Lambda = (Gamma_n - gamma / n) * p
-    G_tilde = gamma + (Dp - Dn) * k_test**2
-    Delta = (G_tilde + 1j * k_test * Pp)**2 + 4j * k_test * Lambda / m - 4 * k_test**2 * Pn / m
-    omega_plus = (-1j * G_tilde + k_test * Pp + 1j * np.sqrt(Delta)) / 2 - 1j * Dn * k_test**2
-    zeta_test = np.imag(omega_plus)
-    
-    # Count zero crossings
-    zero_crossings = np.sum(np.diff(np.sign(zeta_test)) != 0)
-    print(f"Zero crossings in u_star curve: {zero_crossings}")
-    print(f"Max growth rate at u_star: {np.max(zeta_test):.6f}")
-    print(f"Min growth rate at u_star: {np.min(zeta_test):.6f}")
-else:
-    print("Warning: Could not find critical drift velocity u_star")
-    # Default range if u_star is not found
-    u_d_min = 2.5
-    u_d_max = 3.0
-
-print(f"Physical box size L = {L}")
-print(f"Fundamental mode spacing: 2π/L = {2*np.pi/L:.4f}\n")
-
-# Select 4 representative u values for plotting
-if u_star is not None:
-    # Select 4 u values: one below u_star, u_star, and two above
-    # u_plot_values = [
-    #     u_star - 0.003,
-    #     u_star - 0.001,
-    #     u_star,
-    #     u_star + 0.002
-    # ]
-    u_plot_values = [1,2,3,4]
-else:
-    # If u_star not found, use evenly spaced values in the range
-    u_plot_values = np.linspace(u_d_min, u_d_max, 4)
-
-u_plot_values = sorted(u_plot_values)
-print(f"Plotting for 4 u values: {[f'{u:.4f}' for u in u_plot_values]}")
-
-# Define colors for the 4 u values
-colors = ['#440154', '#31688e', '#35b779', '#fde725']  # viridis colors
-linestyles_plus = ['-', '-', '-', '-']  # solid for omega_plus
-linestyles_minus = ['--', '--', '--', '--']  # dashed for omega_minus
-
-for idx, u in enumerate(u_plot_values):
+    print(f"\nDiffusion set {diff_idx + 1}: η_p = {eta_p}, η_n = {eta_n}")
     k_out = np.linspace(kmin, kmax, N)
     
     # Physical parameters (vectorized)
     gamma = gamma0 * np.exp(-n / w)           # Γ(n)
     Dp, Dn = eta_p, eta_n
-    p = n * u
+    p = n * u_c
     Pn = n * U0 - p**2 / (n**2 * m)           # Π_n
     Pp = 2 * p / (n * m)                      # Π_p
     Gamma_n = -gamma / w                      # ∂Γ/∂n
@@ -149,27 +105,13 @@ for idx, u in enumerate(u_plot_values):
     zeta_plus = np.imag(omega_plus)
     zeta_minus = np.imag(omega_minus)
     
-    # Get color for this u value
-    color = colors[idx % len(colors)]
+    # Plot omega_plus (solid line) - no label
+    ax.plot(k_out, zeta_plus, linewidth=1.5, color=color_plus, linestyle='-')
     
-    # Determine label and line width
-    if u_star is not None and np.isclose(u, u_star, atol=1e-5):
-        lw = 2.5
-        u_label = f'$u^{{\\bigstar}} = {u:.4f}$'
-    else:
-        lw = 1.5
-        u_label = f'$u = {u:.4f}$'
+    # Plot omega_minus (solid line) - no label
+    ax.plot(k_out, zeta_minus, linewidth=1.5, color=color_minus, linestyle='-')
     
-    # Plot omega_plus (solid line)
-    ax.plot(k_out, zeta_plus, linewidth=lw, color=color, 
-            linestyle=linestyles_plus[idx])
-    
-    # Plot omega_minus (dashed line)
-    ax.plot(k_out, zeta_minus, linewidth=lw, color=color, 
-            linestyle=linestyles_minus[idx])
-    
-    # Print summary for this u value
-    print(f"u = {u:.4f}:")
+    # Print summary
     print(f"  ω_+: max ζ = {np.max(zeta_plus):.6f}, min ζ = {np.min(zeta_plus):.6f}")
     print(f"  ω_-: max ζ = {np.max(zeta_minus):.6f}, min ζ = {np.min(zeta_minus):.6f}")
 
@@ -187,10 +129,10 @@ ax.axhline(0, color="black", linestyle="-", linewidth=1.0, alpha=0.3)
 ax.grid(True, alpha=0.3)
 ax.set_xlabel('$k$', fontsize=12)
 ax.set_ylabel('$\\zeta(k) = \\Im(\\omega_{\\pm})$', fontsize=12)
-# ax.set_title('Linear Instability Increment (corrected dispersion with diffusion)', fontsize=13)
+ax.set_ylim(-4, 2)
+ax.set_xlim(kmin, kmax)
 
-# Legend with better tolerance for float comparison
-ax.legend(loc='upper left', fontsize=9, framealpha=0.9, ncol=2)
+# ax.set_title('Linear Instability Increment (corrected dispersion with diffusion)', fontsize=13)
 
 plt.tight_layout()
 plt.savefig("linear_instability_increment.pdf", dpi=160)
