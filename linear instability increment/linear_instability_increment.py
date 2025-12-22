@@ -61,7 +61,11 @@ kmin = -7
 kmax = -kmin
 N = 20000
 
-fig, ax = plt.subplots(figsize=(10, 6))
+# Create figure with better proportions for publication-quality plots
+fig, ax = plt.subplots(figsize=(11, 7))
+# Set background color for better contrast
+fig.patch.set_facecolor('white')
+ax.set_facecolor('white')
 
 L = 10.0  # Physical box size
 
@@ -69,10 +73,13 @@ L = 10.0  # Physical box size
 u_c = 2.0
 print(f"Using velocity u_c = {u_c:.4f}")
 
-# Define two diffusion coefficient sets with different colors for omega_plus and omega_minus
+# Define two diffusion coefficient sets with distinct, contrasting colors
+# Using cool colors for no diffusion, warm colors for with diffusion
 diffusion_sets = [
-    {'eta_p': 0.0, 'eta_n': 0.0, 'color_plus': '#2E86AB', 'color_minus': '#A23B72'},  # blue and purple
-    {'eta_p': 0.1, 'eta_n': 0.1, 'color_plus': '#F24236', 'color_minus': '#FF6B35'}   # red and orange
+    {'eta_p': 0.0, 'eta_n': 0.0, 'color_plus': '#1976D2', 'color_minus': '#00897B', 
+     'label': 'No diffusion', 'lw': 2.0},  # Deep blue and teal
+    {'eta_p': 0.1, 'eta_n': 0.1, 'color_plus': '#D32F2F', 'color_minus': '#F57C00', 
+     'label': 'With diffusion', 'lw': 2.0}   # Deep red and deep orange
 ]
 
 for diff_idx, diff_set in enumerate(diffusion_sets):
@@ -80,6 +87,7 @@ for diff_idx, diff_set in enumerate(diffusion_sets):
     eta_n = diff_set['eta_n']
     color_plus = diff_set['color_plus']
     color_minus = diff_set['color_minus']
+    lw = diff_set['lw']
     
     print(f"\nDiffusion set {diff_idx + 1}: η_p = {eta_p}, η_n = {eta_n}")
     k_out = np.linspace(kmin, kmax, N)
@@ -105,11 +113,13 @@ for diff_idx, diff_set in enumerate(diffusion_sets):
     zeta_plus = np.imag(omega_plus)
     zeta_minus = np.imag(omega_minus)
     
-    # Plot omega_plus (solid line) - no label
-    ax.plot(k_out, zeta_plus, linewidth=1.5, color=color_plus, linestyle='-')
+    # Plot omega_plus with thicker, more visible line
+    ax.plot(k_out, zeta_plus, linewidth=lw, color=color_plus, linestyle='-', 
+            alpha=0.9, zorder=3+diff_idx*2)
     
-    # Plot omega_minus (solid line) - no label
-    ax.plot(k_out, zeta_minus, linewidth=1.5, color=color_minus, linestyle='-')
+    # Plot omega_minus with thicker, more visible line
+    ax.plot(k_out, zeta_minus, linewidth=lw, color=color_minus, linestyle='-', 
+            alpha=0.9, zorder=2+diff_idx*2)
     
     # Print summary
     print(f"  ω_+: max ζ = {np.max(zeta_plus):.6f}, min ζ = {np.min(zeta_plus):.6f}")
@@ -125,16 +135,25 @@ for i in mode_numbers:
             ax.text(k_mode, ax.get_ylim()[1] * 0.95, f'n={i}', 
                    fontsize=8, ha='center', color='red', alpha=0.7)
 
-ax.axhline(0, color="black", linestyle="-", linewidth=1.0, alpha=0.3)
-ax.grid(True, alpha=0.3)
-ax.set_xlabel('$k$', fontsize=12)
-ax.set_ylabel('$\\zeta(k) = \\Im(\\omega_{\\pm})$', fontsize=12)
+# Enhanced styling for better visualization
+ax.axhline(0, color="black", linestyle="-", linewidth=1.2, alpha=0.5, zorder=1)
+ax.axvline(0, color="gray", linestyle="--", linewidth=0.8, alpha=0.4, zorder=1)
+ax.grid(True, alpha=0.25, linestyle='--', linewidth=0.5)
+ax.set_xlabel('Wave number $k$', fontsize=13, fontweight='medium')
+ax.set_ylabel('Growth rate $\\zeta(k) = \\Im(\\omega_{\\pm})$', fontsize=13, fontweight='medium')
 ax.set_ylim(-4, 2)
 ax.set_xlim(kmin, kmax)
+
+# Improve tick appearance
+ax.tick_params(axis='both', which='major', labelsize=11)
+ax.spines['top'].set_visible(False)
+ax.spines['right'].set_visible(False)
+ax.spines['left'].set_linewidth(1.2)
+ax.spines['bottom'].set_linewidth(1.2)
 
 # ax.set_title('Linear Instability Increment (corrected dispersion with diffusion)', fontsize=13)
 
 plt.tight_layout()
-plt.savefig("linear_instability_increment.pdf", dpi=160)
-plt.savefig("linear_instability_increment.png", dpi=160)
+plt.savefig("linear_instability_increment.pdf", dpi=300, bbox_inches='tight')
+plt.savefig("linear_instability_increment.png", dpi=300, bbox_inches='tight')
 plt.show()
