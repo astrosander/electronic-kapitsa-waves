@@ -106,25 +106,25 @@ plt.rcParams.update({
     "savefig.transparent": True,
 })
 
-fig, ax = plt.subplots(figsize=(6.5, 6.5), constrained_layout=True)
+fig, ax = plt.subplots(figsize=(8.5, 4.5), constrained_layout=True)
 
 c_u2 = "tab:blue"
-c_u1 = "tab:red"
+c_u1 = "tab:orange"
 
 ax.plot(k, z0p_u1, color=c_u1, ls="--", linewidth=2.0)
 ax.plot(k, z1p_u1, color=c_u1, ls="-", linewidth=2.0)
 ax.plot(k, z0p_u2, color=c_u2, ls="--", linewidth=2.0)
 ax.plot(k, z1p_u2, color=c_u2, ls="-", linewidth=2.0)
 
-ax.plot(k, z0p_asymp_u1, color="black", linewidth=1.0, alpha=0.7, 
+ax.plot(k, z0p_asymp_u1, color="red", linewidth=1.0, alpha=1, 
         zorder=1, label='_nolegend_')
-ax.plot(k, z0p_asymp_u2, color="black", linewidth=1.0, alpha=0.7, 
-        zorder=1, label='_nolegend_')
+# ax.plot(k, z0p_asymp_u2, color="black", linewidth=1.0, alpha=0.7, 
+#         zorder=1, label='_nolegend_')
 
-ax.axhline(omega_plus_infty_u1, color="black", ls="-", linewidth=1.0, alpha=0.7,
+ax.axhline(omega_plus_infty_u1, color="red", ls="-", linewidth=1.0, alpha=1,
            zorder=1, label='_nolegend_')
-ax.axhline(omega_plus_infty_u2, color="black", ls="-", linewidth=1.0, alpha=0.7,
-           zorder=1, label='_nolegend_')
+# ax.axhline(omega_plus_infty_u2, color="black", ls="-", linewidth=1.0, alpha=0.7,
+#            zorder=1, label='_nolegend_')
 
 ax.fill_between(k, 0, z1p_u1, where=(z1p_u1 > 0), color=c_u1, alpha=0.12, linewidth=0)
 ax.fill_between(k, 0, z1p_u2, where=(z1p_u2 > 0), color=c_u2, alpha=0.12, linewidth=0)
@@ -164,7 +164,7 @@ rng = max(1e-12, ymax - ymin)
 ax.set_ylim(ymin - 0.06 * rng, ymax + 0.08 * rng)
 
 ax.set_xlim(kmin, kmax)
-ax.set_ylim(-0.65, 0.75)
+ax.set_ylim(-0.65, 0.85)
 
 ax.set_xlabel(r"Wavenumber $k$", fontsize=16, fontweight='medium')
 ax.set_ylabel(r"$\mathrm{Im}\,\omega_{+}(k)$", fontsize=16, fontweight='medium')
