@@ -69,7 +69,7 @@ kmax = max(4.0 * k_star, 4.0)
 kmax=4
 kmin = -kmax
 
-N = 60000
+N = 600
 k = np.linspace(kmin, kmax, N)
 
 z0p_u1, _ = growth_rates(k, u_c1, n=n, w=w, gamma0=gamma0, U0=U0, m=m, Dn=eta0, Dp=eta0)
@@ -108,8 +108,8 @@ plt.rcParams.update({
 
 fig, ax = plt.subplots(figsize=(6.5, 6.5), constrained_layout=True)
 
-c_u1 = "tab:blue"
-c_u2 = "tab:red"
+c_u2 = "tab:blue"
+c_u1 = "tab:red"
 
 ax.plot(k, z0p_u1, color=c_u1, ls="--", linewidth=2.0)
 ax.plot(k, z1p_u1, color=c_u1, ls="-", linewidth=2.0)
@@ -164,7 +164,7 @@ rng = max(1e-12, ymax - ymin)
 ax.set_ylim(ymin - 0.06 * rng, ymax + 0.08 * rng)
 
 ax.set_xlim(kmin, kmax)
-ax.set_ylim(-1, 1)
+ax.set_ylim(-0.65, 0.75)
 
 ax.set_xlabel(r"Wavenumber $k$", fontsize=16, fontweight='medium')
 ax.set_ylabel(r"$\mathrm{Im}\,\omega_{+}(k)$", fontsize=16, fontweight='medium')
@@ -186,3 +186,4 @@ ax.legend(handles=diffusion_handles, loc="upper right", frameon=False,
 
 fig.savefig("linear_instability_increment.svg", bbox_inches="tight", dpi=300)
 fig.savefig("linear_instability_increment.png", dpi=600, bbox_inches="tight")
+plt.show()
