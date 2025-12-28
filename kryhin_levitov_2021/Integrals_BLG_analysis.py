@@ -22,7 +22,7 @@ Thetas = np.geomspace(0.0025, 1.28, 15).tolist()
 ms = [0, 1, 2, 3, 4, 5, 6]
 k = 0
 
-plt.rcParams['text.usetex'] = False
+plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
 # Publication-ready font sizes
@@ -35,16 +35,16 @@ plt.rcParams['legend.fontsize'] = 18
 plt.rcParams['figure.titlesize'] = 28
 
 
-import matplotlib as mpl
+# import matplotlib as mpl
 
-# --- unified TeX-style appearance (MathText, no system LaTeX needed) ---
-mpl.rcParams.update({
-    "text.usetex": False,          # use MathText (portable)
-    "font.family": "STIXGeneral",  # match math fonts
-    "font.size": 24,
-    "mathtext.fontset": "stix",
-    "axes.unicode_minus": False,   # proper minus sign
-})
+# # --- unified TeX-style appearance (MathText, no system LaTeX needed) ---
+# mpl.rcParams.update({
+#     "text.usetex": False,          # use MathText (portable)
+#     "font.family": "STIXGeneral",  # match math fonts
+#     "font.size": 24,
+#     "mathtext.fontset": "stix",
+#     "axes.unicode_minus": False,   # proper minus sign
+# })
 
 def _theta_str(theta: float) -> str:
     return f"{theta:.10g}"
@@ -300,7 +300,7 @@ for iz, zeta in enumerate(plot_zetas):
         x_plot = np.log(valid_thetas)[6:]
         y_plot_trimmed = y_plot[6:]
         
-        label = f"ζ={zeta}, m={m}" if m == 2 else None
+        label = f"$\\zeta$={zeta}, m={m}" if m == 2 else None
         ax1.plot(x_plot, y_plot_trimmed, 
                 color=colors[iz], alpha=0.7 if m > 2 else 1.0,
                 linewidth=2.5 if m == 2 else 2.0,
@@ -320,7 +320,7 @@ if len(all_x_vals_1) > 0 and len(all_y_vals_1) > 0:
 
 ax1.set_xlabel(r'Temperature, $\ln(T/T_F)$', fontsize=26)
 ax1.set_ylabel(r'Eigenvalues, $\ln(\lambda_m T_F^2 / T^2)$', fontsize=26)
-ax1.tick_params(axis='both', which='major', labelsize=20)
+ax1.tick_params(axis='both', which='major', labelsize=24, size=8)
 legend1 = ax1.legend(title='Momentum modes', fontsize=20, title_fontsize=22)
 ax1.grid(alpha=0.3)
 fig1.tight_layout()
@@ -356,7 +356,7 @@ for ith in plot_thetas_idx:
     if len(zeta_vals) < 2:
         continue
     
-    ax2.plot(zeta_vals, gamma_J_vals, '-', label=f'Θ={Theta:.4f}', linewidth=2.5)
+    ax2.plot(zeta_vals, gamma_J_vals, '-', label=f'$\\Theta$={Theta:.4f}', linewidth=2.5)
     all_x_vals_2.extend(zeta_vals)
     all_y_vals_2.extend(gamma_J_vals)
 
@@ -378,7 +378,7 @@ if ref_theta_idx < len(Thetas):
         z_all = np.array([z for z in zetas if z >= zeta_ref])
         if len(z_all) > 0:
             g_ref_k2 = gamma_ref * (z_all / zeta_ref)**4
-            ax2.loglog(z_all, g_ref_k2, '--', color='blue', alpha=1, linewidth=3.0, label=r'$\propto k^2 \propto \zeta^4$')
+            ax2.loglog(z_all, g_ref_k2, '--', color='blue', alpha=1, linewidth=3.0, label=r'$\propto n^2 \propto \zeta^4$')
             all_x_vals_2.extend(z_all.tolist())
             all_y_vals_2.extend(g_ref_k2.tolist())
             # k⁻¹ reference: Γ ∝ k⁻¹ ∝ ζ⁻¹ (normalized to last data point)
@@ -398,7 +398,7 @@ if ref_theta_idx < len(Thetas):
                     z_all_km1 = np.array(zetas_sorted[-n_25pct:])  # Take last 25% of zetas
                     if len(z_all_km1) > 0:
                         g_ref_km1 = gamma_ref_km1 * (z_all_km1 / zeta_ref_km1)**(-1)
-                        ax2.loglog(z_all_km1, g_ref_km1, '-.', color="black", alpha=1, linewidth=3.0, label=r'$\propto k^{-1} \propto \zeta^{-2}$')
+                        ax2.loglog(z_all_km1, g_ref_km1, '-.', color="black", alpha=1, linewidth=3.0, label=r'$\propto n^{-1} \propto \zeta^{-2}$')
                         all_x_vals_2.extend(z_all_km1.tolist())
                         all_y_vals_2.extend(g_ref_km1.tolist())
 
@@ -415,7 +415,7 @@ ax2.set_xlabel(r'$\zeta = \hbar v k_F / \gamma_1$', fontsize=26)
 ax2.set_ylabel(r'Current relaxation rate, $\Gamma_J = -\lambda_J$', fontsize=26)
 ax2.set_xscale('log')
 ax2.set_yscale('log')
-ax2.tick_params(axis='both', which='major', labelsize=20)
+ax2.tick_params(axis='both', which='major', labelsize=24, size=8)
 legend2 = ax2.legend(fontsize=20)
 ax2.grid(alpha=0.3)
 fig2.tight_layout()
@@ -455,7 +455,7 @@ if len(zeta_vals) >= 3:
     if len(z_all) > 0 and gamma_J_vals[0] > 0:
         # Normalize to first data point
         g_ref_k2 = gamma_J_vals[0] * (z_all / zeta_vals[0])**4
-        ax3.loglog(z_all, g_ref_k2, '-.', color='#4A90E2', alpha=0.8, linewidth=3.0, label=r'$\propto k^2 \propto \zeta^4$')
+        ax3.loglog(z_all, g_ref_k2, '-.', color='#4A90E2', alpha=0.8, linewidth=3.0, label=r'$\propto n^2 \propto \zeta^4$')
         all_x_vals_3.extend(z_all.tolist())
         all_y_vals_3.extend(g_ref_k2.tolist())
     
@@ -489,8 +489,8 @@ if len(all_x_vals_3) > 0 and len(all_y_vals_3) > 0:
 
 ax3.set_xlabel(r'$\zeta = \hbar v k_F / \gamma_1$', fontsize=26)
 ax3.set_ylabel(r'Current relaxation rate, $\Gamma_J = -\lambda_J$', fontsize=26)
-ax3.set_title(f'Current relaxation scaling at Θ={Theta_fixed:.4f}', fontsize=28)
-ax3.tick_params(axis='both', which='major', labelsize=20)
+ax3.set_title(f'Current relaxation scaling at $\\Theta$={Theta_fixed:.4f}', fontsize=28)
+ax3.tick_params(axis='both', which='major', labelsize=24, size=8)
 legend3 = ax3.legend(fontsize=20)
 ax3.grid(alpha=0.3)
 fig3.tight_layout()
