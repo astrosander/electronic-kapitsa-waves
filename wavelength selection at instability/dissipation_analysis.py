@@ -299,20 +299,208 @@ def print_dissipation_summary(results):
     print("="*60 + "\n")
 
 
+def plot_dissipation_diagnostics(results, n_t, meta, L, x0_label="", tail_window=None):
+    import matplotlib.pyplot as plt
+    
+    plt.rcParams['text.usetex'] = True
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams["legend.frameon"] = False
+    # Publication-ready font sizes
+    plt.rcParams['font.size'] = 16
+    plt.rcParams['axes.labelsize'] = 16
+    plt.rcParams['axes.titlesize'] = 16
+    plt.rcParams['xtick.labelsize'] = 16
+    plt.rcParams['ytick.labelsize'] = 16
+    plt.rcParams['legend.fontsize'] = 16
+    plt.rcParams['figure.titlesize'] = 16
+
+    t = results["t"]
+    E_t = results["E_t"]
+    sigma_t = results["sigma_t"]
+    W_t = results["W_t"]
+    T = results.get("T", np.nan)
+
+    if tail_window is not None:
+        if np.isfinite(T) and T > 0:
+            t0 = t[-1] - tail_window*T
+        else:
+            t0 = t[int((1.0 - tail_window)*len(t))]
+        mask = t >= t0
+    else:
+        mask = np.ones(len(t), dtype=bool)
+    
+    tt = t[mask]
+
+    fig, axs = plt.subplots(2, 1, figsize=(9, 6), sharex=True)
+
+    axs[0].plot(tt, E_t[mask], label="$E(t)$")
+    axs[0].plot(tt, sigma_t[mask], label=r"$\langle\sigma\rangle_x(t)$")
+    axs[0].plot(tt, W_t[mask], label=r"$W(t)=E(t)^2\langle\sigma\rangle_x$")
+    axs[0].set_ylabel("amplitude")
+    axs[0].legend(frameon=False)
+    axs[0].grid(True, alpha=0.3)
+
+    # if np.isfinite(T) and T > 0:
+    #     axs[0].axvspan(t[-1]-T, t[-1], alpha=0.15, label="Averaging interval")
+        # axs[0].set_title(f"{x0_label}  T≈{T:.4g},  <W>_T≈{results['W_avg']:.4g}")
+
+    P_Ej = results["E_t"] * results["j_t"]
+    axs[1].plot(tt, W_t[mask], label=r"$W(t)=E(t)^2\langle\sigma\rangle_x$")
+    axs[1].plot(tt, P_Ej[mask], label="$E(t) \cdot j(t)$")
+    axs[1].set_ylabel("power density")
+    axs[1].set_xlabel("$t$")
+    axs[1].legend(frameon=False)
+    axs[1].grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    
+    if x0_label:
+        base_name = x0_label.replace('.npz', '').replace('\\', '_').replace('/', '_')
+        fig.savefig(f"dissipation_diagnostics_{base_name}.pdf", dpi=300, bbox_inches='tight')
+        fig.savefig(f"dissipation_diagnostics_{base_name}.png", dpi=300, bbox_inches='tight')
+    else:
+        fig.savefig("dissipation_diagnostics.pdf", dpi=300, bbox_inches='tight')
+        fig.savefig("dissipation_diagnostics.png", dpi=300, bbox_inches='tight')
+    
+    return fig
+
+
+def plot_local_dissipation_heatmap(results, n_t, meta, L):
+    import matplotlib.pyplot as plt
+    
+    t = results["t"]
+    E_t = results["E_t"]
+    Nx = n_t.shape[0]
+    x = np.linspace(0, L, Nx, endpoint=False)
+
+    w_xt = np.empty_like(n_t)
+    for j in range(n_t.shape[1]):
+        sig_x = sigma_profile(
+            n_t[:, j],
+            e=meta["e"], m=meta["m"], n_floor=meta["n_floor"],
+            Gamma0=meta["Gamma0"], w=meta["w"],
+            L=L, lambda_diss=meta.get("lambda_diss",0.0),
+            sigma_diss=meta.get("sigma_diss",2.0), x0=meta.get("x0",10.0)
+        )
+        w_xt[:, j] = (E_t[j]**2) * sig_x
+
+    fig = plt.figure(figsize=(9,4.8))
+    plt.imshow(
+        w_xt.T, origin="lower", aspect="auto",
+        extent=[x.min(), x.max(), t.min(), t.max()]
+    )
+    plt.colorbar(label="$w(x,t)=E(t)^2 \\sigma(x,t)$")
+    plt.xlabel("$x$")
+    plt.ylabel("$t$")
+    # plt.title("Local dissipation density")
+    plt.tight_layout()
+    return fig
+
+
+def plot_final_density_profile(results, n_t, L, x0_label=""):
+    import matplotlib.pyplot as plt
+    
+    t = results["t"]
+    Nx = n_t.shape[0]
+    x = np.linspace(0, L, Nx, endpoint=False)
+    
+    n_final = n_t[:, -1]
+    t_final = t[-1]
+    
+    T = results.get("T", np.nan)
+    
+    fig = plt.figure(figsize=(9, 5))
+    plt.plot(x, n_final, linewidth=2, label="$n(x)$")
+    
+    if np.isfinite(T) and T > 0:
+        if 'lambda' in results and np.isfinite(results['lambda']):
+            lam = results['lambda']
+        elif 'k_peak' in results and np.isfinite(results['k_peak']):
+            lam = 2*np.pi / results['k_peak']
+        else:
+            lam = None
+        
+        if lam is not None and np.isfinite(lam) and lam > 0:
+            k = 2*np.pi / lam
+            n_mean = np.mean(n_final)
+            n_amp = np.std(n_final)
+            sine_wave = n_mean + n_amp * np.sin(k * x)
+            plt.plot(x, sine_wave, '--', linewidth=2, alpha=0.7, 
+                    label=rf"$\sin(2\pi x/\lambda)$, $\lambda={lam:.4g}$, $T={T:.4g}$")
+    
+    plt.xlabel("$x$")
+    plt.ylabel("$n(x)$")
+    # plt.title(f"{x0_label}  Density profile at t = {t_final:.4g}")
+    plt.legend(frameon=False)
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    return fig
+
+
 if __name__ == "__main__":
     import sys
     import glob
+    import os
     
-    npz_files=["npz/complete_m01_m1.npz"]
+    npz_files=[r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\diffusion_sweep\w=0.14_Dn=0p10_Dp=0p10_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.03, seed_amp_p=0.03)\out_drift_ud1p9\data_m07_ud1p9000_w0.14_ud1.9000000000000001_Dn0.1_Dp0.1.npz"]#["npz/complete_m01_m1.npz"]
     
     for npz_file in npz_files:
         print(f"\nProcessing: {npz_file}")
         try:
+            data = np.load(npz_file, allow_pickle=True)
+            files = list(data.files)
+            
+            if 'n_t' in files and 'p_t' in files:
+                n_t = data['n_t']
+                L = float(data['L'])
+                meta = data['meta'].item() if hasattr(data['meta'], 'item') else data['meta']
+            elif all(k in files for k in ('n', 'p', 'x', 't')):
+                n = data['n']
+                x = data['x']
+                t = data['t']
+                if n.shape[0] == len(t):
+                    n_t = n.T
+                else:
+                    n_t = n
+                L = float(data['L']) if 'L' in files else (x[-1] - x[0] + (x[1] - x[0]) if len(x) > 1 else 10.0)
+                meta = data['meta'].item() if 'meta' in files and hasattr(data['meta'], 'item') else (data['meta'] if 'meta' in files else {})
+            elif all(k in files for k in ('n', 'x', 't')):
+                n = data['n']
+                x = data['x']
+                t = data['t']
+                if n.shape[0] == len(t):
+                    n_t = n.T
+                else:
+                    n_t = n
+                L = float(data['L']) if 'L' in files else (x[-1] - x[0] + (x[1] - x[0]) if len(x) > 1 else 10.0)
+                meta = data['meta'].item() if 'meta' in files and hasattr(data['meta'], 'item') else (data['meta'] if 'meta' in files else {})
+            else:
+                raise ValueError(f"Cannot load data from {npz_file}")
+            print("meta=",meta)
+            
+            defaults = {
+                'm': 1.0, 'e': 1.0, 'u_d': 5.245, 'nbar0': 0.2,
+                'Gamma0': 2.5, 'w': 0.04, 'n_floor': 1e-4,
+                'maintain_drift': 'field', 'Kp': 0.15,
+                'lambda_diss': 0.0, 'sigma_diss': 2.0, 'x0': 10.0
+            }
+            for key, default_val in defaults.items():
+                if key not in meta:
+                    meta[key] = default_val
+            if 'L' not in meta:
+                meta['L'] = L
+            
             results_fft = compute_dissipation_from_npz(npz_file, method='time_fft')
             print_dissipation_summary(results_fft)
             
             results_wash = compute_dissipation_from_npz(npz_file, method='washboard')
             print_dissipation_summary(results_wash)
+            
+            import matplotlib.pyplot as plt
+            fig1 = plot_dissipation_diagnostics(results_wash, n_t, meta, L, x0_label=os.path.basename(npz_file))
+            # fig2 = plot_local_dissipation_heatmap(results_wash, n_t, meta, L)
+            # fig3 = plot_final_density_profile(results_wash, n_t, L, x0_label=os.path.basename(npz_file))
+            plt.show()
             
         except Exception as e:
             print(f"Error processing {npz_file}: {e}")
