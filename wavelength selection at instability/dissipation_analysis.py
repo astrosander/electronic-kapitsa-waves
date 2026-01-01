@@ -290,6 +290,21 @@ def print_dissipation_summary(results):
         print(f"  Frequency: f = {results['f']:.6g} Hz")
     
     print(f"\nBase electric field: E_base = {results['E_base']:.6g}")
+    
+    t = results['t']
+    sigma_t = results['sigma_t']
+    W_t = results['W_t']
+    
+    n_tail = int(0.2 * len(t))
+    if n_tail > 0:
+        sigma_tail = np.mean(sigma_t[-n_tail:])
+        W_tail = np.mean(W_t[-n_tail:])
+        print(f"\nTime averages over last 20% of time:")
+        print(f"  <sigma>_x(t) = {sigma_tail:.6g}")
+        print(f"  $\\langle\\sigma\\rangle_x(t)$ = {sigma_tail:.6g}")
+        print(f"  W(t)=E(t)^2<sigma>_x = {W_tail:.6g}")
+        print(f"  $W(t)=E(t)^2\\langle\\sigma\\rangle_x$ = {W_tail:.6g}")
+    
     print(f"\nDissipation metrics:")
     print(f"  <W(t)>_time = {results['W_t_mean']:.6g}")
     print(f"  <E^2 * σ>_T = {results['W_avg']:.6g}")
@@ -331,35 +346,21 @@ def plot_dissipation_diagnostics(results, n_t, meta, L, x0_label="", tail_window
     
     tt = t[mask]
 
-    fig, axs = plt.subplots(2, 1, figsize=(9, 6), sharex=True)
+    fig, ax = plt.subplots(1, 1, figsize=(9, 4))
 
-    axs[0].plot(tt, E_t[mask], label="$E(t)$")
-    axs[0].plot(tt, sigma_t[mask], label=r"$\langle\sigma\rangle_x(t)$")
-    axs[0].plot(tt, W_t[mask], label=r"$W(t)=E(t)^2\langle\sigma\rangle_x$")
-    axs[0].set_ylabel("amplitude")
-    axs[0].legend(frameon=False)
-    axs[0].grid(True, alpha=0.3)
-
-    # if np.isfinite(T) and T > 0:
-    #     axs[0].axvspan(t[-1]-T, t[-1], alpha=0.15, label="Averaging interval")
-        # axs[0].set_title(f"{x0_label}  T≈{T:.4g},  <W>_T≈{results['W_avg']:.4g}")
-
-    P_Ej = results["E_t"] * results["j_t"]
-    axs[1].plot(tt, W_t[mask], label=r"$W(t)=E(t)^2\langle\sigma\rangle_x$")
-    axs[1].plot(tt, P_Ej[mask], label="$E(t) \cdot j(t)$")
-    axs[1].set_ylabel("power density")
-    axs[1].set_xlabel("$t$")
-    axs[1].legend(frameon=False)
-    axs[1].grid(True, alpha=0.3)
+    ax.plot(tt, sigma_t[mask], label=r"$\langle\sigma\rangle_x(t)$")
+    ax.plot(tt, W_t[mask], label=r"$W(t)=E(t)^2\langle\sigma\rangle_x$")
+    ax.set_ylabel("amplitude")
+    ax.set_xlabel("$t$")
+    ax.legend(frameon=False)
+    ax.grid(True, alpha=0.3)
 
     plt.tight_layout()
     
     if x0_label:
         base_name = x0_label.replace('.npz', '').replace('\\', '_').replace('/', '_')
-        fig.savefig(f"dissipation_diagnostics_{base_name}.pdf", dpi=300, bbox_inches='tight')
-        fig.savefig(f"dissipation_diagnostics_{base_name}.png", dpi=300, bbox_inches='tight')
+        fig.savefig(f"dissipation_diagnostics_{base_name}.svg", dpi=300, bbox_inches='tight')
     else:
-        fig.savefig("dissipation_diagnostics.pdf", dpi=300, bbox_inches='tight')
         fig.savefig("dissipation_diagnostics.png", dpi=300, bbox_inches='tight')
     
     return fig
@@ -434,6 +435,15 @@ def plot_final_density_profile(results, n_t, L, x0_label=""):
     plt.legend(frameon=False)
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
+    
+    if x0_label:
+        base_name = x0_label.replace('.npz', '').replace('\\', '_').replace('/', '_')
+        fig.savefig(f"final_density_profile_{base_name}.svg", bbox_inches='tight')
+        fig.savefig(f"final_density_profile_{base_name}.png", dpi=300, bbox_inches='tight')
+    else:
+        fig.savefig("final_density_profile.svg", bbox_inches='tight')
+        fig.savefig("final_density_profile.png", dpi=300, bbox_inches='tight')
+    
     return fig
 
 
@@ -442,10 +452,17 @@ if __name__ == "__main__":
     import glob
     import os
     
-    npz_files=[r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\diffusion_sweep\w=0.14_Dn=0p10_Dp=0p10_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.03, seed_amp_p=0.03)\out_drift_ud1p9\data_m07_ud1p9000_w0.14_ud1.9000000000000001_Dn0.1_Dp0.1.npz"]#["npz/complete_m01_m1.npz"]
+    base_dir = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\diffusion_sweep\w=0.14_Dn=0p10_Dp=0p10_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.03, seed_amp_p=0.03)"
+    npz_files = sorted(glob.glob(os.path.join(base_dir, "**", "*.npz"), recursive=True))
     
-    for npz_file in npz_files:
-        print(f"\nProcessing: {npz_file}")
+    if not npz_files:
+        print(f"No .npz files found in {base_dir}")
+        sys.exit(1)
+    
+    print(f"Found {len(npz_files)} .npz files to process")
+    
+    for idx, npz_file in enumerate(npz_files, 1):
+        print(f"\n[{idx}/{len(npz_files)}] Processing: {npz_file}")
         try:
             data = np.load(npz_file, allow_pickle=True)
             files = list(data.files)
@@ -500,7 +517,7 @@ if __name__ == "__main__":
             fig1 = plot_dissipation_diagnostics(results_wash, n_t, meta, L, x0_label=os.path.basename(npz_file))
             # fig2 = plot_local_dissipation_heatmap(results_wash, n_t, meta, L)
             # fig3 = plot_final_density_profile(results_wash, n_t, L, x0_label=os.path.basename(npz_file))
-            plt.show()
+            # plt.show()
             
         except Exception as e:
             print(f"Error processing {npz_file}: {e}")
