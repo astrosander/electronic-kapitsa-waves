@@ -199,7 +199,8 @@ def compute_dissipation_from_npz(npz_file, method='time_fft', frac_tail=0.5):
         'm': 1.0, 'e': 1.0, 'u_d': 5.245, 'nbar0': 0.2,
         'Gamma0': 2.5, 'w': 0.04, 'n_floor': 1e-4,
         'maintain_drift': 'field', 'Kp': 0.15,
-        'lambda_diss': 0.0, 'sigma_diss': 2.0, 'x0': 10.0
+        'lambda_diss': 0.0, 'sigma_diss': 2.0, 'x0': 10.0,
+        'U': 1.0
     }
     for key, default_val in defaults.items():
         if key not in meta:
@@ -447,7 +448,50 @@ def plot_final_density_profile(results, n_t, L, x0_label=""):
     return fig
 
 
-def plot_W_vs_u_d(u_d_values, W_values, output_file="W_vs_u_d"):
+def predicted_uc(meta, n_ref=None):
+    m = meta.get("m", 1.0)
+    U = meta.get("U", 1.0)
+    w = meta.get("w", 0.04)
+    n = float(n_ref if n_ref is not None else meta.get("nbar0", 0.2))
+    n = max(n, 1e-30)
+    return w * np.sqrt(U / (m * n))
+
+
+def predicted_W_drude(u_d, meta, n_ref=None):
+    m = meta.get("m", 1.0)
+    Gamma0 = meta.get("Gamma0", 2.5)
+    w = meta.get("w", 0.04)
+    n_floor = meta.get("n_floor", 1e-4)
+    n = float(n_ref if n_ref is not None else meta.get("nbar0", 0.2))
+    gam = Gamma(n, Gamma0, w, n_floor)
+    return m * n * gam * (u_d ** 2)
+
+
+def fit_onset_coeff(u_d, W_meas, W0, u_c, nfit=6):
+    u_d = np.asarray(u_d, float)
+    W_meas = np.asarray(W_meas, float)
+    W0 = np.asarray(W0, float)
+
+    mask = np.isfinite(u_d) & np.isfinite(W_meas) & np.isfinite(W0) & (u_d > u_c)
+    if np.count_nonzero(mask) < 3:
+        return np.nan
+
+    uu = u_d[mask]
+    eps = uu - u_c
+    y = (W_meas[mask] - W0[mask]) / (uu**2 + 1e-30)
+
+    idx = np.argsort(eps)
+    eps = eps[idx][:nfit]
+    y = y[idx][:nfit]
+
+    den = float(np.dot(eps, eps))
+    if den <= 0:
+        return np.nan
+    a = float(np.dot(eps, y) / den)
+    return a
+
+
+def plot_W_vs_u_d(u_d_values, W_values, meta_ref=None, n_ref=None, output_file="W_vs_u_d", also_plot_onset_test=True):
     import matplotlib.pyplot as plt
     
     plt.rcParams['text.usetex'] = True
@@ -461,13 +505,85 @@ def plot_W_vs_u_d(u_d_values, W_values, output_file="W_vs_u_d"):
     plt.rcParams['legend.fontsize'] = 16
     plt.rcParams['figure.titlesize'] = 16
     
+    u = np.asarray(u_d_values, float)
+    W = np.asarray(W_values, float)
+
     fig = plt.figure(figsize=(8, 6))
-    plt.plot(u_d_values, W_values,  linewidth=2, markersize=6)
-    plt.xlabel("$u_d$")
-    plt.ylabel(r"$W(t)=E(t)^2\langle\sigma\rangle_x$")
+    plt.plot(u, W, linewidth=2,color="blue", label=r"measured $W$")
+
+    if meta_ref is not None:
+        u_c = predicted_uc(meta_ref, n_ref=n_ref)
+        W0 = np.array([predicted_W_drude(ui, meta_ref, n_ref=n_ref) for ui in u])
+
+        plt.plot(u, W0, linestyle="--", linewidth=2,
+                 label=r"$W_0=m n\gamma(n)\,u_d^2$")
+
+        plt.axvline(u_c, linestyle="--", color="red", linewidth=2,
+                    label=rf"$u_c$")
+
+        a = fit_onset_coeff(u, W, W0, u_c)
+        if np.isfinite(a):
+            W_onset = W0 + a * (u**2) * np.maximum(u - u_c, 0.0)
+            plt.plot(u, W_onset, linestyle=":", linewidth=2,
+                     label=r"$\Delta W/u^2\propto(u-u_c)$")
+
+    plt.xlabel(r"$u_d$")
+    plt.ylabel(r"$W = E(t)^2\langle\sigma\rangle_x$")
     plt.grid(True, alpha=0.3)
+    plt.legend()
     plt.tight_layout()
+    fig.savefig(f"{output_file}.svg", bbox_inches='tight')
+    fig.savefig(f"{output_file}.png", dpi=300, bbox_inches='tight')
+
+    if also_plot_onset_test and meta_ref is not None:
+        u_c = predicted_uc(meta_ref, n_ref=n_ref)
+        W0 = np.array([predicted_W_drude(ui, meta_ref, n_ref=n_ref) for ui in u])
+        dW_over_u2 = (W - W0) / (u**2 + 1e-30)
+        eps = u - u_c
+
+        fig2 = plt.figure(figsize=(8, 6))
+        mask = (eps > 0) & np.isfinite(dW_over_u2)
+        plt.loglog(eps[mask], dW_over_u2[mask], marker=".", color="black", linewidth=2)
+        plt.xlabel(r"$u_d-u_c$")
+        plt.ylabel(r"$(W-W_0)/u_d^2$")
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        fig2.savefig(f"{output_file}_onset_test.svg", bbox_inches='tight')
+        fig2.savefig(f"{output_file}_onset_test.png", dpi=300, bbox_inches='tight')
+        plt.close(fig2)
     
+    return fig
+
+
+def plot_un_vs_u_d(u_d_values, un_values, meta_ref=None, output_file="un_vs_u_d"):
+    import matplotlib.pyplot as plt
+    
+    plt.rcParams['text.usetex'] = True
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams["legend.frameon"] = False
+    plt.rcParams['font.size'] = 16
+    plt.rcParams['axes.labelsize'] = 16
+    plt.rcParams['axes.titlesize'] = 16
+    plt.rcParams['xtick.labelsize'] = 16
+    plt.rcParams['ytick.labelsize'] = 16
+    plt.rcParams['legend.fontsize'] = 16
+    plt.rcParams['figure.titlesize'] = 16
+    
+    u = np.asarray(u_d_values, float)
+    un = np.asarray(un_values, float)
+    
+    fig = plt.figure(figsize=(8, 6))
+    plt.plot(u, un, linewidth=2, color="blue", label=r"$\langle u \cdot n \rangle_t$")
+    
+    if meta_ref is not None:
+        u_c = predicted_uc(meta_ref)
+        plt.axvline(u_c, linestyle="--", color="red", linewidth=2, label=rf"$u_c$")
+    
+    plt.xlabel(r"$u_d$")
+    plt.ylabel(r"$\langle u \cdot n \rangle_t$")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
     fig.savefig(f"{output_file}.svg", bbox_inches='tight')
     fig.savefig(f"{output_file}.png", dpi=300, bbox_inches='tight')
     
@@ -479,7 +595,12 @@ if __name__ == "__main__":
     import glob
     import os
     
-    base_dir = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.4_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)"
+    base_dir = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.15_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.03, seed_amp_p=0.03)"#w=1_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)"
+    #few sharp: w=0.3_dp=0.025_dn=0.2(seed_amp_n=0.001, seed_amp_p=0.001)
+    # w=0.2_m=0.7_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001) -- ideal match
+    #w=0.4_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)
+
+
     npz_files = sorted(glob.glob(os.path.join(base_dir, "**", "*.npz"), recursive=True))
     
     if not npz_files:
@@ -490,6 +611,9 @@ if __name__ == "__main__":
     
     u_d_list = []
     W_list = []
+    un_list = []
+    meta_ref = None
+    n_ref = None
     
     for idx, npz_file in enumerate(npz_files, 1):
         print(f"\n[{idx}/{len(npz_files)}] Processing: {npz_file}")
@@ -499,18 +623,24 @@ if __name__ == "__main__":
             
             if 'n_t' in files and 'p_t' in files:
                 n_t = data['n_t']
+                p_t = data['p_t']
                 L = float(data['L'])
                 meta = data['meta'].item() if hasattr(data['meta'], 'item') else data['meta']
+                has_p = True
             elif all(k in files for k in ('n', 'p', 'x', 't')):
                 n = data['n']
+                p = data['p']
                 x = data['x']
                 t = data['t']
                 if n.shape[0] == len(t):
                     n_t = n.T
+                    p_t = p.T
                 else:
                     n_t = n
+                    p_t = p
                 L = float(data['L']) if 'L' in files else (x[-1] - x[0] + (x[1] - x[0]) if len(x) > 1 else 10.0)
                 meta = data['meta'].item() if 'meta' in files and hasattr(data['meta'], 'item') else (data['meta'] if 'meta' in files else {})
+                has_p = True
             elif all(k in files for k in ('n', 'x', 't')):
                 n = data['n']
                 x = data['x']
@@ -519,8 +649,10 @@ if __name__ == "__main__":
                     n_t = n.T
                 else:
                     n_t = n
+                p_t = np.zeros_like(n_t)
                 L = float(data['L']) if 'L' in files else (x[-1] - x[0] + (x[1] - x[0]) if len(x) > 1 else 10.0)
                 meta = data['meta'].item() if 'meta' in files and hasattr(data['meta'], 'item') else (data['meta'] if 'meta' in files else {})
+                has_p = False
             else:
                 raise ValueError(f"Cannot load data from {npz_file}")
             print("meta=",meta)
@@ -529,13 +661,19 @@ if __name__ == "__main__":
                 'm': 1.0, 'e': 1.0, 'u_d': 5.245, 'nbar0': 0.2,
                 'Gamma0': 2.5, 'w': 0.04, 'n_floor': 1e-4,
                 'maintain_drift': 'field', 'Kp': 0.15,
-                'lambda_diss': 0.0, 'sigma_diss': 2.0, 'x0': 10.0
+                'lambda_diss': 0.0, 'sigma_diss': 2.0, 'x0': 10.0,
+                'U': 1.0
             }
             for key, default_val in defaults.items():
                 if key not in meta:
                     meta[key] = default_val
             if 'L' not in meta:
                 meta['L'] = L
+            
+            if meta_ref is None:
+                meta_ref = dict(meta)
+                n_tail = max(5, int(0.2 * n_t.shape[1]))
+                n_ref = float(np.mean(n_t[:, -n_tail:]))
             
             results_fft = compute_dissipation_from_npz(npz_file, method='time_fft')
             print_dissipation_summary(results_fft)
@@ -551,11 +689,19 @@ if __name__ == "__main__":
                 W_avg_tail = np.mean(W_t[-n_tail:])
                 u_d_list.append(u_d)
                 W_list.append(W_avg_tail)
+                
+                if has_p:
+                    m = meta.get('m', 1.0)
+                    p_mean_x = np.mean(p_t, axis=0)
+                    un_avg_tail = np.mean(p_mean_x[-n_tail:]) / m
+                    un_list.append(un_avg_tail)
+                else:
+                    un_list.append(np.nan)
             
             import matplotlib.pyplot as plt
             # fig1 = plot_dissipation_diagnostics(results_wash, n_t, meta, L, x0_label=os.path.basename(npz_file))
             # fig2 = plot_local_dissipation_heatmap(results_wash, n_t, meta, L)
-            # fig3 = plot_final_density_profile(results_wash, n_t, L, x0_label=os.path.basename(npz_file))
+            fig3 = plot_final_density_profile(results_wash, n_t, L, x0_label=os.path.basename(npz_file))
             # plt.show()
             
         except Exception as e:
@@ -566,11 +712,20 @@ if __name__ == "__main__":
     if u_d_list and W_list:
         u_d_array = np.array(u_d_list)
         W_array = np.array(W_list)
+        un_array = np.array(un_list)
         sort_idx = np.argsort(u_d_array)
         u_d_sorted = u_d_array[sort_idx]
         W_sorted = W_array[sort_idx]
+        un_sorted = un_array[sort_idx]
         
         import matplotlib.pyplot as plt
-        fig4 = plot_W_vs_u_d(u_d_sorted, W_sorted)
+        fig4 = plot_W_vs_u_d(u_d_sorted, W_sorted, meta_ref=meta_ref, n_ref=n_ref,
+                             output_file="W_vs_u_d", also_plot_onset_test=True)
         print(f"\nSaved W vs u_d plot: W_vs_u_d.svg and W_vs_u_d.png")
+        print(f"Saved onset test plot: W_vs_u_d_onset_test.svg and W_vs_u_d_onset_test.png")
         plt.close(fig4)
+        
+        if np.any(np.isfinite(un_sorted)):
+            fig5 = plot_un_vs_u_d(u_d_sorted, un_sorted, meta_ref=meta_ref, output_file="un_vs_u_d")
+            print(f"Saved <u*n>_t vs u_d plot: un_vs_u_d.svg and un_vs_u_d.png")
+            plt.close(fig5)
