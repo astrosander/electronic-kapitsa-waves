@@ -479,7 +479,7 @@ if __name__ == "__main__":
     import glob
     import os
     
-    base_dir = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\diffusion_sweep\w=0.14_Dn=0p10_Dp=0p10_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.03, seed_amp_p=0.03)"
+    base_dir = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.4_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)"
     npz_files = sorted(glob.glob(os.path.join(base_dir, "**", "*.npz"), recursive=True))
     
     if not npz_files:
