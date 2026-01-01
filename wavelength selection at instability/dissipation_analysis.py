@@ -447,6 +447,33 @@ def plot_final_density_profile(results, n_t, L, x0_label=""):
     return fig
 
 
+def plot_W_vs_u_d(u_d_values, W_values, output_file="W_vs_u_d"):
+    import matplotlib.pyplot as plt
+    
+    plt.rcParams['text.usetex'] = True
+    plt.rcParams['font.family'] = 'serif'
+    plt.rcParams["legend.frameon"] = False
+    plt.rcParams['font.size'] = 16
+    plt.rcParams['axes.labelsize'] = 16
+    plt.rcParams['axes.titlesize'] = 16
+    plt.rcParams['xtick.labelsize'] = 16
+    plt.rcParams['ytick.labelsize'] = 16
+    plt.rcParams['legend.fontsize'] = 16
+    plt.rcParams['figure.titlesize'] = 16
+    
+    fig = plt.figure(figsize=(8, 6))
+    plt.plot(u_d_values, W_values,  linewidth=2, markersize=6)
+    plt.xlabel("$u_d$")
+    plt.ylabel(r"$W(t)=E(t)^2\langle\sigma\rangle_x$")
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    fig.savefig(f"{output_file}.svg", bbox_inches='tight')
+    fig.savefig(f"{output_file}.png", dpi=300, bbox_inches='tight')
+    
+    return fig
+
+
 if __name__ == "__main__":
     import sys
     import glob
@@ -460,6 +487,9 @@ if __name__ == "__main__":
         sys.exit(1)
     
     print(f"Found {len(npz_files)} .npz files to process")
+    
+    u_d_list = []
+    W_list = []
     
     for idx, npz_file in enumerate(npz_files, 1):
         print(f"\n[{idx}/{len(npz_files)}] Processing: {npz_file}")
@@ -513,8 +543,17 @@ if __name__ == "__main__":
             results_wash = compute_dissipation_from_npz(npz_file, method='washboard')
             print_dissipation_summary(results_wash)
             
+            u_d = meta.get('u_d', np.nan)
+            t = results_wash['t']
+            W_t = results_wash['W_t']
+            n_tail = int(0.2 * len(t))
+            if n_tail > 0:
+                W_avg_tail = np.mean(W_t[-n_tail:])
+                u_d_list.append(u_d)
+                W_list.append(W_avg_tail)
+            
             import matplotlib.pyplot as plt
-            fig1 = plot_dissipation_diagnostics(results_wash, n_t, meta, L, x0_label=os.path.basename(npz_file))
+            # fig1 = plot_dissipation_diagnostics(results_wash, n_t, meta, L, x0_label=os.path.basename(npz_file))
             # fig2 = plot_local_dissipation_heatmap(results_wash, n_t, meta, L)
             # fig3 = plot_final_density_profile(results_wash, n_t, L, x0_label=os.path.basename(npz_file))
             # plt.show()
@@ -523,3 +562,15 @@ if __name__ == "__main__":
             print(f"Error processing {npz_file}: {e}")
             import traceback
             traceback.print_exc()
+    
+    if u_d_list and W_list:
+        u_d_array = np.array(u_d_list)
+        W_array = np.array(W_list)
+        sort_idx = np.argsort(u_d_array)
+        u_d_sorted = u_d_array[sort_idx]
+        W_sorted = W_array[sort_idx]
+        
+        import matplotlib.pyplot as plt
+        fig4 = plot_W_vs_u_d(u_d_sorted, W_sorted)
+        print(f"\nSaved W vs u_d plot: W_vs_u_d.svg and W_vs_u_d.png")
+        plt.close(fig4)
