@@ -508,14 +508,14 @@ def plot_W_vs_u_d(u_d_values, W_values, un_values=None, meta_ref=None, n_ref=Non
     u = np.asarray(u_d_values, float)
     W = np.asarray(W_values, float)
     
-    mask_u = (u >= 0) & (u <= 1) #limit u_d
+    mask_u = (u >= 0.3) & (u <= 0.6) #limit u_d
     u = u[mask_u]
     W = W[mask_u]
 
     fig, ax1 = plt.subplots(1, 1, figsize=(8, 6))
     
     if meta_ref is not None:
-        u_c = 0.434#predicted_uc(meta_ref, n_ref=n_ref)
+        u_c = 0.369#predicted_uc(meta_ref, n_ref=n_ref)
         W0 = np.array([predicted_W_drude(ui, meta_ref, n_ref=n_ref) for ui in u])
         
         W_over_W0 = W / (W0 + 1e-30)
@@ -533,7 +533,7 @@ def plot_W_vs_u_d(u_d_values, W_values, un_values=None, meta_ref=None, n_ref=Non
     ax1.tick_params(axis='y', labelcolor='black')
     # ax1.set_xscale('log')
     # ax1.set_yscale('log')
-    ax1.set_xlim(0, 1)
+    ax1.set_xlim(0.3, 0.6)
     ax1.set_ylim(1, 1 * y_max)
     ax1.grid(True, alpha=0.3)
     
@@ -555,8 +555,8 @@ def plot_W_vs_u_d(u_d_values, W_values, un_values=None, meta_ref=None, n_ref=Non
             u_filtered = u[mask_un]
             un_filtered = un[mask_un]
             
-            mask_low = u_filtered < 0.3
-            mask_high = (u_filtered > 0.6) & (u_filtered < 1)
+            mask_low = u_filtered < 0.36
+            mask_high = (u_filtered > 0.4) & (u_filtered < 1)
             
             u_range = np.linspace(u_filtered.min(), u_filtered.max(), 200)
             
@@ -658,7 +658,7 @@ if __name__ == "__main__":
     import glob
     import os
     
-    base_dir = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.03, seed_amp_p=0.03)"#w=1_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)"
+    base_dir = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.03, seed_amp_p=0.03)_Dn=0p05_Dp=0p05"#w=1_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)"
     #few sharp: w=0.3_dp=0.025_dn=0.2(seed_amp_n=0.001, seed_amp_p=0.001)
     # w=0.2_m=0.7_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001) -- ideal match
     #w=0.4_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)
