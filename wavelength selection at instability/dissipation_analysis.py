@@ -491,7 +491,7 @@ def fit_onset_coeff(u_d, W_meas, W0, u_c, nfit=6):
     return a
 
 
-def plot_W_vs_u_d(u_d_values, W_values, meta_ref=None, n_ref=None, output_file="W_vs_u_d", also_plot_onset_test=True):
+def plot_W_vs_u_d(u_d_values, W_values, un_values=None, meta_ref=None, n_ref=None, output_file="W_vs_u_d", also_plot_onset_test=True):
     import matplotlib.pyplot as plt
     
     plt.rcParams['text.usetex'] = True
@@ -507,30 +507,88 @@ def plot_W_vs_u_d(u_d_values, W_values, meta_ref=None, n_ref=None, output_file="
     
     u = np.asarray(u_d_values, float)
     W = np.asarray(W_values, float)
+    
+    mask_u = (u >= 0) & (u <= 1) #limit u_d
+    u = u[mask_u]
+    W = W[mask_u]
 
-    fig = plt.figure(figsize=(8, 6))
-    plt.plot(u, W, linewidth=2,color="blue", label=r"measured $W$")
-
+    fig, ax1 = plt.subplots(1, 1, figsize=(8, 6))
+    
     if meta_ref is not None:
-        u_c = predicted_uc(meta_ref, n_ref=n_ref)
+        u_c = 0.434#predicted_uc(meta_ref, n_ref=n_ref)
         W0 = np.array([predicted_W_drude(ui, meta_ref, n_ref=n_ref) for ui in u])
+        
+        W_over_W0 = W / (W0 + 1e-30)
+        ax1.plot(u, W_over_W0, linewidth=2, color="black", label=r"$W/W_0$")
+        y_max = np.max(W_over_W0[np.isfinite(W_over_W0)]) if np.any(np.isfinite(W_over_W0)) else 1.0
 
-        plt.plot(u, W0, linestyle="--", linewidth=2,
-                 label=r"$W_0=m n\gamma(n)\,u_d^2$")
-
-        plt.axvline(u_c, linestyle="--", color="red", linewidth=2,
+        ax1.axvline(u_c, linestyle="--", color="red", linewidth=2,
                     label=rf"$u_c$")
+    else:
+        ax1.plot(u, W, linewidth=2, color="black", label=r"measured $W$")
+        y_max = np.max(W[np.isfinite(W)]) if np.any(np.isfinite(W)) else 1.0
 
-        a = fit_onset_coeff(u, W, W0, u_c)
-        if np.isfinite(a):
-            W_onset = W0 + a * (u**2) * np.maximum(u - u_c, 0.0)
-            plt.plot(u, W_onset, linestyle=":", linewidth=2,
-                     label=r"$\Delta W/u^2\propto(u-u_c)$")
+    ax1.set_xlabel(r"$u_d$")
+    ax1.set_ylabel(r"$W/W_0=E(t)^2\langle\sigma\rangle_x/m n\gamma(n)\,u_d^2$", color='black')
+    ax1.tick_params(axis='y', labelcolor='black')
+    # ax1.set_xscale('log')
+    # ax1.set_yscale('log')
+    ax1.set_xlim(0, 1)
+    ax1.set_ylim(1, 1 * y_max)
+    ax1.grid(True, alpha=0.3)
+    
+    if un_values is not None:
+        un = np.asarray(un_values, float)
+        un = un[mask_u]
+        mask_un = np.isfinite(un)
+        if np.any(mask_un):
+            ax2 = ax1.twinx()
+            ax2.plot(u[mask_un], un[mask_un], linestyle="none", color="blue", 
+                    marker="o", markersize=3, alpha=0.7, 
+                    label=r"$\langle u \cdot n \rangle_t$")
+            ax2.set_ylabel(r"$\langle u \cdot n \rangle_t$", color='blue', fontweight='bold')
+            # ax2.set_yscale('log')
+            ax2.tick_params(axis='y', labelcolor='blue')
+            
+            ax2.set_ylim(0, np.max(un[mask_un]))
+            
+            u_filtered = u[mask_un]
+            un_filtered = un[mask_un]
+            
+            mask_low = u_filtered < 0.3
+            mask_high = (u_filtered > 0.6) & (u_filtered < 1)
+            
+            u_range = np.linspace(u_filtered.min(), u_filtered.max(), 200)
+            
+            if np.sum(mask_low) > 1:
+                u_low = u_filtered[mask_low]
+                un_low = un_filtered[mask_low]
+                coeff_low = np.polyfit(u_low, un_low, 1)
+                un_fit_low = np.polyval(coeff_low, u_range)
+                print("a+b*y=", coeff_low, "b=", coeff_low[0], "a=", coeff_low[1])
+                ax2.plot(u_range, un_fit_low, linestyle="--", color="green", linewidth=1.5, alpha=0.7,
+                        label=r"fit ($u_d < 0.42$)")
+            
+            if np.sum(mask_high) > 1:
+                u_high = u_filtered[mask_high]
+                un_high = un_filtered[mask_high]
+                coeff_high = np.polyfit(u_high, un_high, 1)
+                un_fit_high = np.polyval(coeff_high, u_range)
+                print("a+b*y=", coeff_high, "b=", coeff_high[0], "a=", coeff_high[1])
+                ax2.plot(u_range, un_fit_high, linestyle="--", color="orange", linewidth=1.5, alpha=0.7,
+                        label=r"fit ($u_d > 0.5$)")
 
-    plt.xlabel(r"$u_d$")
-    plt.ylabel(r"$W = E(t)^2\langle\sigma\rangle_x$")
-    plt.grid(True, alpha=0.3)
-    plt.legend()
+            if meta_ref is not None:
+                ax2.axvline(u_c, linestyle="--", color="red", linewidth=2, alpha=0.5)
+            
+            lines1, labels1 = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            ax1.legend(lines1 + lines2, labels1 + labels2, loc='best', framealpha=0.9)
+        else:
+            ax1.legend(loc='best', framealpha=0.9)
+    else:
+        ax1.legend(loc='best', framealpha=0.9)
+    
     plt.tight_layout()
     fig.savefig(f"{output_file}.svg", bbox_inches='tight')
     fig.savefig(f"{output_file}.png", dpi=300, bbox_inches='tight')
@@ -541,7 +599,7 @@ def plot_W_vs_u_d(u_d_values, W_values, meta_ref=None, n_ref=None, output_file="
         dW_over_u2 = (W - W0) / (u**2 + 1e-30)
         eps = u - u_c
 
-        fig2 = plt.figure(figsize=(8, 6))
+        fig2 = plt.figure(figsize=(8, 4))
         mask = (eps > 0) & np.isfinite(dW_over_u2)
         plt.loglog(eps[mask], dW_over_u2[mask], marker=".", color="black", linewidth=2)
         plt.xlabel(r"$u_d-u_c$")
@@ -572,7 +630,7 @@ def plot_un_vs_u_d(u_d_values, un_values, meta_ref=None, output_file="un_vs_u_d"
     u = np.asarray(u_d_values, float)
     un = np.asarray(un_values, float)
     
-    fig = plt.figure(figsize=(8, 6))
+    fig = plt.figure(figsize=(8, 4))
     plt.plot(
         u, un,
         linestyle='None',
@@ -724,13 +782,11 @@ if __name__ == "__main__":
         un_sorted = un_array[sort_idx]
         
         import matplotlib.pyplot as plt
-        fig4 = plot_W_vs_u_d(u_d_sorted, W_sorted, meta_ref=meta_ref, n_ref=n_ref,
+        fig4 = plot_W_vs_u_d(u_d_sorted, W_sorted, un_values=un_sorted if np.any(np.isfinite(un_sorted)) else None,
+                             meta_ref=meta_ref, n_ref=n_ref,
                              output_file="W_vs_u_d", also_plot_onset_test=True)
-        print(f"\nSaved W vs u_d plot: W_vs_u_d.svg and W_vs_u_d.png")
+        print(f"\nSaved W vs u_d plot (with <u*n>_t on second axis): W_vs_u_d.svg and W_vs_u_d.png")
         print(f"Saved onset test plot: W_vs_u_d_onset_test.svg and W_vs_u_d_onset_test.png")
+        plt.show()
         plt.close(fig4)
-        
-        if np.any(np.isfinite(un_sorted)):
-            fig5 = plot_un_vs_u_d(u_d_sorted, un_sorted, meta_ref=meta_ref, output_file="un_vs_u_d")
-            print(f"Saved <u*n>_t vs u_d plot: un_vs_u_d.svg and un_vs_u_d.png")
-            plt.close(fig5)
+
