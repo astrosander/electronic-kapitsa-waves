@@ -573,8 +573,13 @@ def plot_un_vs_u_d(u_d_values, un_values, meta_ref=None, output_file="un_vs_u_d"
     un = np.asarray(un_values, float)
     
     fig = plt.figure(figsize=(8, 6))
-    plt.plot(u, un, linewidth=2, color="blue", label=r"$\langle u \cdot n \rangle_t$")
-    
+    plt.plot(
+        u, un,
+        linestyle='None',
+        marker='o',
+        color='black',
+        label=r"$\langle u \cdot n \rangle_t$"
+    )    
     if meta_ref is not None:
         u_c = predicted_uc(meta_ref)
         plt.axvline(u_c, linestyle="--", color="red", linewidth=2, label=rf"$u_c$")
@@ -595,7 +600,7 @@ if __name__ == "__main__":
     import glob
     import os
     
-    base_dir = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.15_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.03, seed_amp_p=0.03)"#w=1_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)"
+    base_dir = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.03, seed_amp_p=0.03)"#w=1_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)"
     #few sharp: w=0.3_dp=0.025_dn=0.2(seed_amp_n=0.001, seed_amp_p=0.001)
     # w=0.2_m=0.7_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001) -- ideal match
     #w=0.4_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.001, seed_amp_p=0.001)
@@ -701,7 +706,7 @@ if __name__ == "__main__":
             import matplotlib.pyplot as plt
             # fig1 = plot_dissipation_diagnostics(results_wash, n_t, meta, L, x0_label=os.path.basename(npz_file))
             # fig2 = plot_local_dissipation_heatmap(results_wash, n_t, meta, L)
-            fig3 = plot_final_density_profile(results_wash, n_t, L, x0_label=os.path.basename(npz_file))
+            # fig3 = plot_final_density_profile(results_wash, n_t, L, x0_label=os.path.basename(npz_file))
             # plt.show()
             
         except Exception as e:
