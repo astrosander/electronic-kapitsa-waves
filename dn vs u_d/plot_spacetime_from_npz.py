@@ -2,6 +2,8 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
+from matplotlib.widgets import Slider
+from matplotlib.widgets import Slider
 
 # Set matplotlib parameters to match main.py
 mpl.rcParams.update({
@@ -16,7 +18,7 @@ mpl.rcParams.update({
 })
 
 # Load data
-data_file = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0, seed_amp_p=0)_Dn=0p03_Dp=0p03\out_drift_ud0p5000\data_m07_ud0p5000_ud0.5.npz"
+data_file = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p05_Dp=0p01\out_drift_ud0p5000\data_m07_ud0p5000_ud0.5.npz"
 data = np.load(data_file)
 
 # Extract data
@@ -61,13 +63,15 @@ cbar2 = plt.colorbar(im2, ax=ax2, label="$p$", fraction=0.046, pad=0.04)
 cbar2.ax.tick_params(labelsize=14)
 
 # Plot n snapshots (bottom left)
-percentages = [0,1,2,3]#[0, 20, 40, 60, 80, 100]
+percentages = [50]
 colors = plt.cm.tab10(np.linspace(0, 1, len(percentages)))
+lines_n = []
 for i, pct in enumerate(percentages):
     idx = int((pct / 100) * (len(t) - 1))
     idx = min(idx, len(t) - 1)
-    ax3.plot(x, n_t[:, idx], label=f"$t={t[idx]:.1f}/{t_final:.1f}$", 
+    line_n, = ax3.plot(x, n_t[:, idx], label=f"$t={t[idx]:.1f}/{t_final:.1f}$", 
             color=colors[i], linewidth=2)
+    lines_n.append(line_n)
 ax3.legend()
 ax3.set_xlabel("$x$")
 ax3.set_ylabel("$n$")
@@ -75,11 +79,13 @@ ax3.set_title(f"Density snapshots")
 ax3.set_xlim(0, L)
 
 # Plot p snapshots (bottom right)
+lines_p = []
 for i, pct in enumerate(percentages):
     idx = int((pct / 100) * (len(t) - 1))
     idx = min(idx, len(t) - 1)
-    ax4.plot(x, p_t[:, idx], label=f"$t={t[idx]:.1f}/{t_final:.1f}$", 
+    line_p, = ax4.plot(x, p_t[:, idx], label=f"$t={t[idx]:.1f}/{t_final:.1f}$", 
             color=colors[i], linewidth=2)
+    lines_p.append(line_p)
 ax4.legend()
 ax4.set_xlabel("$x$")
 ax4.set_ylabel("$p$")
@@ -92,6 +98,43 @@ plt.tight_layout()
 output_file = "spacetime_panel_from_data.png"
 plt.savefig(output_file, dpi=300)
 print(f"Saved spacetime panel plot → {os.path.abspath(output_file)}")
+
+# Create separate window for slider
+fig_slider = plt.figure(figsize=(8, 0.5))
+fig_slider.patch.set_facecolor('white')
+fig_slider.canvas.manager.set_window_title('')
+try:
+    toolbar = fig_slider.canvas.manager.toolbar
+    if hasattr(toolbar, 'hide'):
+        toolbar.hide()
+    elif hasattr(toolbar, 'pack_forget'):
+        toolbar.pack_forget()
+except:
+    pass
+ax_slider = plt.axes([0.07, 0.0, 1, 1])
+ax_slider.set_facecolor('white')
+ax_slider.axis('off')
+slider = Slider(ax_slider, '%', 0, 100, valinit=50, valstep=0.1)
+
+def update_snapshots(val):
+    pct = slider.val
+    idx = int((pct / 100) * (len(t) - 1))
+    idx = min(idx, len(t) - 1)
+    
+    # Update n snapshot
+    lines_n[0].set_ydata(n_t[:, idx])
+    lines_n[0].set_label(f"$t={t[idx]:.1f}/{t_final:.1f}$")
+    ax3.legend()
+    
+    # Update p snapshot
+    lines_p[0].set_ydata(p_t[:, idx])
+    lines_p[0].set_label(f"$t={t[idx]:.1f}/{t_final:.1f}$")
+    ax4.legend()
+    
+    fig.canvas.draw_idle()
+
+slider.on_changed(update_snapshots)
+
 plt.show()
 plt.close()
 
