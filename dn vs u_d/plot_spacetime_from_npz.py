@@ -6,33 +6,33 @@ from matplotlib.widgets import Slider
 from matplotlib.widgets import Slider
 
 # Set matplotlib parameters to match main.py
-mpl.rcParams.update({
-    "text.usetex": False,          # use MathText (portable)
-    "font.family": "STIXGeneral",  # match math fonts
-    "font.size": 14,
-    "mathtext.fontset": "stix",
-    "axes.unicode_minus": False,   # proper minus sign
-    "axes.labelsize": 18,           # axis label text
-    "xtick.labelsize": 16,          # x-tick labels
-    "ytick.labelsize": 16,          # y-tick labels
-})
+# mpl.rcParams.update({
+#     "text.usetex": False,          # use MathText (portable)
+#     "font.family": "STIXGeneral",  # match math fonts
+#     "font.size": 14,
+#     "mathtext.fontset": "stix",
+#     "axes.unicode_minus": False,   # proper minus sign
+#     "axes.labelsize": 18,           # axis label text
+#     "xtick.labelsize": 16,          # x-tick labels
+#     "ytick.labelsize": 16,          # y-tick labels
+# })
 
 
-# plt.rcParams['text.usetex'] = True
-# plt.rcParams['font.family'] = 'serif'
-# plt.rcParams["legend.frameon"] = False
-# # Publication-ready font sizes
-# plt.rcParams['font.size'] = 26
-# plt.rcParams['axes.labelsize'] = 26
-# plt.rcParams['axes.titlesize'] = 26
-# plt.rcParams['xtick.labelsize'] = 26
-# plt.rcParams['ytick.labelsize'] = 26
-# plt.rcParams['legend.fontsize'] = 26
-# plt.rcParams['figure.titlesize'] = 26
+plt.rcParams['text.usetex'] = True
+plt.rcParams['font.family'] = 'serif'
+plt.rcParams["legend.frameon"] = False
+# Publication-ready font sizes
+plt.rcParams['font.size'] = 26
+plt.rcParams['axes.labelsize'] = 26
+plt.rcParams['axes.titlesize'] = 26
+plt.rcParams['xtick.labelsize'] = 26
+plt.rcParams['ytick.labelsize'] = 26
+plt.rcParams['legend.fontsize'] = 26
+plt.rcParams['figure.titlesize'] = 26
 
 
 # Load data
-data_file = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p02\out_drift_ud0p5000\data_m07_ud0p5000_ud0.5.npz"
+data_file = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p01\out_drift_ud0p5000\data_m07_ud0p5000_ud0.5.npz"
 data = np.load(data_file)
 
 # Extract data
@@ -81,8 +81,8 @@ cbar2 = plt.colorbar(im2, ax=ax2, label="$p$", fraction=0.046, pad=0.04)
 cbar2.ax.tick_params(labelsize=26)
 
 # Plot n snapshots (bottom left)
-percentages = [100]
-colors = plt.cm.tab10(np.linspace(0, 1, len(percentages)))
+percentages = [0.5, 100]
+colors = ["blue", "red"]#plt.cm.tab10(np.linspace(0, 1, len(percentages)))
 lines_n = []
 for i, pct in enumerate(percentages):
     idx = int((pct / 100) * (len(t) - 1))
@@ -117,7 +117,7 @@ ax4.set_xlim(0, L)
 plt.tight_layout(pad=0.5, h_pad=0.3, w_pad=0.3)
 
 # Save figure
-output_file = "spacetime_panel_from_data.png"
+output_file = "spacetime_panel_from_data.svg"
 plt.savefig(output_file, dpi=300)
 print(f"Saved spacetime panel plot → {os.path.abspath(output_file)}")
 

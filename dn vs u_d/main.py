@@ -574,7 +574,7 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
     local_par.outdir = f"multiple_u_d/w=0.14_modes_3_5_7_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})_Dn={Dn_str}_Dp={Dp_str}/out_drift_ud{u_d_str}"
     
     if u_d > 1e-6:
-        local_par.t_final = 10*10.0/u_d
+        local_par.t_final = 20*10.0/u_d
     else:
         local_par.t_final = 50.0
     local_par.n_save = 1024
@@ -679,11 +679,11 @@ if __name__ == "__main__":
     par.w = 1.0/4
     par.include_poisson = False
     par.eps = 20.0
-    par.u_d = 0.44
+    par.u_d = 0.42
     par.maintain_drift = 'field'
     par.Kp = 0.15
-    par.Dn = 0.002
-    par.Dp = 0.02
+    par.Dn = 0.001
+    par.Dp = 0.01
     par.x0 = par.L/2
     par.lambda_diss = 0.0
     par.sigma_diss = -1.0
@@ -694,18 +694,18 @@ if __name__ == "__main__":
     par.nbar_amp = 0.0
     par.nbar_sigma = 120.0
     par.L = 10.0
-    par.Nx = 512
-    par.t_final = 200.0
-    par.n_save = 512
+    par.Nx = 1024
+    par.t_final = 350.0
+    par.n_save = 700
     par.n_floor = 1e-7
     par.dealias_23 = True
     par.seed_amp_n = 0.0
     par.seed_mode = 7
     par.seed_amp_p = 0.0
 
-    par.I_SD = 1e-3
+    par.I_SD = 3e-4
     par.x_source = 2.5
     par.x_drain = 7.5
-    par.sigma_contact = 0.15
+    par.sigma_contact = 0.25
     
     run_multiple_ud()
