@@ -32,7 +32,9 @@ plt.rcParams['figure.titlesize'] = 26
 
 
 # Load data
-data_file = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p01\out_drift_ud0p5000\data_m07_ud0p5000_ud0.5.npz"
+data_file = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p05_Dp=0p01\out_drift_ud0p5000\data_m07_ud0p5000_ud0.5.npz"
+
+# data_file = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p01\out_drift_ud0p5000\data_m07_ud0p5000_ud0.5.npz"
 data = np.load(data_file)
 
 # Extract data
@@ -81,7 +83,7 @@ cbar2 = plt.colorbar(im2, ax=ax2, label="$p$", fraction=0.046, pad=0.04)
 cbar2.ax.tick_params(labelsize=26)
 
 # Plot n snapshots (bottom left)
-percentages = [0.5, 100]
+percentages = [0.1, 100]
 colors = ["blue", "red"]#plt.cm.tab10(np.linspace(0, 1, len(percentages)))
 lines_n = []
 for i, pct in enumerate(percentages):
