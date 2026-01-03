@@ -574,7 +574,7 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
     local_par.outdir = f"multiple_u_d/w=0.14_modes_3_5_7_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})_Dn={Dn_str}_Dp={Dp_str}/out_drift_ud{u_d_str}"
     
     if u_d > 1e-6:
-        local_par.t_final = 4*10.0/u_d
+        local_par.t_final = 10*10.0/u_d
     else:
         local_par.t_final = 50.0
     local_par.n_save = 1024
@@ -671,25 +671,39 @@ def run_multiple_ud():
     print(f"{'='*60}")
 
 if __name__ == "__main__":
-    par.lambda_diss = 0.0
-    par.sigma_diss =  -1.0
-    par.x0 = 5
-    
-    par.seed_mode = 7
-    par.seed_amp_n = 0#0.030
-    par.seed_amp_p = 0#0.030
-    
-    par.L = 20.0
-    par.t_final = 50.0
-
-    par.use_nbar_gaussian = False
-    par.nbar_amp = 0.0
+    par.m = 1.0
+    par.e = 1.0
+    par.U = 1.0
+    par.nbar0 = 0.2
+    par.Gamma0 = 2.5
+    par.w = 1.0/4
     par.include_poisson = False
+    par.eps = 20.0
+    par.u_d = 0
+    par.maintain_drift = 'field'
+    par.Kp = 0.15
+    par.Dn = 0.05
+    par.Dp = 0.01
+    par.x0 = par.L/2
+    par.lambda_diss = 0.0
+    par.sigma_diss = -1.0
     par.lambda_gauss = 0.0
     par.sigma_gauss = 2.0
-    par.x0_gauss = 0
+    par.x0_gauss = par.L/2
+    par.use_nbar_gaussian = False
+    par.nbar_amp = 0.0
+    par.nbar_sigma = 120.0
+    par.L = 10.0
+    par.Nx = 2048
+    par.t_final = 1000.0
+    par.n_save = 4096
+    par.n_floor = 1e-7
+    par.dealias_23 = True
+    par.seed_amp_n = 0.00
+    par.seed_mode = 7
+    par.seed_amp_p = 0.00
 
-    par.I_SD = 1e-2  # start here; increase if needed
+    par.I_SD = 1e-3
     par.x_source = par.L/4
     par.x_drain = 3*par.L/4
     par.sigma_contact = 0.05

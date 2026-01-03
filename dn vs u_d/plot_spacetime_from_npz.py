@@ -117,7 +117,7 @@ ax4.set_xlim(0, L)
 plt.tight_layout(pad=0.5, h_pad=0.3, w_pad=0.3)
 
 # Save figure
-output_file = "spacetime_panel_from_data.png"
+output_file = "spacetime_panel_from_data.svg"
 plt.savefig(output_file, dpi=300)
 print(f"Saved spacetime panel plot → {os.path.abspath(output_file)}")
 
