@@ -11,18 +11,9 @@ import matplotlib.pyplot as plt
 from dataclasses import dataclass
 from scipy.fft import fft, ifft, fftfreq, set_workers
 from scipy.integrate import solve_ivp
-import glob
 from dataclasses import asdict
 import multiprocessing as mp
-from functools import partial
-import copy
 
-try:
-    from spectral_analysis import load_spectral_evolution, plot_spectral_evolution, plot_spectral_growth_rates, compare_spectral_evolution
-    HAS_SPECTRAL_ANALYSIS = True
-except ImportError:
-    HAS_SPECTRAL_ANALYSIS = False
-    print("[Warning] spectral_analysis module not found. Install with: pip install -e .")
 try:
     from threadpoolctl import threadpool_limits
     HAS_THREADPOOLCTL = True
@@ -45,7 +36,7 @@ class P:
     e: float = 1.0
     U: float = 1.0
     nbar0: float = 0.2
-    Gamma0: float = 2.50#0.08
+    Gamma0: float = 2.50
     w: float = 0.14
     include_poisson: bool = False
     eps: float = 20.0
@@ -57,15 +48,10 @@ class P:
     Dn: float = 0.01
     Dp: float = 0.1
 
-    J0: float = 1.0
-    sigma_J: float = 2.0**1/2
     x0: float = 12.5
-    source_model: str = "as_given"
-
 
     lambda_diss: float = 0.0
     sigma_diss: float = 2.0
-    
     lambda_gauss: float = 0.0
     sigma_gauss: float = 2.0
     x0_gauss: float = 12.5
@@ -92,23 +78,18 @@ class P:
 
 par = P()
 
-x = None
 dx = None
 k = None
 ik = None
 k2 = None
 
-_fft_cache = {}
-
 def _update_global_arrays():
-    global x, dx, k, ik, k2, _kc, _nz_mask
+    global dx, k, ik, k2, _nz_mask
 
-    x = np.linspace(0.0, par.L, par.Nx, endpoint=False)
-    dx = x[1] - x[0]
+    dx = par.L / par.Nx
     k = 2*np.pi*fftfreq(par.Nx, d=dx)
     ik = 1j*k
     k2 = k**2
-    _kc = par.Nx//3
     _nz_mask = (k2 != 0)
 
 def Dx(f):  
@@ -128,8 +109,6 @@ def filter_23(f):
     fh[kc:-kc] = 0.0
     return (ifft(fh, workers=NTHREADS)).real
 
-
-_kc = None
 _nz_mask = None
 
 def Gamma(n):
@@ -215,7 +194,6 @@ def estimate_velocity_fourier(n_t1, n_t2, t1, t2, L, power_floor=1e-3):
 def find_modulation_period_by_shift(n_t1, n_t2, t1, t2, L):
     u, shift = estimate_velocity_fourier(n_t1, n_t2, t1, t2, L)
 
-
     N = n_t1.size
     f1 = n_t1 - n_t1.mean()
     f2 = n_t2 - n_t2.mean()
@@ -226,63 +204,13 @@ def find_modulation_period_by_shift(n_t1, n_t2, t1, t2, L):
     shifts = dx * (np.arange(N) - (N//2))
     xcorr = np.roll(xcorr, -N//2)
 
-
     correlations = (xcorr - xcorr.min())/(xcorr.max()-xcorr.min() + 1e-15)
-
-
     corr_max = np.interp(shift, shifts, correlations)
 
     return u, shift, corr_max, shifts, correlations
 
-def calculate_velocity_from_period(n_initial, n_final, t_initial, t_final, L):
-    u_drift, shift_optimal, correlation_max, shifts, correlations = find_modulation_period_by_shift(
-        n_initial, n_final, t_initial, t_final, L
-    )
-
-    return u_drift, shift_optimal, correlation_max, shifts, correlations
-
-def calculate_velocity_from_shift_refined(n_initial, n_final, t_final, L, search_range=None):
-    dx = L / len(n_initial)
-    x = np.linspace(0, L, len(n_initial), endpoint=False)
-
-
-    dn_initial = n_initial - np.mean(n_initial)
-    dn_final = n_final - np.mean(n_final)
-
-
-    u_coarse, shift_coarse, _ = calculate_velocity_from_shift(n_initial, n_final, t_final, L)
-
-
-    if search_range is None:
-        u_search_width = 2.0
-        u_min = u_coarse - u_search_width
-        u_max = u_coarse + u_search_width
-    else:
-        u_min, u_max = search_range
-
-
-    n_search = 201
-    u_test = np.linspace(u_min, u_max, n_search)
-    correlations = np.zeros(n_search)
-
-    for i, u in enumerate(u_test):
-        shift = u * t_final
-
-
-        x_shifted = (x - shift) % L
-        dn_initial_shifted = np.interp(x, x_shifted, dn_initial)
-        
-        correlations[i] = np.corrcoef(dn_final, dn_initial_shifted)[0, 1]
-    
-    max_idx = np.argmax(correlations)
-    u_optimal = u_test[max_idx]
-    shift_optimal = u_optimal * t_final
-    correlation_max = correlations[max_idx]
-    
-    return u_optimal, shift_optimal, correlation_max
-
 def plot_period_detection(n_initial, n_final, t_initial, t_final, L, u_momentum, u_target, tag="period_detection"):
-    u_drift, shift_opt, corr_max, shifts, correlations = calculate_velocity_from_period(
+    u_drift, shift_opt, corr_max, shifts, correlations = find_modulation_period_by_shift(
         n_initial, n_final, t_initial, t_final, L
     )
     
@@ -321,8 +249,6 @@ def plot_period_detection(n_initial, n_final, t_initial, t_final, L, u_momentum,
     plt.savefig(f"{par.outdir}/period_detection_{tag}.png", dpi=160, bbox_inches='tight')
     plt.savefig(f"{par.outdir}/period_detection_{tag}.pdf", dpi=160, bbox_inches='tight')
     plt.close()
-    
-    return u_drift, shift_opt, corr_max
 
 def nbar_profile():
     x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
@@ -343,28 +269,7 @@ def nbar_profile():
     
     return nbar_base
 
-def pbar_profile(nbar):
-    return par.m * nbar * par.u_d
-
-def J_profile():
-    x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
-    d = periodic_delta(x_local, par.x0, par.L)
-    return par.J0 * np.exp(-0.5*(d/par.sigma_J)**2)
-
-def gamma_from_J(Jx): 
-    x_local = np.linspace(0.0, par.L, len(Jx), endpoint=False)
-    return np.trapz(Jx, x_local)/par.L
-
-def S_injection(n, nbar, Jx, gamma):
-    if par.source_model == "as_given":
-        return Jx * nbar - gamma * (n - nbar)
-    elif par.source_model == "balanced":
-        return Jx * nbar - gamma * n
-    else:
-        raise ValueError("source_model must be 'as_given' or 'balanced'")
-
 def E_base_from_drift(nbar):
-    print(np.mean(Gamma(nbar)))
     return par.m * par.u_d * np.mean(Gamma(nbar)) / par.e 
 
 def rhs(t, y, E_base):
@@ -373,7 +278,6 @@ def rhs(t, y, E_base):
     p = y[N:]
 
     nbar = nbar_profile()
-    pbar = pbar_profile(nbar)
 
     n_eff = np.maximum(n, par.n_floor)
 
@@ -442,50 +346,6 @@ def initial_fields():
             delta_p = par.seed_amp_p * cosine_perturbation
             p0 = pbar + delta_p
     
-    elif par.seed_amp_n != 0.0 and par.seed_mode != 0 and par.seed_mode != 2:
-        if par.seed_mode == 1:
-            kx1 = 2*np.pi*3 / par.L
-            kx2 = 2*np.pi*5 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
-        if par.seed_mode == 3:
-            kx1 = 2*np.pi*8 / par.L
-            kx2 = 2*np.pi*13 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
-        if par.seed_mode == 4:
-            kx1 = 2*np.pi*13 / par.L
-            kx2 = 2*np.pi*21 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
-        if par.seed_mode == 5:
-            kx1 = 2*np.pi*21 / par.L
-            kx2 = 2*np.pi*34 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
-        if par.seed_mode == 6:
-            kx1 = 2*np.pi*34 / par.L
-            kx2 = 2*np.pi*55 / par.L
-            n0 += par.seed_amp_n * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
-
-    if par.seed_amp_p != 0.0 and par.seed_mode != 0 and par.seed_mode != 2:
-        if par.seed_mode == 1:
-            kx1 = 2*np.pi*3 / par.L
-            kx2 = 2*np.pi*5 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
-        if par.seed_mode == 3:
-            kx1 = 2*np.pi*8 / par.L
-            kx2 = 2*np.pi*13 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
-        if par.seed_mode == 4:
-            kx1 = 2*np.pi*13 / par.L
-            kx2 = 2*np.pi*21 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
-        if par.seed_mode == 5:
-            kx1 = 2*np.pi*21 / par.L
-            kx2 = 2*np.pi*34 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
-        if par.seed_mode == 6:
-            kx1 = 2*np.pi*34 / par.L
-            kx2 = 2*np.pi*55 / par.L
-            p0 += par.seed_amp_p * (np.cos(kx1 * x_local)+np.cos(kx2 * x_local))
-    
     return n0, p0
 
 def save_final_spectra(m, t, n_t, p_t, L, tag=""):
@@ -506,8 +366,7 @@ def save_final_spectra(m, t, n_t, p_t, L, tag=""):
                         meta=meta)
     print(f"[save] Full data → {out}")
 
-
-def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
+def plot_fft_initial_last(n_t, t, L, tag="compare"):
     k0, P0 = _power_spectrum_1d(n_t[:, 0],   L)
     k1, P1 = _power_spectrum_1d(n_t[:, -1],  L)
 
@@ -520,9 +379,6 @@ def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
     plt.plot([k0_peak], [P0[i0]], "o", ms=6, label=f"peak0 k={k0_peak:.3f}")
     plt.plot([k1_peak], [P1[i1]], "s", ms=6, label=f"peak1 k={k1_peak:.3f}")
 
-    for km in k_marks:
-        plt.axvline(km, color="k", ls="--", lw=1, alpha=0.6)
-
     plt.xlabel("$k$")
     plt.ylabel("power $|\\hat{n}(k)|^2$")
     plt.title("Fourier spectrum of $n(x,t)$: initial vs final")
@@ -532,55 +388,6 @@ def plot_fft_initial_last(n_t, t, L, tag="compare", k_marks=()):
     plt.tight_layout()
     plt.savefig(f"{par.outdir}/fft_compare_{tag}.png", dpi=160)
     plt.savefig(f"{par.outdir}/fft_compare_{tag}.pdf", dpi=160)
-    plt.close()
-
-def plot_all_final_spectra(results, L, tag="final_overlay", normalize=False):
-    colors = ['#E41A1C', '#377EB8', '#4DAF4A', '#984EA3',
-              '#FF7F00', '#A65628', '#F781BF', '#999999']
-    markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p']
-    
-    plt.figure(figsize=(7.0, 4.0))
-    plt.style.use('default')
-    
-    for i, (m, t, n_t) in enumerate(results):
-        k, P = _power_spectrum_1d(n_t[:, 0], L) 
-        if normalize and np.max(P) > 0:
-            P = P / np.max(P)
-        
-        color = colors[i % len(colors)]
-        marker = markers[i % len(markers)]
-        
-        if m == 1:
-            plt.plot(k, P, lw=1.2, color=color, label=f"$\\cos(3x) + \\cos(5x)$")
-        elif m == 2:
-            plt.plot(k, P, lw=1.2, color=color, label=f"$\\cos(5x) + \\cos(8x)$")
-        elif m == 3:
-            plt.plot(k, P, lw=1.2, color=color, label=f"$\\cos(8x) + \\cos(15x)$")
-        elif m == 4:
-            plt.plot(k, P, lw=1.2, color=color, label=f"$\\cos(7x) + \\cos(13x)$")
-        else:
-            plt.plot(k, P, lw=1.2, color=color, label=f"$\\cos(ax) + \\cos(bx)$")
-        
-        ip = np.argmax(P)
-        plt.plot([k[ip]], [P[ip]], marker=marker, ms=6, color=color,
-                     markeredgecolor='white', markeredgewidth=1.0)
-    
-    plt.xlim(0, 20)
-    plt.xlabel("$k$", fontsize=12)
-    plt.ylabel("$|\\hat{n}(k)|^2$" + (" (norm.)" if normalize else ""), fontsize=12)
-    plt.grid(True, which="both", alpha=0.3, linestyle='--')
-    plt.legend(frameon=False, ncol=2, fontsize=9)
-    
-    ax = plt.gca()
-
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    
-    os.makedirs(par.outdir, exist_ok=True)
-    plt.tight_layout()
-    plt.title(f"Initial spectra at t = 0")
-    plt.savefig(f"{par.outdir}/fft_final_overlay_{tag}.png", dpi=300, bbox_inches='tight')
-    plt.savefig(f"{par.outdir}/fft_final_overlay_{tag}.pdf", dpi=300, bbox_inches='tight')
     plt.close()
 
 def rhs_with_progress(t, y, E_base, last_print_time=[0.0], start_time=[0.0], worker_id=0):
@@ -660,7 +467,7 @@ def run_once(tag="seed_mode", worker_id=0):
 
     print(f"[Worker {worker_id:2d}] len=",len(sol.t), idx_t1, idx_t2)
     
-    u_drift_inst, shift_opt_inst, corr_max_inst, shifts_inst, correlations_inst = calculate_velocity_from_period(
+    u_drift_inst, shift_opt_inst, corr_max_inst, _, _ = find_modulation_period_by_shift(
         n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], par.L
     )
     
@@ -705,98 +512,13 @@ def run_once(tag="seed_mode", worker_id=0):
 
     plt.tight_layout(); plt.savefig(f"{par.outdir}/snapshots_n_{tag}.png", dpi=160); plt.close()
 
-    plot_fft_initial_last(n_t, sol.t, par.L, tag=tag, k_marks=())
+    plot_fft_initial_last(n_t, sol.t, par.L, tag=tag)
     
     save_final_spectra(par.seed_mode, sol.t, n_t, p_t, par.L, tag=tag)
 
     return sol.t, n_t, p_t
 
-def measure_sigma_for_mode(m_pick=3, A=1e-3, t_short=35.0):
-    oldA, oldm = par.seed_amp_n, par.seed_mode
-    par.seed_amp_n, par.seed_mode = A, m_pick
-    t, n_t, _ = run_once(tag=f"sigma_m{m_pick}")
-
-    par.seed_amp_n, par.seed_mode = oldA, oldm
-
-    nhat_t = fft(n_t, axis=0, workers=NTHREADS)[m_pick, :]
-    amp = np.abs(nhat_t)
-    i0 = max(2, int(0.1*len(t))); i1 = int(0.5*len(t))
-    slope = np.polyfit(t[i0:i1], np.log(amp[i0:i1] + 1e-30), 1)[0]
-    print(f"[sigma] mode m={m_pick}, sigma≈{slope:+.3e}")
-    return slope
-
-
-def run_all_modes_snapshots(tag="snapshots_panels"):
-    os.makedirs(par.outdir, exist_ok=True)
-
-    modes = range(1,2)
-    results = []
-
-    oldA, oldm = par.seed_amp_n, par.seed_mode
-
-    print(f"[Multi-mode] Running {len(modes)} modes: {list(modes)}")
-    
-    multi_start_time = time.time()
-
-    try:
-        for i, m in enumerate(modes, 1):
-            print(f"\n[Multi-mode] Running mode {m} ({i}/{len(modes)})")
-            par.seed_mode = m
-            t, n_t, p_t = run_once(tag=f"m{m}")  
-            results.append((m, t, n_t))
-            save_final_spectra(m, t, n_t, p_t, par.L, tag=f"m{m}")
-            print(f"[Multi-mode] Completed mode {m}")
-
-        fig, axes = plt.subplots(
-            len(modes), 1, sharex=True,
-            figsize=(10, 12),
-            constrained_layout=True
-        )
-        if not isinstance(axes, (list, np.ndarray)):
-            axes = [axes]
-
-        for ax, (m, t, n_t) in zip(axes, results):
-            for frac in [0.0, 1.0]:
-                j = int(frac*(len(t)-1))
-                ax.plot(x, n_t[:, j], label=f"t={t[j]:.1f}")
-
-            ax.legend(fontsize=8, loc="upper right")
-            
-            if m == 1:
-                ax.set_ylabel(r"$\delta n \sim \cos(3x) + \cos(5x)$")
-            elif m == 2:
-                ax.set_ylabel(r"$\delta n \sim \cos(5x) + \cos(8x)$")
-            elif m == 3:
-                ax.set_ylabel(r"$\delta n \sim \cos(8x) + \cos(15x)$")
-            elif m == 4:
-                ax.set_ylabel(r"$\delta n \sim \cos(7x) + \cos(13x)$")
-
-        axes[-1].set_xlabel("x")
-
-        plt.suptitle(f"Density snapshots for modes m=1..5  [{tag}]")
-        outpath = f"{par.outdir}/snapshots_panels_{tag}.png"
-        plt.savefig(outpath, dpi=160)
-        outpath = f"{par.outdir}/snapshots_panels_{tag}.svg"
-        plt.savefig(outpath, dpi=160)
-        outpath = f"{par.outdir}/snapshots_panels_{tag}.pdf"
-        plt.savefig(outpath, dpi=160)
-        plt.close()
-        print(f"[plot] saved {outpath}")
-
-        plot_all_final_spectra(results, par.L, tag=tag, normalize=False)
-        
-        total_multi_time = time.time() - multi_start_time
-        print(f"\n[Multi-mode] All {len(modes)} modes completed successfully!")
-        print(f"[Multi-mode] Total wall time: {total_multi_time:.2f} seconds")
-
-    finally:
-        par.seed_amp_n, par.seed_mode = oldA, oldm
-
-
 def run_single_ud_worker(u_d, base_params, worker_id=0):
-    import copy
-    from dataclasses import dataclass
-    
     local_par = P()
     for key, value in base_params.items():
         if hasattr(local_par, key):
@@ -851,123 +573,6 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
             'success': False,
             'error': str(e)
         }
-
-def run_single_w_worker(w, u_d, base_params, worker_id=0):
-    import copy
-    from dataclasses import dataclass
-    
-    local_par = P()
-    for key, value in base_params.items():
-        if hasattr(local_par, key):
-            setattr(local_par, key, value)
-    
-    local_par.w = w
-    local_par.u_d = u_d
-    w_str = f"{w:.2f}"
-    u_d_str = f"{u_d:.1f}".replace('.', 'p')
-    Dn_str = f"{local_par.Dn:.2f}".replace('.', 'p')
-    Dp_str = f"{local_par.Dp:.2f}".replace('.', 'p')
-    local_par.outdir = f"multiple_u_d/multiple_w/w={w_str}_modes_3_5_7_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})_Dn={Dn_str}_Dp={Dp_str}/out_drift_ud{u_d_str}"
-    
-    local_par.t_final = 20*10.0/u_d
-    local_par.n_save = 512
-    local_par.Nx = 512
-    
-    global par
-    par = local_par
-    
-    _update_global_arrays()
-    
-    print(f"\n{'='*50}")
-    print(f"[Worker {worker_id:2d}] Running simulation for w = {w:.3f}, u_d = {u_d:.3f}")
-    print(f"[Worker {worker_id:2d}] Parameters: t_final={par.t_final:.2f}, Nx={par.Nx}")
-    print(f"{'='*50}")
-    
-    try:
-        start_time = time.time()
-        t, n_t, p_t = run_once(tag=f"w{w}_ud{u_d}", worker_id=worker_id)
-        elapsed = time.time() - start_time
-        
-        print(f"[Worker {worker_id:2d}] Completed w={w:.3f}, u_d={u_d:.3f} in {elapsed:.1f}s")
-        print(f"[Worker {worker_id:2d}] Final time: {t[-1]:.3f}, Data shapes: n_t={n_t.shape}, p_t={p_t.shape}")
-        
-        return {
-            'w': w,
-            'u_d': u_d,
-            'success': True,
-            'elapsed_time': elapsed,
-            'final_time': t[-1],
-            'outdir': par.outdir
-        }
-        
-    except Exception as e:
-        print(f"[Worker {worker_id:2d}] Error in simulation for w={w}, u_d={u_d}: {e}")
-        import traceback
-        traceback.print_exc()
-        return {
-            'w': w,
-            'u_d': u_d,
-            'success': False,
-            'elapsed_time': 0,
-            'final_time': 0,
-            'outdir': par.outdir,
-            'error': str(e)
-        }
-
-def run_multiple_w():
-    w_values = np.arange(0.01, 0.16, 0.01)
-    u_d_values = np.arange(0.8, 2.0, 0.1)
-    
-    print(f"[run_multiple_w] Running parameter sweep with {len(w_values)} w values and {len(u_d_values)} u_d values")
-    print(f"[run_multiple_w] w range: [{w_values[0]:.2f}, {w_values[-1]:.2f}]")
-    print(f"[run_multiple_w] u_d range: [{u_d_values[0]:.1f}, {u_d_values[-1]:.1f}]")
-    print(f"[run_multiple_w] Total combinations: {len(w_values) * len(u_d_values)}")
-
-    base_params = asdict(par)
-    
-    combinations = [(w, u_d) for w in w_values for u_d in u_d_values]
-    
-    n_cpus = mp.cpu_count()
-    n_workers = min(len(combinations), max(1, n_cpus - 1))
-    
-    print(f"\n[Parallel] Using {n_workers} parallel workers (out of {n_cpus} CPUs)")
-    print(f"[Parallel] Running {len(combinations)} simulations in parallel")
-    print(f"[Parallel] Progress will be shown for each worker simultaneously")
-    print(f"[Parallel] Each worker will update its progress line independently")
-    
-    overall_start_time = time.time()
-    
-    with mp.Pool(processes=n_workers) as pool:
-        worker_args = [(w, u_d, base_params, i) for i, (w, u_d) in enumerate(combinations)]
-        results = pool.starmap(run_single_w_worker, worker_args)
-    
-    overall_elapsed = time.time() - overall_start_time
-    
-    print(f"\n{'='*60}")
-    print(f"ALL SIMULATIONS COMPLETED!")
-    print(f"{'='*60}")
-    print(f"Total wall time: {overall_elapsed:.1f}s ({overall_elapsed/60:.1f} minutes)")
-    print(f"\nSummary:")
-    
-    successful = [r for r in results if r['success']]
-    failed = [r for r in results if not r['success']]
-    
-    print(f"  Successful: {len(successful)}/{len(results)}")
-    print(f"  Failed: {len(failed)}/{len(results)}")
-    
-    if successful:
-        print(f"\nSuccessful simulations (first 10):")
-        for r in successful[:10]:
-            print(f"  w={r['w']:.2f}, u_d={r['u_d']:.1f}: {r['elapsed_time']:.1f}s, t_final={r['final_time']:.3f}")
-        if len(successful) > 10:
-            print(f"  ... and {len(successful) - 10} more")
-    
-    if failed:
-        print(f"\nFailed simulations:")
-        for r in failed:
-            print(f"  w={r['w']:.2f}, u_d={r['u_d']:.1f}: {r.get('error', 'Unknown error')}")
-    
-    print(f"{'='*60}")
 
 def run_multiple_ud():
     u_d_values = np.arange(0.372, 0.5, 0.002)
