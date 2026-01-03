@@ -679,11 +679,11 @@ if __name__ == "__main__":
     par.w = 1.0/4
     par.include_poisson = False
     par.eps = 20.0
-    par.u_d = 0
+    par.u_d = 0.44
     par.maintain_drift = 'field'
     par.Kp = 0.15
-    par.Dn = 0.05
-    par.Dp = 0.01
+    par.Dn = 0.002
+    par.Dp = 0.02
     par.x0 = par.L/2
     par.lambda_diss = 0.0
     par.sigma_diss = -1.0
@@ -694,18 +694,18 @@ if __name__ == "__main__":
     par.nbar_amp = 0.0
     par.nbar_sigma = 120.0
     par.L = 10.0
-    par.Nx = 2048
-    par.t_final = 1000.0
-    par.n_save = 4096
+    par.Nx = 512
+    par.t_final = 200.0
+    par.n_save = 512
     par.n_floor = 1e-7
     par.dealias_23 = True
-    par.seed_amp_n = 0.00
+    par.seed_amp_n = 0.0
     par.seed_mode = 7
-    par.seed_amp_p = 0.00
+    par.seed_amp_p = 0.0
 
     par.I_SD = 1e-3
-    par.x_source = par.L/4
-    par.x_drain = 3*par.L/4
-    par.sigma_contact = 0.05
+    par.x_source = 2.5
+    par.x_drain = 7.5
+    par.sigma_contact = 0.15
     
     run_multiple_ud()
