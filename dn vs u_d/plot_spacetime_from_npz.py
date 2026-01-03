@@ -2,8 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib as mpl
-from matplotlib.widgets import Slider
-from matplotlib.widgets import Slider
+from matplotlib.widgets import Slider, Button
 
 # Set matplotlib parameters to match main.py
 # mpl.rcParams.update({
@@ -32,7 +31,7 @@ plt.rcParams['figure.titlesize'] = 26
 
 
 # Load data
-data_file = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p05_Dp=0p01\out_drift_ud0p5000\data_m07_ud0p5000_ud0.5.npz"
+data_file = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz""D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p01\out_drift_ud0p5000\data_m07_ud0p5000_ud0.5.npz"
 
 # data_file = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p01\out_drift_ud0p5000\data_m07_ud0p5000_ud0.5.npz"
 data = np.load(data_file)
@@ -83,7 +82,7 @@ cbar2 = plt.colorbar(im2, ax=ax2, label="$p$", fraction=0.046, pad=0.04)
 cbar2.ax.tick_params(labelsize=26)
 
 # Plot n snapshots (bottom left)
-percentages = [0.1, 100]
+percentages = [0.2, 100]
 colors = ["blue", "red"]#plt.cm.tab10(np.linspace(0, 1, len(percentages)))
 lines_n = []
 for i, pct in enumerate(percentages):
@@ -119,7 +118,7 @@ ax4.set_xlim(0, L)
 plt.tight_layout(pad=0.5, h_pad=0.3, w_pad=0.3)
 
 # Save figure
-output_file = "spacetime_panel_from_data.svg"
+output_file = "spacetime_panel_from_data.png"
 plt.savefig(output_file, dpi=300)
 print(f"Saved spacetime panel plot → {os.path.abspath(output_file)}")
 
@@ -135,15 +134,32 @@ try:
         toolbar.pack_forget()
 except:
     pass
-ax_slider = plt.axes([0.07, 0.0, 1, 1])
+
+# Calculate step size for one index
+nt = len(t)
+pct_per_index = 100.0 / (nt - 1) if nt > 1 else 100.0
+
+# Create slider with adjusted step
+ax_slider = plt.axes([0.15, 0.0, 0.7, 1])
 ax_slider.set_facecolor('white')
 ax_slider.axis('off')
-slider = Slider(ax_slider, '%', 0, 100, valinit=100, valstep=0.1)
+slider = Slider(ax_slider, '%', 0, 100, valinit=100, valstep=pct_per_index)
+
+# Create arrow buttons
+ax_prev = plt.axes([0.02, 0.0, 0.1, 1])
+ax_prev.set_facecolor('white')
+ax_prev.axis('off')
+btn_prev = Button(ax_prev, '◀', color='white', hovercolor='lightgray')
+
+ax_next = plt.axes([0.87, 0.0, 0.1, 1])
+ax_next.set_facecolor('white')
+ax_next.axis('off')
+btn_next = Button(ax_next, '▶', color='white', hovercolor='lightgray')
 
 def update_snapshots(val):
     pct = slider.val
-    idx = int((pct / 100) * (len(t) - 1))
-    idx = min(idx, len(t) - 1)
+    idx = int((pct / 100) * (nt - 1))
+    idx = min(max(idx, 0), nt - 1)
     
     # Update n snapshot
     lines_n[0].set_ydata(n_t[:, idx])
@@ -157,7 +173,23 @@ def update_snapshots(val):
     
     fig.canvas.draw_idle()
 
+def step_prev(event):
+    current_idx = int((slider.val / 100) * (nt - 1))
+    current_idx = min(max(current_idx, 0), nt - 1)
+    new_idx = max(0, current_idx - 1)
+    new_pct = (new_idx / (nt - 1)) * 100.0 if nt > 1 else 0.0
+    slider.set_val(new_pct)
+
+def step_next(event):
+    current_idx = int((slider.val / 100) * (nt - 1))
+    current_idx = min(max(current_idx, 0), nt - 1)
+    new_idx = min(nt - 1, current_idx + 1)
+    new_pct = (new_idx / (nt - 1)) * 100.0 if nt > 1 else 100.0
+    slider.set_val(new_pct)
+
 slider.on_changed(update_snapshots)
+btn_prev.on_clicked(step_prev)
+btn_next.on_clicked(step_next)
 
 plt.show()
 plt.close()

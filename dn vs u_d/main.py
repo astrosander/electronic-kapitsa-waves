@@ -74,6 +74,7 @@ class P:
     seed_amp_p: float = 0#0.030
 
     I_SD: float = 0.0
+    u_inj: float = 0.0
     x_source: float = 2.5
     x_drain: float = 7.5
     sigma_contact: float = 0.05
@@ -341,7 +342,7 @@ def rhs(t, y, E_base):
 
     dp_dt = -Gamma_spatial(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p)
     if par.I_SD != 0.0:
-        dp_dt = dp_dt + (par.m * par.u_d * par.I_SD) * (_sd_src - _sd_drn)
+        dp_dt = dp_dt + (par.m * par.u_inj * par.I_SD) * (_sd_src - _sd_drn)
     dp_dt = filter_23(dp_dt)
 
     return np.concatenate([dn_dt, dp_dt])
@@ -572,14 +573,14 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
     Dn_str = f"{local_par.Dn:.2f}".replace('.', 'p')
     Dp_str = f"{local_par.Dp:.2f}".replace('.', 'p')
     local_par.outdir = f"multiple_u_d/w=0.14_modes_3_5_7_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})_Dn={Dn_str}_Dp={Dp_str}/out_drift_ud{u_d_str}"
-    
-    if u_d > 1e-6:
-        local_par.t_final = 20*10.0/u_d
+
+    if local_par.u_inj > 1e-6:
+        local_par.t_final = 20*10.0/local_par.u_inj
     else:
         local_par.t_final = 50.0
-    local_par.n_save = 1024
+    # local_par.n_save = 1024
     
-    local_par.Nx = 512*2
+    # local_par.Nx = 512*2
     
     global par
     par = local_par
@@ -618,7 +619,7 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
         }
 
 def run_multiple_ud():
-    u_d_values = [0.5]
+    u_d_values = [0]
     
     print(f"[run_multiple_ud] Running single simulation with u_d = {u_d_values[0]:.4f}")
     
@@ -675,15 +676,20 @@ if __name__ == "__main__":
     par.e = 1.0
     par.U = 1.0
     par.nbar0 = 0.2
-    par.Gamma0 = 2.5
+    par.Gamma0 = 1#2.5
     par.w = 1.0/4
     par.include_poisson = False
     par.eps = 20.0
-    par.u_d = 0.42
+    par.u_d = 0#0.42
     par.maintain_drift = 'field'
     par.Kp = 0.15
-    par.Dn = 0.001
-    par.Dp = 0.01
+    # par.Dn = 3e-4
+    # par.Dp = 3e-3
+    # par.Dn = 0.001 
+    # par.Dp = 0.01
+    par.Dn = 3e-4
+    par.Dp = 3e-3
+
     par.x0 = par.L/2
     par.lambda_diss = 0.0
     par.sigma_diss = -1.0
@@ -694,16 +700,17 @@ if __name__ == "__main__":
     par.nbar_amp = 0.0
     par.nbar_sigma = 120.0
     par.L = 10.0
-    par.Nx = 1024
-    par.t_final = 350.0
+    par.Nx = 1024*2
+    par.t_final = 1024
     par.n_save = 700
     par.n_floor = 1e-7
     par.dealias_23 = True
-    par.seed_amp_n = 0.0
+    par.seed_amp_n = 0.0#3
     par.seed_mode = 7
-    par.seed_amp_p = 0.0
+    par.seed_amp_p = 0.0#3
 
-    par.I_SD = 3e-4
+    par.I_SD = 1e-2
+    par.u_inj = 5
     par.x_source = 2.5
     par.x_drain = 7.5
     par.sigma_contact = 0.25
