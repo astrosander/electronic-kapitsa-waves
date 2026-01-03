@@ -45,33 +45,38 @@ class P:
     maintain_drift: str = "field"
     Kp: float = 0.15
 
-    Dn: float = 0.01
-    Dp: float = 0.1
+    Dn: float = 0.03
+    Dp: float = 0.03
 
-    x0: float = 12.5
+    x0: float = 5
 
     lambda_diss: float = 0.0
     sigma_diss: float = 2.0
     lambda_gauss: float = 0.0
     sigma_gauss: float = 2.0
-    x0_gauss: float = 12.5
+    x0_gauss: float = 5
 
     use_nbar_gaussian: bool = False
     nbar_amp: float = 0.0
     nbar_sigma: float = 120.0
 
     L: float = 10.0
-    Nx: int = 1212
+    Nx: int = 5120
     t_final: float = 50.0
-    n_save: int = 100
+    n_save: int = 1000
     rtol = 1e-4
     atol = 1e-7
     n_floor: float = 1e-7
     dealias_23: bool = True
 
-    seed_amp_n: float = 0.030
+    seed_amp_n: float = 0#0.030
     seed_mode: int = 7
-    seed_amp_p: float = 0.030
+    seed_amp_p: float = 0#0.030
+
+    I_SD: float = 0.0
+    x_source: float = 2.5
+    x_drain: float = 7.5
+    sigma_contact: float = 0.05
 
     outdir: str = "out_drift/small_dissipation_perturbation"
     cmap: str = "inferno"
@@ -82,15 +87,21 @@ dx = None
 k = None
 ik = None
 k2 = None
+_x_grid = None
+_sd_src = None
+_sd_drn = None
+_sd_key = None
 
 def _update_global_arrays():
-    global dx, k, ik, k2, _nz_mask
+    global dx, k, ik, k2, _nz_mask, _x_grid
 
     dx = par.L / par.Nx
     k = 2*np.pi*fftfreq(par.Nx, d=dx)
     ik = 1j*k
     k2 = k**2
     _nz_mask = (k2 != 0)
+    _x_grid = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+    _update_source_drain_profiles()
 
 def Dx(f):  
     if k is None or len(k) != len(f):
@@ -135,6 +146,32 @@ def phi_from_n(n, nbar):
     return (ifft(phi_hat, workers=NTHREADS)).real
 
 def periodic_delta(x, x0, L): return (x - x0 + 0.5*L) % L - 0.5*L
+
+def _normalized_delta_profile(x, x0, L, sigma):
+    x0 = float(x0) % float(L)
+    if sigma is None or sigma <= 0.0:
+        g = np.zeros_like(x)
+        idx = int(np.round(x0 / dx)) % par.Nx
+        g[idx] = 1.0 / dx
+        return g
+    d = periodic_delta(x, x0, L)
+    g = np.exp(-0.5 * (d / sigma)**2)
+    g /= (g.sum() * dx)
+    return g
+
+def _update_source_drain_profiles():
+    global _sd_src, _sd_drn, _sd_key
+    key = (par.Nx, float(par.L), float(par.I_SD != 0.0),
+           float(par.x_source), float(par.x_drain), float(par.sigma_contact))
+    if _sd_key == key:
+        return
+    if par.I_SD == 0.0:
+        _sd_src = None
+        _sd_drn = None
+    else:
+        _sd_src = _normalized_delta_profile(_x_grid, par.x_source, par.L, par.sigma_contact)
+        _sd_drn = _normalized_delta_profile(_x_grid, par.x_drain,  par.L, par.sigma_contact)
+    _sd_key = key
 
 def _power_spectrum_1d(n_slice, L):
     N = n_slice.size
@@ -288,7 +325,11 @@ def rhs(t, y, E_base):
     else:
         E_eff = E_base
 
+    _update_source_drain_profiles()
+
     dn_dt = -Dx(p) + par.Dn * Dxx(n)
+    if par.I_SD != 0.0:
+        dn_dt = dn_dt + par.I_SD * (_sd_src - _sd_drn)
     dn_dt = filter_23(dn_dt)
 
     Pi = Pi0(n_eff) + (p**2)/(par.m*n_eff)
@@ -299,6 +340,8 @@ def rhs(t, y, E_base):
         force_Phi = n_eff * Dx(phi)
 
     dp_dt = -Gamma_spatial(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p)
+    if par.I_SD != 0.0:
+        dp_dt = dp_dt + (par.m * par.u_d * par.I_SD) * (_sd_src - _sd_drn)
     dp_dt = filter_23(dp_dt)
 
     return np.concatenate([dn_dt, dp_dt])
@@ -531,12 +574,12 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
     local_par.outdir = f"multiple_u_d/w=0.14_modes_3_5_7_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})_Dn={Dn_str}_Dp={Dp_str}/out_drift_ud{u_d_str}"
     
     if u_d > 1e-6:
-        local_par.t_final = 20*10.0/u_d
+        local_par.t_final = 4*10.0/u_d
     else:
         local_par.t_final = 50.0
-    local_par.n_save = 512
+    local_par.n_save = 1024
     
-    local_par.Nx = 512
+    local_par.Nx = 512*2
     
     global par
     par = local_par
@@ -575,35 +618,33 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
         }
 
 def run_multiple_ud():
-    u_d_values = np.arange(0.372, 0.5, 0.002)
+    u_d_values = [0.5]
     
-    print(f"[run_multiple_ud] Running parameter sweep with {len(u_d_values)} u_d values")
-    print(f"[run_multiple_ud] Range: [{u_d_values[0]:.4f}, {u_d_values[-1]:.4f}]")
-    print(f"[run_multiple_ud] Step size: {u_d_values[1] - u_d_values[0]:.4f}")
-    print(f"[run_multiple_ud] u_d values: {u_d_values}")
-
-    print(f"[run_multiple_ud] u_d values to simulate: {u_d_values}")
+    print(f"[run_multiple_ud] Running single simulation with u_d = {u_d_values[0]:.4f}")
     
     base_params = asdict(par)
     
-    n_cpus = mp.cpu_count()
-    n_workers = min(len(u_d_values), max(1, n_cpus - 1))
-    
-    print(f"\n[Parallel] Using {n_workers} parallel workers (out of {n_cpus} CPUs)")
-    print(f"[Parallel] Running {len(u_d_values)} simulations in parallel")
-    print(f"[Parallel] Progress will be shown for each worker simultaneously")
-    print(f"[Parallel] Each worker will update its progress line independently")
+    # n_cpus = mp.cpu_count()
+    # n_workers = min(len(u_d_values), max(1, n_cpus - 1))
+    # 
+    # print(f"\n[Parallel] Using {n_workers} parallel workers (out of {n_cpus} CPUs)")
+    # print(f"[Parallel] Running {len(u_d_values)} simulations in parallel")
+    # print(f"[Parallel] Progress will be shown for each worker simultaneously")
+    # print(f"[Parallel] Each worker will update its progress line independently")
     
     overall_start_time = time.time()
     
-    with mp.Pool(processes=n_workers) as pool:
-        worker_args = [(u_d, base_params, i) for i, u_d in enumerate(u_d_values)]
-        results = pool.starmap(run_single_ud_worker, worker_args)
+    # with mp.Pool(processes=n_workers) as pool:
+    #     worker_args = [(u_d, base_params, i) for i, u_d in enumerate(u_d_values)]
+    #     results = pool.starmap(run_single_ud_worker, worker_args)
+    
+    result = run_single_ud_worker(u_d_values[0], base_params, worker_id=0)
+    results = [result]
     
     overall_elapsed = time.time() - overall_start_time
     
     print(f"\n{'='*60}")
-    print(f"ALL SIMULATIONS COMPLETED!")
+    print(f"SIMULATION COMPLETED!")
     print(f"{'='*60}")
     print(f"Total wall time: {overall_elapsed:.1f}s ({overall_elapsed/60:.1f} minutes)")
     print(f"\nSummary:")
@@ -617,10 +658,10 @@ def run_multiple_ud():
     if successful:
         total_sim_time = sum(r['elapsed_time'] for r in successful)
         avg_time = total_sim_time / len(successful)
-        speedup = total_sim_time / overall_elapsed
+        # speedup = total_sim_time / overall_elapsed
         print(f"  Average simulation time: {avg_time:.1f}s")
         print(f"  Total simulation time (sequential equivalent): {total_sim_time:.1f}s")
-        print(f"  Parallel speedup: {speedup:.2f}x")
+        # print(f"  Parallel speedup: {speedup:.2f}x")
     
     if failed:
         print(f"\nFailed simulations:")
@@ -632,13 +673,13 @@ def run_multiple_ud():
 if __name__ == "__main__":
     par.lambda_diss = 0.0
     par.sigma_diss =  -1.0
-    par.x0 = 12.5
+    par.x0 = 5
     
     par.seed_mode = 7
-    par.seed_amp_n = 0.030
-    par.seed_amp_p = 0.030
+    par.seed_amp_n = 0#0.030
+    par.seed_amp_p = 0#0.030
     
-    par.L = 10.0
+    par.L = 20.0
     par.t_final = 50.0
 
     par.use_nbar_gaussian = False
@@ -646,6 +687,11 @@ if __name__ == "__main__":
     par.include_poisson = False
     par.lambda_gauss = 0.0
     par.sigma_gauss = 2.0
-    par.x0_gauss = 12.5
+    par.x0_gauss = 0
+
+    par.I_SD = 1e-2  # start here; increase if needed
+    par.x_source = par.L/4
+    par.x_drain = 3*par.L/4
+    par.sigma_contact = 0.05
     
     run_multiple_ud()

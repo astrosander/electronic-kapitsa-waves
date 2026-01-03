@@ -16,7 +16,7 @@ mpl.rcParams.update({
 })
 
 # Load data
-data_file = "out_ds_open_unstable_M07/data_m07_ud0p7000_ds_open_unstable_M07.npz"
+data_file = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0, seed_amp_p=0)_Dn=0p03_Dp=0p03\out_drift_ud0p5000\data_m07_ud0p5000_ud0.5.npz"
 data = np.load(data_file)
 
 # Extract data
@@ -61,7 +61,7 @@ cbar2 = plt.colorbar(im2, ax=ax2, label="$p$", fraction=0.046, pad=0.04)
 cbar2.ax.tick_params(labelsize=14)
 
 # Plot n snapshots (bottom left)
-percentages = [0, 20, 40, 60, 80, 100]
+percentages = [0,1,2,3]#[0, 20, 40, 60, 80, 100]
 colors = plt.cm.tab10(np.linspace(0, 1, len(percentages)))
 for i, pct in enumerate(percentages):
     idx = int((pct / 100) * (len(t) - 1))
