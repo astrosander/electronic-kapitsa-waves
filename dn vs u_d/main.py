@@ -67,8 +67,8 @@ class P:
     Nx: int = 5120
     t_final: float = 50.0
     n_save: int = 1000
-    rtol = 1e-5
-    atol = 1e-8
+    rtol = 1e-4
+    atol = 1e-7
     n_floor: float = 1e-7
     n_smooth: float = 1e-4
     dealias_23: bool = True
@@ -344,8 +344,8 @@ def rhs(t, y, E_base):
     if par.I_SD != 0.0:
         Ieff = par.I_SD * (1.0 - np.exp(-t / par.I_ramp_tau))
         # Optional: "physics noise" at the contacts (instead of roundoff)
-        eta = 1e-6 * np.random.randn()     # 1 ppm current noise
-        Ieff = Ieff * (1.0 + eta)
+        # eta = 0#1e-6 * np.random.randn()     # 1 ppm current noise
+        # Ieff = Ieff * (1.0 + eta)
 
     dn_dt = -Dx(p) + par.Dn * Dxx(n_eff)
     if par.I_SD != 0.0:
@@ -357,6 +357,7 @@ def rhs(t, y, E_base):
     dn_dt = filter_23(dn_dt)
 
     Pi = Pi0(n_eff) + (p**2)/(par.m*n_eff)
+    # Pi = Pi0(n_eff) + (p**2)/(par.m*(n_eff + par.n_floor))
     grad_Pi = Dx(Pi)
     force_Phi = 0.0
     if par.include_poisson:
@@ -537,7 +538,7 @@ def run_once(tag="seed_mode", worker_id=0):
     if not sol.success:
         print(f"[Worker {worker_id:2d}] WARNING: Solver did not succeed! Message: {sol.message}")
         print(f"[Worker {worker_id:2d}] Number of time points: {len(sol.t)}")
-        raise RuntimeError(f"Solver failed: {sol.message}")
+        print(f"[Worker {worker_id:2d}] Saving available data up to t={sol.t[-1]:.3f}")
 
     N = par.Nx
     n_t = sol.y[:N,:]
@@ -762,45 +763,35 @@ def run_multiple_ud():
     print(f"{'='*60}")
 
 if __name__ == "__main__":
-    par.m = 1.0
-    par.e = 1.0
-    par.U = 1.0
-    par.nbar0 = 0.20
-    par.Gamma0 = 12.0             # makes lambda* ~ 3.45 < L_SD,eff
-    par.w = 0.10
-    par.include_poisson = False
-    par.eps = 20.0
+    par.nbar0 = 10#0.20
+    par.w = 1#0.40
+    par.Gamma0 = 8.0
+
     par.u_d = 0.0
-    par.maintain_drift = "field"
-    par.Kp = 0.15
-    par.Dn = 0.1#3e-4                 # DO NOT use 0.1
-    par.Dp = 0.1#3e-3                 # DO NOT use 1.0
-    par.nu4n = 1e-7
-    par.nu4p = 1e-7
-    par.x0 = 5.0
-    par.lambda_diss = 0.0
-    par.sigma_diss = 2.0
-    par.lambda_gauss = 0.0
-    par.sigma_gauss = 2.0
-    par.x0_gauss = 5.0
-    par.use_nbar_gaussian = False
-    par.nbar_amp = 0.0
-    par.nbar_sigma = 120.0
-    par.L = 10.0
-    par.Nx = 512#1024
-    par.t_final = 80#300           # give it time if growth is modest
+    par.include_poisson = False
+
+    par.Dn = 1e-2
+    par.Dp = 1e-1
+    par.nu4n = 0#1e-9
+    par.nu4p = 0#1e-9
+
+    par.Nx = 512
+    par.t_final = 300.0
     par.n_save = 2000
-    par.n_floor = 0.0001
-    par.n_smooth = 0.0001
-    par.dealias_23 = True
-    par.seed_amp_n = 0.01
+
+    par.n_floor  = 5e-4
+    par.n_smooth = 5e-4
+
     par.seed_mode = 7
-    par.seed_amp_p = 0.01
-    par.I_SD = 0.010               # if u_bulk/u_c still <1, raise to 0.15–0.20
-    par.u_inj = 0.50              # target drift scale > u_c ~ 0.224
-    par.I_ramp_tau = 5.0          # avoid shocking the solver / overshoot
-    par.x_source = 2.5
-    par.x_drain = 7.5
-    par.sigma_contact = 0.15      # narrower contacts => larger L_SD,eff
-        
+    par.seed_amp_n = 5e-3
+    par.seed_amp_p = 5e-3
+
+    par.I_SD = 0.06
+    par.u_inj = 0.1#2.50
+    par.I_ramp_tau = 0.01#30.0
+    # par.L=20
+    par.x_source = 2.5#*2
+    par.x_drain  = 7.5#*2
+    par.sigma_contact = 0.3#30
+
     run_multiple_ud()

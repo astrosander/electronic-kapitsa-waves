@@ -17,21 +17,21 @@ from matplotlib.widgets import Slider, Button
 # })
 
 
-plt.rcParams['text.usetex'] = True
-plt.rcParams['font.family'] = 'serif'
-plt.rcParams["legend.frameon"] = False
-# Publication-ready font sizes
-plt.rcParams['font.size'] = 26
-plt.rcParams['axes.labelsize'] = 26
-plt.rcParams['axes.titlesize'] = 26
-plt.rcParams['xtick.labelsize'] = 26
-plt.rcParams['ytick.labelsize'] = 26
-plt.rcParams['legend.fontsize'] = 26
-plt.rcParams['figure.titlesize'] = 26
+# plt.rcParams['text.usetex'] = True
+# plt.rcParams['font.family'] = 'serif'
+# plt.rcParams["legend.frameon"] = False
+# # Publication-ready font sizes
+# plt.rcParams['font.size'] = 28
+# plt.rcParams['axes.labelsize'] = 28
+# plt.rcParams['axes.titlesize'] = 28
+# plt.rcParams['xtick.labelsize'] = 28
+# plt.rcParams['ytick.labelsize'] = 28
+# plt.rcParams['legend.fontsize'] = 28
+# plt.rcParams['figure.titlesize'] = 28
 
 
 # Load data
-data_file = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz""D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p01\out_drift_ud0p5000\data_m07_ud0p5000_ud0.5.npz"
+data_file = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\last\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\last\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\last\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=2.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=2.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz""D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p00\out_drift_ud0p0000\data_m07_ud0p0000_ud0.npz"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p01\out_drift_ud0p5000\data_m07_ud0p5000_ud0.5.npz"
 
 # data_file = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\dn vs u_d\multiple_u_d\w=0.14_modes_3_5_7_L10(lambda=0.0, sigma=-1.0, seed_amp_n=0.0, seed_amp_p=0.0)_Dn=0p00_Dp=0p01\out_drift_ud0p5000\data_m07_ud0p5000_ud0.5.npz"
 data = np.load(data_file)
@@ -46,6 +46,7 @@ Nx = int(data['Nx'])
 # Get t_final from meta if available, otherwise use t.max()
 try:
     meta = data['meta'].item()
+    
     t_final = meta.get('t_final', t.max())
 except:
     t_final = t.max()
@@ -55,7 +56,7 @@ x = np.linspace(0.0, L, Nx, endpoint=False)
 extent = [x.min(), x.max(), t.min(), t.max()]
 
 # Create panel figure with 2 rows, 2 columns
-fig, axes = plt.subplots(2, 2, figsize=(19.2, 10.0))
+fig, axes = plt.subplots(2, 2, figsize=(19.2, 19.2/11.69*8.27))
 ax1, ax2 = axes[0, 0], axes[0, 1]  # First row: spacetime plots
 ax3, ax4 = axes[1, 0], axes[1, 1]  # Second row: snapshots
 
@@ -68,7 +69,7 @@ ax1.set_xlabel("$x$")
 ax1.set_ylabel("$t$")
 ax1.set_title(f"$n(x,t)$  [lab]")
 cbar1 = plt.colorbar(im1, ax=ax1, label="$n$", fraction=0.046, pad=0.04)
-cbar1.ax.tick_params(labelsize=26)
+cbar1.ax.tick_params(labelsize=28)
 
 # Plot p(x,t) in second panel (top right)
 im2 = ax2.imshow(p_t.T, origin="lower", aspect="auto",
@@ -79,7 +80,7 @@ ax2.set_xlabel("$x$")
 ax2.set_ylabel("$t$")
 ax2.set_title(f"$p(x,t)$  [lab]")
 cbar2 = plt.colorbar(im2, ax=ax2, label="$p$", fraction=0.046, pad=0.04)
-cbar2.ax.tick_params(labelsize=26)
+cbar2.ax.tick_params(labelsize=28)
 
 # Plot n snapshots (bottom left)
 percentages = [0.2, 100]
