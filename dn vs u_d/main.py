@@ -1,7 +1,7 @@
 import os
 import time
 import multiprocessing as mp
-NTHREADS = int(os.environ.get("NTHREADS", mp.cpu_count()))
+NTHREADS = int(os.environ.get("NTHREADS", 1))#mp.cpu_count()
 os.environ["OMP_NUM_THREADS"] = str(NTHREADS)
 os.environ["OPENBLAS_NUM_THREADS"] = str(NTHREADS)
 os.environ["MKL_NUM_THREADS"] = str(NTHREADS)
@@ -47,6 +47,9 @@ class P:
 
     Dn: float = 0.03
     Dp: float = 0.03
+    
+    nu4n: float = 0.0
+    nu4p: float = 0.0
 
     x0: float = 5
 
@@ -64,9 +67,10 @@ class P:
     Nx: int = 5120
     t_final: float = 50.0
     n_save: int = 1000
-    rtol = 1e-4
-    atol = 1e-7
+    rtol = 1e-5
+    atol = 1e-8
     n_floor: float = 1e-7
+    n_smooth: float = 1e-4
     dealias_23: bool = True
 
     seed_amp_n: float = 0#0.030
@@ -75,6 +79,7 @@ class P:
 
     I_SD: float = 0.0
     u_inj: float = 0.0
+    I_ramp_tau: float = 1.0
     x_source: float = 2.5
     x_drain: float = 7.5
     sigma_contact: float = 0.05
@@ -113,6 +118,11 @@ def Dxx(f):
     if k2 is None or len(k2) != len(f):
         _update_global_arrays()
     return (ifft((-k2) * fft(f, workers=NTHREADS), workers=NTHREADS)).real
+
+def Dxxxx(f):
+    if k2 is None or len(k2) != len(f):
+        _update_global_arrays()
+    return (ifft((k2**2) * fft(f, workers=NTHREADS), workers=NTHREADS)).real
 
 def filter_23(f):
     if not par.dealias_23: return f
@@ -317,7 +327,8 @@ def rhs(t, y, E_base):
 
     nbar = nbar_profile()
 
-    n_eff = np.maximum(n, par.n_floor)
+    z = n - par.n_floor
+    n_eff = par.n_floor + 0.5*(z + np.sqrt(z*z + par.n_smooth**2))
 
     v = p/(par.m*n_eff)
     u_mean = float(np.mean(v))
@@ -328,9 +339,21 @@ def rhs(t, y, E_base):
 
     _update_source_drain_profiles()
 
-    dn_dt = -Dx(p) + par.Dn * Dxx(n)
+    # Compute Ieff once (with optional physics noise) and reuse in both dn_dt and dp_dt
+    Ieff = 0.0
     if par.I_SD != 0.0:
-        dn_dt = dn_dt + par.I_SD * (_sd_src - _sd_drn)
+        Ieff = par.I_SD * (1.0 - np.exp(-t / par.I_ramp_tau))
+        # Optional: "physics noise" at the contacts (instead of roundoff)
+        eta = 1e-6 * np.random.randn()     # 1 ppm current noise
+        Ieff = Ieff * (1.0 + eta)
+
+    dn_dt = -Dx(p) + par.Dn * Dxx(n_eff)
+    if par.I_SD != 0.0:
+        drain_factor = (n_eff / par.nbar0)
+        sd_drive = _sd_src - _sd_drn * drain_factor
+        dn_dt = dn_dt + Ieff * sd_drive
+    dn_dt = np.where((n <= par.n_floor) & (dn_dt < 0.0), 0.0, dn_dt)
+    dn_dt = dn_dt - par.nu4n * Dxxxx(n)
     dn_dt = filter_23(dn_dt)
 
     Pi = Pi0(n_eff) + (p**2)/(par.m*n_eff)
@@ -342,7 +365,13 @@ def rhs(t, y, E_base):
 
     dp_dt = -Gamma_spatial(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p)
     if par.I_SD != 0.0:
-        dp_dt = dp_dt + (par.m * par.u_inj * par.I_SD) * (_sd_src - _sd_drn)
+        drain_factor = (n_eff / par.nbar0)
+        sd_drive = _sd_src - _sd_drn * drain_factor
+        inj_amp = (par.m * par.u_inj * Ieff)
+        if abs(t - par.I_ramp_tau) < 1e-2:
+            print("DEBUG at tau: Ieff=", Ieff, "inj_amp=", par.m*par.u_inj*Ieff)
+        dp_dt = dp_dt + inj_amp * sd_drive
+    dp_dt = dp_dt - par.nu4p * Dxxxx(p)
     dp_dt = filter_23(dp_dt)
 
     return np.concatenate([dn_dt, dp_dt])
@@ -439,6 +468,13 @@ def rhs_with_progress(t, y, E_base, last_print_time=[0.0], start_time=[0.0], wor
         progress = (t / par.t_final) * 100
         elapsed_wall_time = time.time() - start_time[0]
         
+        N = par.Nx
+        n = y[:N]
+        p = y[N:]
+        z = n - par.n_floor
+        n_eff = par.n_floor + 0.5*(z + np.sqrt(z*z + par.n_smooth**2))
+        p2_over_n = (p*p)/(par.m*n_eff)
+        
         if progress > 0.1:
             estimated_total_time = elapsed_wall_time / (progress / 100.0)
             estimated_remaining = estimated_total_time - elapsed_wall_time
@@ -446,7 +482,7 @@ def rhs_with_progress(t, y, E_base, last_print_time=[0.0], start_time=[0.0], wor
         else:
             est_str = "EST: ---s"
         
-        print(f"\r[Worker {worker_id:2d}] {progress:6.2f}% (t = {t:6.3f}/{par.t_final:.3f}) | Wall: {elapsed_wall_time:6.1f}s | {est_str}", end="", flush=True)
+        print(f"\r[Worker {worker_id:2d}] {progress:6.2f}% (t = {t:6.3f}/{par.t_final:.3f}) | Wall: {elapsed_wall_time:6.1f}s | {est_str} | n_min={n.min():.2e}  p2/n_max={p2_over_n.max():.2e}", end="", flush=True)
         last_print_time[0] = t
     return rhs(t, y, E_base)
 
@@ -475,6 +511,7 @@ def run_once(tag="seed_mode", worker_id=0):
 
     print(f"[Worker {worker_id:2d}] Starting simulation for {tag}...")
     print(f"[Worker {worker_id:2d}] Parameters: t_final={par.t_final}, Nx={par.Nx}, u_d={par.u_d}")
+    print(f"[Worker {worker_id:2d}] Using {NTHREADS} threads for FFT and linear algebra operations")
     
     start_wall_time = time.time()
     last_print_time = [0.0]
@@ -485,12 +522,12 @@ def run_once(tag="seed_mode", worker_id=0):
             with set_workers(NTHREADS):
                 sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time,worker_id),
                                 (0.0, par.t_final), y0, t_eval=t_eval,
-                                method="Radau", rtol=par.rtol, atol=par.atol)
+                                method="BDF", rtol=par.rtol, atol=par.atol)
     else:
         with set_workers(NTHREADS):
             sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time,worker_id),
                             (0.0, par.t_final), y0, t_eval=t_eval,
-                            method="Radau", rtol=par.rtol, atol=par.atol)
+                            method="BDF", rtol=par.rtol, atol=par.atol)
 
     total_wall_time = time.time() - start_wall_time
     print(f"\n[Worker {worker_id:2d}] Completed!")
@@ -540,6 +577,22 @@ def run_once(tag="seed_mode", worker_id=0):
                          par.L, u_momentum_final, par.u_d, tag=tag)
 
     x_local = np.linspace(0.0, par.L, par.Nx, endpoint=False)
+    
+    mask = (x_local > par.x_source + 2*par.sigma_contact) & (x_local < par.x_drain - 2*par.sigma_contact)
+    if np.any(mask):
+        n_bulk = np.mean(n_t[mask, -1])
+        p_bulk = np.mean(p_t[mask, -1])
+        n_bulk_eff = max(n_bulk, par.n_floor)
+        u_bulk = p_bulk / (par.m * n_bulk_eff)
+        u_c = par.w * np.sqrt(par.U / (par.m * n_bulk_eff))
+        print(f"[Worker {worker_id:2d}] Bulk drift check: u_bulk={u_bulk:.6f}, u_c={u_c:.6f}, ratio={u_bulk/u_c:.6f}")
+        if u_bulk/u_c < 1.0:
+            print(f"[Worker {worker_id:2d}] WARNING: u_bulk/u_c < 1, may not see instability (subcritical regime)")
+        else:
+            print(f"[Worker {worker_id:2d}] u_bulk/u_c > 1, instability regime possible")
+        u_com = u_bulk
+    else:
+        u_com = par.u_d
     dx_local = x_local[1] - x_local[0]
     
     extent=[x_local.min(), x_local.max(), sol.t.min(), sol.t.max()]
@@ -553,15 +606,35 @@ def run_once(tag="seed_mode", worker_id=0):
 
     n_co = np.empty_like(n_t)
     for j, tj in enumerate(sol.t):
-        shift = (par.u_d * tj) % par.L
+        shift = (u_com * tj) % par.L
         s_idx = int(np.round(shift/dx_local)) % par.Nx
         n_co[:, j] = np.roll(n_t[:, j], -s_idx)
     plt.figure(figsize=(9.6,4.3))
     plt.imshow(n_co.T, origin="lower", aspect="auto",
                extent=[x_local.min(), x_local.max(), sol.t.min(), sol.t.max()], cmap=par.cmap)
-    plt.xlabel("ξ = x - u_d t"); plt.ylabel("t"); plt.title(f"n(ξ,t)  [co-moving u_d={par.u_d}]  {tag}")
+    plt.xlabel("ξ = x - u_bulk t"); plt.ylabel("t"); plt.title(f"n(ξ,t)  [co-moving u_bulk={u_com:.4f}]  {tag}")
     plt.colorbar(label="n"); plt.tight_layout()
     plt.savefig(f"{par.outdir}/spacetime_n_comoving_{tag}.png", dpi=160); plt.close()
+    
+    i_probe = np.argmin(np.abs(x_local - 0.5*(par.x_source + par.x_drain)))
+    n_probe = n_t[i_probe, :]
+    p_probe = p_t[i_probe, :]
+    n_tail = n_probe[int(0.5*len(n_probe)):]
+    p_tail = p_probe[int(0.5*len(p_probe)):]
+    print(f"[Worker {worker_id:2d}] Probe point (x={x_local[i_probe]:.3f}) time-oscillations:")
+    print(f"[Worker {worker_id:2d}]   std(n) = {np.std(n_tail):.6e}")
+    print(f"[Worker {worker_id:2d}]   std(p) = {np.std(p_tail):.6e}")
+    
+    from numpy.fft import rfft, rfftfreq
+    k = 2*np.pi*rfftfreq(par.Nx, d=par.L/par.Nx)
+    A = []
+    for j in range(n_t.shape[1]):
+        f = n_t[:, j] - n_t[:, j].mean()
+        F = rfft(f)
+        A.append(np.abs(F[1:]).max())
+    A = np.array(A)
+    growth_factor = A[-1] / A[0] if A[0] > 0 else np.nan
+    print(f"[Worker {worker_id:2d}] Fourier mode growth: A(0)={A[0]:.6e}, A(final)={A[-1]:.6e}, growth_factor={growth_factor:.6f}")
 
     plt.figure(figsize=(9.6,3.4))
     for frac in [0.0, 1.0]:
@@ -692,44 +765,42 @@ if __name__ == "__main__":
     par.m = 1.0
     par.e = 1.0
     par.U = 1.0
-    par.nbar0 = 0.2
-    par.Gamma0 = 1#2.5
-    par.w = 1.0/4
+    par.nbar0 = 0.20
+    par.Gamma0 = 12.0             # makes lambda* ~ 3.45 < L_SD,eff
+    par.w = 0.10
     par.include_poisson = False
     par.eps = 20.0
-    par.u_d = 0#0.42
-    par.maintain_drift = 'field'
+    par.u_d = 0.0
+    par.maintain_drift = "field"
     par.Kp = 0.15
-    # par.Dn = 3e-4
-    # par.Dp = 3e-3
-    # par.Dn = 0.001 
-    # par.Dp = 0.01
-    par.Dn = 3e-4
-    par.Dp = 3e-3
-
-    par.x0 = par.L/2
+    par.Dn = 0.1#3e-4                 # DO NOT use 0.1
+    par.Dp = 0.1#3e-3                 # DO NOT use 1.0
+    par.nu4n = 1e-7
+    par.nu4p = 1e-7
+    par.x0 = 5.0
     par.lambda_diss = 0.0
-    par.sigma_diss = -1.0
+    par.sigma_diss = 2.0
     par.lambda_gauss = 0.0
     par.sigma_gauss = 2.0
-    par.x0_gauss = par.L/2
+    par.x0_gauss = 5.0
     par.use_nbar_gaussian = False
     par.nbar_amp = 0.0
     par.nbar_sigma = 120.0
     par.L = 10.0
-    par.Nx = 1024*2
-    par.t_final = 1024
-    par.n_save = 700
-    par.n_floor = 1e-7
+    par.Nx = 512#1024
+    par.t_final = 80#300           # give it time if growth is modest
+    par.n_save = 2000
+    par.n_floor = 0.0001
+    par.n_smooth = 0.0001
     par.dealias_23 = True
-    par.seed_amp_n = 0.0#3
+    par.seed_amp_n = 0.01
     par.seed_mode = 7
-    par.seed_amp_p = 0.0#3
-
-    par.I_SD = 1e-3
-    par.u_inj = 5
+    par.seed_amp_p = 0.01
+    par.I_SD = 0.010               # if u_bulk/u_c still <1, raise to 0.15–0.20
+    par.u_inj = 0.50              # target drift scale > u_c ~ 0.224
+    par.I_ramp_tau = 5.0          # avoid shocking the solver / overshoot
     par.x_source = 2.5
     par.x_drain = 7.5
-    par.sigma_contact = 0.25
-    
+    par.sigma_contact = 0.15      # narrower contacts => larger L_SD,eff
+        
     run_multiple_ud()
