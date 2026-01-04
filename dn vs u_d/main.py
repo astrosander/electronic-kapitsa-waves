@@ -1,6 +1,7 @@
 import os
 import time
-NTHREADS = int(os.environ.get("NTHREADS", "1"))
+import multiprocessing as mp
+NTHREADS = int(os.environ.get("NTHREADS", mp.cpu_count()))
 os.environ["OMP_NUM_THREADS"] = str(NTHREADS)
 os.environ["OPENBLAS_NUM_THREADS"] = str(NTHREADS)
 os.environ["MKL_NUM_THREADS"] = str(NTHREADS)
@@ -12,7 +13,6 @@ from dataclasses import dataclass
 from scipy.fft import fft, ifft, fftfreq, set_workers
 from scipy.integrate import solve_ivp
 from dataclasses import asdict
-import multiprocessing as mp
 
 try:
     from threadpoolctl import threadpool_limits
@@ -435,7 +435,7 @@ def plot_fft_initial_last(n_t, t, L, tag="compare"):
     plt.close()
 
 def rhs_with_progress(t, y, E_base, last_print_time=[0.0], start_time=[0.0], worker_id=0):
-    if t - last_print_time[0] > 1.0:
+    if t - last_print_time[0] > 0.01:
         progress = (t / par.t_final) * 100
         elapsed_wall_time = time.time() - start_time[0]
         
@@ -446,7 +446,7 @@ def rhs_with_progress(t, y, E_base, last_print_time=[0.0], start_time=[0.0], wor
         else:
             est_str = "EST: ---s"
         
-        print(f"\r[Worker {worker_id:2d}] {progress:6.1f}% (t = {t:6.3f}/{par.t_final:.3f}) | Wall: {elapsed_wall_time:6.1f}s | {est_str}", end="", flush=True)
+        print(f"\r[Worker {worker_id:2d}] {progress:6.2f}% (t = {t:6.3f}/{par.t_final:.3f}) | Wall: {elapsed_wall_time:6.1f}s | {est_str}", end="", flush=True)
         last_print_time[0] = t
     return rhs(t, y, E_base)
 
@@ -485,17 +485,22 @@ def run_once(tag="seed_mode", worker_id=0):
             with set_workers(NTHREADS):
                 sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time,worker_id),
                                 (0.0, par.t_final), y0, t_eval=t_eval,
-                                method="BDF", rtol=par.rtol, atol=par.atol)
+                                method="Radau", rtol=par.rtol, atol=par.atol)
     else:
         with set_workers(NTHREADS):
             sol = solve_ivp(lambda t,y: rhs_with_progress(t,y,E_base,last_print_time,start_time,worker_id),
                             (0.0, par.t_final), y0, t_eval=t_eval,
-                            method="BDF", rtol=par.rtol, atol=par.atol)
+                            method="Radau", rtol=par.rtol, atol=par.atol)
 
     total_wall_time = time.time() - start_wall_time
-    print(f"\n[Worker {worker_id:2d}] Completed successfully!")
+    print(f"\n[Worker {worker_id:2d}] Completed!")
     print(f"[Worker {worker_id:2d}] Final time: {sol.t[-1]:.3f}, Success: {sol.success}")
     print(f"[Worker {worker_id:2d}] Total wall time: {total_wall_time:.2f} seconds")
+    
+    if not sol.success:
+        print(f"[Worker {worker_id:2d}] WARNING: Solver did not succeed! Message: {sol.message}")
+        print(f"[Worker {worker_id:2d}] Number of time points: {len(sol.t)}")
+        raise RuntimeError(f"Solver failed: {sol.message}")
 
     N = par.Nx
     n_t = sol.y[:N,:]
@@ -506,18 +511,30 @@ def run_once(tag="seed_mode", worker_id=0):
     u_momentum_initial = np.mean(v_t[:,0])
     u_momentum_final = np.mean(v_t[:,-1])
     
-    idx_t1 = -5
-    idx_t2 = -1
+    if len(sol.t) < 5:
+        print(f"[Worker {worker_id:2d}] WARNING: Too few time points ({len(sol.t)}) for velocity detection")
+        idx_t1 = 0
+        idx_t2 = -1
+    else:
+        idx_t1 = -5
+        idx_t2 = -1
 
     print(f"[Worker {worker_id:2d}] len=",len(sol.t), idx_t1, idx_t2)
     
-    u_drift_inst, shift_opt_inst, corr_max_inst, _, _ = find_modulation_period_by_shift(
-        n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], par.L
-    )
+    if len(sol.t) >= 2:
+        u_drift_inst, shift_opt_inst, corr_max_inst, _, _ = find_modulation_period_by_shift(
+            n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], par.L
+        )
+    else:
+        print(f"[Worker {worker_id:2d}] WARNING: Not enough time points for velocity detection")
+        u_drift_inst = 0.0
+        shift_opt_inst = 0.0
+        corr_max_inst = 0.0
     
     print(f"[Worker {worker_id:2d}]  <u>(t=0)={u_momentum_initial:.4f},  <u>(t_end)={u_momentum_final:.4f},  target u_d={par.u_d:.4f}")
-    print(f"[Worker {worker_id:2d}]  u_drift_instantaneous={u_drift_inst:.4f} (from shift={shift_opt_inst:.3f}, Δt={sol.t[idx_t2]-sol.t[idx_t1]:.3f})")
-    print(f"[Worker {worker_id:2d}]  measured at t={sol.t[idx_t2]:.3f}, correlation_max={corr_max_inst:.4f}")
+    if len(sol.t) >= 2 and idx_t1 != idx_t2:
+        print(f"[Worker {worker_id:2d}]  u_drift_instantaneous={u_drift_inst:.4f} (from shift={shift_opt_inst:.3f}, Δt={sol.t[idx_t2]-sol.t[idx_t1]:.3f})")
+        print(f"[Worker {worker_id:2d}]  measured at t={sol.t[idx_t2]:.3f}, correlation_max={corr_max_inst:.4f}")
     
     plot_period_detection(n_t[:, idx_t1], n_t[:, idx_t2], sol.t[idx_t1], sol.t[idx_t2], 
                          par.L, u_momentum_final, par.u_d, tag=tag)
@@ -572,12 +589,12 @@ def run_single_ud_worker(u_d, base_params, worker_id=0):
     u_d_str = f"{u_d:.4f}".replace('.', 'p')
     Dn_str = f"{local_par.Dn:.2f}".replace('.', 'p')
     Dp_str = f"{local_par.Dp:.2f}".replace('.', 'p')
-    local_par.outdir = f"multiple_u_d/w=0.14_modes_3_5_7_L10(lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p})_Dn={Dn_str}_Dp={Dp_str}/out_drift_ud{u_d_str}"
+    local_par.outdir = f"multiple_u_d/last"#w=0.14_modes_3_5_7_L10_lambda={local_par.lambda_diss}, sigma={local_par.sigma_diss}, seed_amp_n={local_par.seed_amp_n}, seed_amp_p={local_par.seed_amp_p}_Dn={Dn_str}_Dp={Dp_str}/out_drift_ud{u_d_str}"
 
-    if local_par.u_inj > 1e-6:
-        local_par.t_final = 20*10.0/local_par.u_inj
-    else:
-        local_par.t_final = 50.0
+    # if local_par.u_inj > 1e-6:
+    #     local_par.t_final = 4*10.0/local_par.u_inj
+    # else:
+    #     local_par.t_final = 50.0
     # local_par.n_save = 1024
     
     # local_par.Nx = 512*2
@@ -709,7 +726,7 @@ if __name__ == "__main__":
     par.seed_mode = 7
     par.seed_amp_p = 0.0#3
 
-    par.I_SD = 1e-2
+    par.I_SD = 1e-3
     par.u_inj = 5
     par.x_source = 2.5
     par.x_drain = 7.5
