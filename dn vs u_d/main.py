@@ -38,7 +38,6 @@ class P:
     nbar0: float = 0.2
     Gamma0: float = 2.50
     w: float = 0.14
-    include_poisson: bool = False
     eps: float = 20.0
 
     u_d: float = 5.245
@@ -47,9 +46,6 @@ class P:
 
     Dn: float = 0.03
     Dp: float = 0.03
-    
-    nu4n: float = 0.0
-    nu4p: float = 0.0
 
     x0: float = 5
 
@@ -79,7 +75,6 @@ class P:
 
     I_SD: float = 0.0
     u_inj: float = 0.0
-    I_ramp_tau: float = 1.0
     x_source: float = 2.5
     x_drain: float = 7.5
     sigma_contact: float = 0.05
@@ -342,7 +337,7 @@ def rhs(t, y, E_base):
     # Compute Ieff once (with optional physics noise) and reuse in both dn_dt and dp_dt
     Ieff = 0.0
     if par.I_SD != 0.0:
-        Ieff = par.I_SD * (1.0 - np.exp(-t / par.I_ramp_tau))
+        Ieff = par.I_SD
         # Optional: "physics noise" at the contacts (instead of roundoff)
         # eta = 0#1e-6 * np.random.randn()     # 1 ppm current noise
         # Ieff = Ieff * (1.0 + eta)
@@ -353,26 +348,18 @@ def rhs(t, y, E_base):
         sd_drive = _sd_src - _sd_drn * drain_factor
         dn_dt = dn_dt + Ieff * sd_drive
     dn_dt = np.where((n <= par.n_floor) & (dn_dt < 0.0), 0.0, dn_dt)
-    dn_dt = dn_dt - par.nu4n * Dxxxx(n)
     dn_dt = filter_23(dn_dt)
 
     Pi = Pi0(n_eff) + (p**2)/(par.m*n_eff)
     # Pi = Pi0(n_eff) + (p**2)/(par.m*(n_eff + par.n_floor))
     grad_Pi = Dx(Pi)
-    force_Phi = 0.0
-    if par.include_poisson:
-        phi = phi_from_n(n_eff, nbar)
-        force_Phi = n_eff * Dx(phi)
 
-    dp_dt = -Gamma_spatial(n_eff)*p - grad_Pi + par.e*n_eff*E_eff - force_Phi + par.Dp * Dxx(p)
+    dp_dt = -Gamma_spatial(n_eff)*p - grad_Pi + par.e*n_eff*E_eff + par.Dp * Dxx(p)
     if par.I_SD != 0.0:
         drain_factor = (n_eff / par.nbar0)
         sd_drive = _sd_src - _sd_drn * drain_factor
         inj_amp = (par.m * par.u_inj * Ieff)
-        if abs(t - par.I_ramp_tau) < 1e-2:
-            print("DEBUG at tau: Ieff=", Ieff, "inj_amp=", par.m*par.u_inj*Ieff)
         dp_dt = dp_dt + inj_amp * sd_drive
-    dp_dt = dp_dt - par.nu4p * Dxxxx(p)
     dp_dt = filter_23(dp_dt)
 
     return np.concatenate([dn_dt, dp_dt])
@@ -763,17 +750,14 @@ def run_multiple_ud():
     print(f"{'='*60}")
 
 if __name__ == "__main__":
-    par.nbar0 = 10#0.20
-    par.w = 1#0.40
-    par.Gamma0 = 8.0
+    par.nbar0 = 0.3#0.20
+    par.w = 100#0.40
+    par.Gamma0 = 0.01#.01#.1
 
     par.u_d = 0.0
-    par.include_poisson = False
 
-    par.Dn = 1e-2
-    par.Dp = 1e-1
-    par.nu4n = 0#1e-9
-    par.nu4p = 0#1e-9
+    par.Dn = 4e-4
+    par.Dp = 4e-3
 
     par.Nx = 512
     par.t_final = 300.0
@@ -787,11 +771,12 @@ if __name__ == "__main__":
     par.seed_amp_p = 5e-3
 
     par.I_SD = 0.06
-    par.u_inj = 0.1#2.50
-    par.I_ramp_tau = 0.01#30.0
-    # par.L=20
-    par.x_source = 2.5#*2
-    par.x_drain  = 7.5#*2
+    par.u_inj = 0.2#2.50
+    par.L=10
+    par.x_source = 2.5
+    par.x_drain  = 7.5
     par.sigma_contact = 0.3#30
-
+    print("gamma=", par.Gamma0 * np.exp(-1.0 * par.nbar0/par.w))
+    print("f=", np.sqrt(par.nbar0)/par.L)
+    print("gamma>f")
     run_multiple_ud()
