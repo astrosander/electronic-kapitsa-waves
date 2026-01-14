@@ -4,13 +4,13 @@ import matplotlib.pyplot as plt
 plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
-plt.rcParams['font.size'] = 22
-plt.rcParams['axes.labelsize'] = 22
-plt.rcParams['axes.titlesize'] = 22
-plt.rcParams['xtick.labelsize'] = 22
-plt.rcParams['ytick.labelsize'] = 22
-plt.rcParams['legend.fontsize'] = 22
-plt.rcParams['figure.titlesize'] = 22
+plt.rcParams['font.size'] = 30
+plt.rcParams['axes.labelsize'] = 30
+plt.rcParams['axes.titlesize'] = 30
+plt.rcParams['xtick.labelsize'] = 30
+plt.rcParams['ytick.labelsize'] = 30
+plt.rcParams['legend.fontsize'] = 30
+plt.rcParams['figure.titlesize'] = 30
 
 L = 1.0
 U = 1.0
@@ -33,10 +33,19 @@ nref = 1.0
 def gamma_power(n):
     return gamma0 / (1 + n**2 / nref**2)
 
+def dgamma_const_dn(n):
+    return np.zeros_like(n)
+
+def dgamma_exp_dn(n):
+    return -gamma0 / w * np.exp(-n / w)
+
+def dgamma_power_dn(n):
+    return -2 * gamma0 * n / (nref**2 * (1 + n**2 / nref**2)**2)
+
 GAMMAS = [
-    (r"$\gamma = \gamma_0$", gamma_const),
-    (rf"$\gamma = \gamma_0 e^{{-n/w}}$", gamma_exp),
-    (rf"$\gamma = \frac{{\gamma_0}}{{1+n^2/n_0^2}}$", gamma_power),
+    (r"$\gamma = \gamma_0$", gamma_const, dgamma_const_dn),
+    (rf"$\gamma = \gamma_0 e^{{-n/w}}$", gamma_exp, dgamma_exp_dn),
+    (rf"$\gamma = \frac{{\gamma_0}}{{1+n^2/n_0^2}}$", gamma_power, dgamma_power_dn),
 ]
 
 def distance_to_sonic(n0, I, gamma_fn, npts=2000):
@@ -68,25 +77,37 @@ def shock_required(n0, I, gamma_fn):
         return True
     return x_star < L
 
-n0_vals = np.linspace(0.2, 5.0, 260*2)
-I_vals  = np.linspace(0.0, 6.0, 240*2)
+n0_vals = np.linspace(0.2, 5.0, 260*1)
+I_vals  = np.linspace(0.0, 6.0, 240*1)
 
 N0, Igrid = np.meshgrid(n0_vals, I_vals)
 
-fig, axes = plt.subplots(1, len(GAMMAS), figsize=(4.8 * len(GAMMAS), 4.4), sharey=True)
+fig, axes = plt.subplots(1, len(GAMMAS), figsize=(5 * len(GAMMAS), 5), sharey=True)
 
 if len(GAMMAS) == 1:
     axes = [axes]
 
-for ax, (label, gfn) in zip(axes, GAMMAS):
+for ax, (label, gfn, dgfn) in zip(axes, GAMMAS):
     shock_mask = np.zeros_like(N0, dtype=float)
+    condition_mask = np.zeros_like(N0, dtype=float)
 
     for iy in range(Igrid.shape[0]):
         for ix in range(N0.shape[1]):
-            shock_mask[iy, ix] = 1.0 if shock_required(N0[iy, ix], Igrid[iy, ix], gfn) else 0.0
+            n_val = N0[iy, ix]
+            I_val = Igrid[iy, ix]
+            shock_mask[iy, ix] = 1.0 if shock_required(n_val, I_val, gfn) else 0.0
+            
+            gamma_val = gfn(n_val)
+            dgamma_dn = dgfn(n_val)
+            if np.abs(dgamma_dn) > 1e-10:
+                threshold = np.sqrt(n_val) * n_val * gamma_val / np.abs(dgamma_dn)
+                condition_mask[iy, ix] = 1.0 if I_val > threshold else 0.0
+            else:
+                condition_mask[iy, ix] = 0.0
 
+    combined_mask = shock_mask + 2 * condition_mask
     pcm = ax.pcolormesh(
-        n0_vals, I_vals, shock_mask,
+        n0_vals, I_vals, combined_mask,
         shading="auto",
         cmap="rainbow"
     )
@@ -95,10 +116,11 @@ for ax, (label, gfn) in zip(axes, GAMMAS):
     ax.set_xlim(n0_vals.min(), n0_vals.max())
     ax.set_ylim(I_vals.min(), I_vals.max())
 
-    ax.contour(N0, Igrid, shock_mask, levels=[0.5], linewidths=1.5)
+    ax.contour(N0, Igrid, shock_mask, levels=[0.5], linewidths=1.5, colors='black')
+    ax.contour(N0, Igrid, condition_mask, levels=[0.5], linewidths=1.5, colors='white', linestyles='--')
 
-axes[0].set_ylabel("injected current $I$")
-plt.tight_layout(w_pad=0.5)
+axes[0].set_ylabel("current $I$")
+plt.tight_layout(w_pad=0)
 plt.savefig("phase_diagram.png", dpi=300, bbox_inches="tight")
 plt.savefig("phase_diagram.svg", dpi=300, bbox_inches="tight")
 plt.show()
