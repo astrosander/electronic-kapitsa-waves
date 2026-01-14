@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-plt.rcParams['text.usetex'] = True
+# plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
 plt.rcParams['font.size'] = 30
@@ -13,7 +13,7 @@ plt.rcParams['legend.fontsize'] = 30
 plt.rcParams['figure.titlesize'] = 30
 
 L = 1.0
-U = 1.0
+U = 100.0
 m = 1.0
 echarge = 1.0
 
@@ -25,7 +25,7 @@ gamma0 = 1.0
 def gamma_const(n):
     return gamma0 * np.ones_like(n)
 
-w = 1.0
+w = 0.5
 def gamma_exp(n):
     return gamma0 * np.exp(-n / w)
 
@@ -77,12 +77,12 @@ def shock_required(n0, I, gamma_fn):
         return True
     return x_star < L
 
-n0_vals = np.linspace(0.2, 5.0, 260*1)
-I_vals  = np.linspace(0.0, 6.0, 240*1)
+n0_vals = np.linspace(0, 0.2, 26*10)
+I_vals  = np.linspace(0.0, 0.4, 24*10)
 
 N0, Igrid = np.meshgrid(n0_vals, I_vals)
 
-fig, axes = plt.subplots(1, len(GAMMAS), figsize=(5 * len(GAMMAS), 5), sharey=True)
+fig, axes = plt.subplots(len(GAMMAS), 1, figsize=(6.5, 3.5 * len(GAMMAS)), sharex=True)
 
 if len(GAMMAS) == 1:
     axes = [axes]
@@ -112,15 +112,16 @@ for ax, (label, gfn, dgfn) in zip(axes, GAMMAS):
         cmap="rainbow"
     )
     ax.set_title(label)
-    ax.set_xlabel("density $n_0$")
     ax.set_xlim(n0_vals.min(), n0_vals.max())
     ax.set_ylim(I_vals.min(), I_vals.max())
 
-    ax.contour(N0, Igrid, shock_mask, levels=[0.5], linewidths=1.5, colors='black')
-    ax.contour(N0, Igrid, condition_mask, levels=[0.5], linewidths=1.5, colors='white', linestyles='--')
+    ax.contour(N0, Igrid, shock_mask, levels=[0.5], linewidths=2.5, colors='black')
+    ax.contour(N0, Igrid, condition_mask, levels=[0.5], linewidths=2.5, colors='white', linestyles='--')
 
-axes[0].set_ylabel("current $I$")
-plt.tight_layout(w_pad=0)
+for ax in axes:
+    ax.set_ylabel("current $I$")
+axes[-1].set_xlabel("density $n_0$")
+plt.tight_layout(h_pad=0)
 plt.savefig("phase_diagram.png", dpi=300, bbox_inches="tight")
 plt.savefig("phase_diagram.svg", dpi=300, bbox_inches="tight")
 plt.show()
