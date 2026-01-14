@@ -13,7 +13,7 @@ plt.rcParams['legend.fontsize'] = 30
 plt.rcParams['figure.titlesize'] = 30
 
 L = 1.0
-U = 100.0
+U = 100000
 m = 1.0
 echarge = 1.0
 
@@ -77,8 +77,9 @@ def shock_required(n0, I, gamma_fn):
         return True
     return x_star < L
 
-n0_vals = np.linspace(0, 0.2, 26*10)
-I_vals  = np.linspace(0.0, 0.4, 24*10)
+nmax=1.0
+n0_vals = np.linspace(0, nmax, 26*4)
+I_vals  = np.linspace(0.0, np.sqrt(nmax*U), 24*4)
 
 N0, Igrid = np.meshgrid(n0_vals, I_vals)
 
@@ -100,7 +101,7 @@ for ax, (label, gfn, dgfn) in zip(axes, GAMMAS):
             gamma_val = gfn(n_val)
             dgamma_dn = dgfn(n_val)
             if np.abs(dgamma_dn) > 1e-10:
-                threshold = np.sqrt(n_val) * n_val * gamma_val / np.abs(dgamma_dn)
+                threshold = np.sqrt(n_val * U / m) * np.sqrt(n_val) * n_val * gamma_val / np.abs(dgamma_dn)
                 condition_mask[iy, ix] = 1.0 if I_val > threshold else 0.0
             else:
                 condition_mask[iy, ix] = 0.0
