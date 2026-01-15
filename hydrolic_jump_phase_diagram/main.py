@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.colors import BoundaryNorm
 
 plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
@@ -12,24 +13,24 @@ plt.rcParams['ytick.labelsize'] = 30
 plt.rcParams['legend.fontsize'] = 30
 plt.rcParams['figure.titlesize'] = 30
 
-L = 1000.0
-U = 100
+L = 60.0
+U = 100#3.0e4
 m = 1.0
-echarge = 1.0
+echarge = 5e4#1.0
 
 def p_of_I(I):
     return m * I / echarge
 
-gamma0 = 1.0
+gamma0 = 60#100
 
 def gamma_const(n):
     return gamma0 * np.ones_like(n)
 
-w = 0.5
+w = 2
 def gamma_exp(n):
     return gamma0 * np.exp(-n / w)
 
-nref = 1.0
+nref = 2.5#4.0
 def gamma_power(n):
     return gamma0 / (1 + n**2 / nref**2)
 
@@ -86,18 +87,20 @@ def get_x_star(n0, I, gamma_fn):
     return x_star
 
 nmax=5.0
-# Imax=5.0
-n0_vals = np.linspace(0, nmax, 26*4)
-I_vals  = np.linspace(0.0, 100, 24*4)
-
-N, Igrid = np.meshgrid(n0_vals, I_vals)
+Imax_vals = [200, 200, 200]
+n0_vals = np.linspace(0.05, nmax, 401)
 
 fig, axes = plt.subplots(len(GAMMAS), 1, figsize=(6.5, 3.5 * len(GAMMAS)), sharex=True)
 
 if len(GAMMAS) == 1:
     axes = [axes]
 
-for ax, (label, gfn, dgfn) in zip(axes, GAMMAS):
+for i, (ax, (label, gfn, dgfn)) in enumerate(zip(axes, GAMMAS)):
+    Imax = Imax_vals[i] if i < len(Imax_vals) else 80
+    I_vals = np.linspace(0.0, Imax, 401)
+    
+    N, Igrid = np.meshgrid(n0_vals, I_vals)
+    
     gamma_vals = gfn(N)
     dgamma_dn_vals = dgfn(N)
     
@@ -112,16 +115,18 @@ for ax, (label, gfn, dgfn) in zip(axes, GAMMAS):
     shock_mask = shock_required_vec(N, Igrid).astype(float)
     
     lambda_star = 4 * np.pi * u0 / gamma_vals
-    print(lambda_star)
+    # print(lambda_star)
     x_condition_mask = np.where(L < lambda_star, 1.0, 0.0)
 
     combined_mask = shock_mask + 2 * condition_mask + 4 * x_condition_mask
+    norm = BoundaryNorm(np.arange(-0.5, 8.5, 1), 256)
     pcm = ax.pcolormesh(
         n0_vals, I_vals, combined_mask,
         shading="auto",
-        cmap="rainbow"
+        cmap="rainbow",
+        norm=norm
     )
-    ax.set_title(label)
+    # ax.set_title(label)
     ax.set_xlim(n0_vals.min(), n0_vals.max())
     ax.set_ylim(I_vals.min(), I_vals.max())
 
@@ -130,7 +135,7 @@ for ax, (label, gfn, dgfn) in zip(axes, GAMMAS):
     ax.contour(N, Igrid, x_condition_mask, levels=[0.5], linewidths=2, colors='yellow', linestyles='-.')
 
 for ax in axes:
-    ax.set_ylabel("current $I$")
+    ax.set_ylabel(label)
 axes[-1].set_xlabel("density $n_0$")
 plt.tight_layout(h_pad=0)
 plt.savefig("phase_diagram.png", dpi=300, bbox_inches="tight")
@@ -185,13 +190,13 @@ for i, data in enumerate(table_data):
                         facecolor=data['color'], edgecolor='black', linewidth=1)
     ax_legend.add_patch(rect)
     
-    ax_legend.text(x_code, y_pos, str(data['code']), fontsize=12, ha='center', va='center')
+    ax_legend.text(x_code, y_pos, str(data['code']), fontsize=24, ha='center', va='center')
     ax_legend.text(x_cond1, y_pos, 'Yes' if data['condition1'] else 'No', 
-                  fontsize=12, ha='center', va='center')
+                  fontsize=24, ha='center', va='center')
     ax_legend.text(x_cond2, y_pos, 'Yes' if data['condition2'] else 'No', 
-                  fontsize=12, ha='center', va='center')
+                  fontsize=24, ha='center', va='center')
     ax_legend.text(x_shock, y_pos, 'Yes' if data['is_shock'] else 'No', 
-                  fontsize=12, ha='center', va='center')
+                  fontsize=24, ha='center', va='center')
 
 ax_legend.set_xlim(0, 1)
 ax_legend.set_ylim(0, 1)
