@@ -13,24 +13,43 @@ plt.rcParams['ytick.labelsize'] = 30
 plt.rcParams['legend.fontsize'] = 30
 plt.rcParams['figure.titlesize'] = 30
 
-L = 2.0
-U = 20
-m = 1.0
-echarge = 1.0
+params = {
+    'L_device': 2.0,      # used in shock: x_* < L_device
+    'L_lambda': 2.0,      # used in lambda condition: L_lambda < lambda_*
+    'U': 20,
+    'm': 1.0,
+    'echarge': 1.0,
+    'gamma0': 200,
+    'w': 0.4,             # for gamma_exp
+    'nref': 2.5,          # for gamma_power
+    'nmin': 0.01,
+    'nmax': 2.0,
+    'Imax_vals': [200, 4, 200],
+    'grid_n': 101,
+    'grid_I': 101,
+}
+
+L_device = params['L_device']
+L_lambda = params['L_lambda']
+U = params['U']
+m = params['m']
+echarge = params['echarge']
+gamma0 = params['gamma0']
+w = params['w']
+nref = params['nref']
+nmin = params['nmin']
+nmax = params['nmax']
+Imax_vals = params['Imax_vals']
 
 def p_of_I(I):
     return m * I / echarge
 
-gamma0 = 200#100
-
 def gamma_const(n):
     return gamma0 * np.ones_like(n)
 
-w = 0.4
 def gamma_exp(n):
     return gamma0 * np.exp(-n / w)
 
-nref = 2.5#4.0
 def gamma_power(n):
     return gamma0 / (1 + n**2 / nref**2)
 
@@ -76,7 +95,7 @@ def shock_required(n0, I, gamma_fn):
         return False
     if status == "inlet-sonic-or-supersonic":
         return True
-    return x_star < L
+    return x_star < L_device
 
 def get_x_star(n0, I, gamma_fn):
     x_star, n_star, status = distance_to_sonic(n0, I, gamma_fn)
@@ -86,9 +105,7 @@ def get_x_star(n0, I, gamma_fn):
         return 0.0
     return x_star
 
-nmax=2.0
-Imax_vals = [200, 2, 200]
-n0_vals = np.linspace(0.05, nmax, 101)
+n0_vals = np.linspace(nmin, nmax, params['grid_n'])
 
 fig, axes = plt.subplots(len(GAMMAS), 1, figsize=(6.5, 3.5 * len(GAMMAS)), sharex=True)
 
@@ -97,7 +114,7 @@ if len(GAMMAS) == 1:
 
 for i, (ax, (label, gfn, dgfn)) in enumerate(zip(axes, GAMMAS)):
     Imax = Imax_vals[i] if i < len(Imax_vals) else 80
-    I_vals = np.linspace(0.0, Imax, 101)
+    I_vals = np.linspace(0.0, Imax, params['grid_I'])
     
     N, Igrid = np.meshgrid(n0_vals, I_vals)
     
@@ -115,8 +132,7 @@ for i, (ax, (label, gfn, dgfn)) in enumerate(zip(axes, GAMMAS)):
     shock_mask = shock_required_vec(N, Igrid).astype(float)
     
     lambda_star = 4 * np.pi * u0 / gamma_vals
-    # print(lambda_star)
-    x_condition_mask = np.where(L < lambda_star, 1.0, 0.0)
+    x_condition_mask = np.where(L_lambda < lambda_star, 1.0, 0.0)
 
     combined_mask = shock_mask + 2 * condition_mask + 4 * x_condition_mask
     norm = BoundaryNorm(np.arange(-0.5, 8.5, 1), 256)
@@ -133,9 +149,12 @@ for i, (ax, (label, gfn, dgfn)) in enumerate(zip(axes, GAMMAS)):
     ax.contour(N, Igrid, shock_mask, levels=[0.5], linewidths=3, colors='black')
     ax.contour(N, Igrid, condition_mask, levels=[0.5], linewidths=2, colors='white', linestyles='--')
     ax.contour(N, Igrid, x_condition_mask, levels=[0.5], linewidths=2, colors='yellow', linestyles='-.')
+    
+    code2_fraction = np.sum(combined_mask == 2.0) / combined_mask.size
+    print(f"{label}: Code 2 fraction = {code2_fraction:.3f}")
+    
+    ax.set_ylabel("current $I$")
 
-for ax in axes:
-    ax.set_ylabel(label)
 axes[-1].set_xlabel("density $n_0$")
 plt.tight_layout(h_pad=0)
 plt.savefig("phase_diagram.png", dpi=300, bbox_inches="tight")
