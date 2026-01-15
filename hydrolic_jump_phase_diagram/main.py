@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm
 
-plt.rcParams['text.usetex'] = True
+# plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
 plt.rcParams['font.size'] = 30
@@ -13,20 +13,20 @@ plt.rcParams['ytick.labelsize'] = 30
 plt.rcParams['legend.fontsize'] = 30
 plt.rcParams['figure.titlesize'] = 30
 
-L = 60.0
-U = 100#3.0e4
+L = 2.0
+U = 20
 m = 1.0
-echarge = 5e4#1.0
+echarge = 1.0
 
 def p_of_I(I):
     return m * I / echarge
 
-gamma0 = 60#100
+gamma0 = 200#100
 
 def gamma_const(n):
     return gamma0 * np.ones_like(n)
 
-w = 2
+w = 0.4
 def gamma_exp(n):
     return gamma0 * np.exp(-n / w)
 
@@ -86,9 +86,9 @@ def get_x_star(n0, I, gamma_fn):
         return 0.0
     return x_star
 
-nmax=5.0
-Imax_vals = [200, 200, 200]
-n0_vals = np.linspace(0.05, nmax, 401)
+nmax=2.0
+Imax_vals = [200, 2, 200]
+n0_vals = np.linspace(0.05, nmax, 101)
 
 fig, axes = plt.subplots(len(GAMMAS), 1, figsize=(6.5, 3.5 * len(GAMMAS)), sharex=True)
 
@@ -97,7 +97,7 @@ if len(GAMMAS) == 1:
 
 for i, (ax, (label, gfn, dgfn)) in enumerate(zip(axes, GAMMAS)):
     Imax = Imax_vals[i] if i < len(Imax_vals) else 80
-    I_vals = np.linspace(0.0, Imax, 401)
+    I_vals = np.linspace(0.0, Imax, 101)
     
     N, Igrid = np.meshgrid(n0_vals, I_vals)
     
@@ -108,7 +108,7 @@ for i, (ax, (label, gfn, dgfn)) in enumerate(zip(axes, GAMMAS)):
     
     dgamma_nonzero = np.abs(dgamma_dn_vals) > 1e-10
     threshold = np.zeros_like(N)
-    threshold[dgamma_nonzero] = u0[dgamma_nonzero] * gamma_vals[dgamma_nonzero] / np.abs(dgamma_dn_vals[dgamma_nonzero])
+    threshold[dgamma_nonzero] = echarge * u0[dgamma_nonzero] * gamma_vals[dgamma_nonzero] / np.abs(dgamma_dn_vals[dgamma_nonzero])
     condition_mask = np.where((dgamma_nonzero) & (Igrid > threshold), 1.0, 0.0)
     
     shock_required_vec = np.vectorize(lambda n, I: shock_required(n, I, gfn), otypes=[float])
@@ -176,7 +176,7 @@ ax_legend.text(x_cond1, y_start, 'Condition 1', fontsize=14, fontweight='bold', 
 ax_legend.text(x_cond2, y_start, 'Condition 2', fontsize=14, fontweight='bold', ha='center')
 ax_legend.text(x_shock, y_start, 'Is Shock', fontsize=14, fontweight='bold', ha='center')
 
-ax_legend.text(x_cond1, y_start - 0.04, r'$(I > u_0 \cdot \gamma / |d\gamma/dn|)$', 
+ax_legend.text(x_cond1, y_start - 0.04, r'$(I > e \cdot u_0 \cdot \gamma / |d\gamma/dn|)$', 
               fontsize=10, ha='center', style='italic')
 ax_legend.text(x_cond2, y_start - 0.04, r'$(L < \lambda_* = 4\pi u_0/\gamma(n))$', 
               fontsize=10, ha='center', style='italic')
