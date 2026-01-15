@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-# plt.rcParams['text.usetex'] = True
+plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
 plt.rcParams['font.size'] = 30
@@ -12,8 +12,8 @@ plt.rcParams['ytick.labelsize'] = 30
 plt.rcParams['legend.fontsize'] = 30
 plt.rcParams['figure.titlesize'] = 30
 
-L = 1.0
-U = 100000
+L = 1000.0
+U = 100
 m = 1.0
 echarge = 1.0
 
@@ -77,11 +77,20 @@ def shock_required(n0, I, gamma_fn):
         return True
     return x_star < L
 
-nmax=1.0
-n0_vals = np.linspace(0, nmax, 26*4)
-I_vals  = np.linspace(0.0, np.sqrt(nmax*U), 24*4)
+def get_x_star(n0, I, gamma_fn):
+    x_star, n_star, status = distance_to_sonic(n0, I, gamma_fn)
+    if status == "no-flow":
+        return np.inf
+    if status == "inlet-sonic-or-supersonic":
+        return 0.0
+    return x_star
 
-N0, Igrid = np.meshgrid(n0_vals, I_vals)
+nmax=5.0
+# Imax=5.0
+n0_vals = np.linspace(0, nmax, 26*4)
+I_vals  = np.linspace(0.0, 100, 24*4)
+
+N, Igrid = np.meshgrid(n0_vals, I_vals)
 
 fig, axes = plt.subplots(len(GAMMAS), 1, figsize=(6.5, 3.5 * len(GAMMAS)), sharex=True)
 
@@ -89,24 +98,24 @@ if len(GAMMAS) == 1:
     axes = [axes]
 
 for ax, (label, gfn, dgfn) in zip(axes, GAMMAS):
-    shock_mask = np.zeros_like(N0, dtype=float)
-    condition_mask = np.zeros_like(N0, dtype=float)
+    gamma_vals = gfn(N)
+    dgamma_dn_vals = dgfn(N)
+    
+    u0 = np.sqrt(U * N / m)
+    
+    dgamma_nonzero = np.abs(dgamma_dn_vals) > 1e-10
+    threshold = np.zeros_like(N)
+    threshold[dgamma_nonzero] = u0[dgamma_nonzero] * gamma_vals[dgamma_nonzero] / np.abs(dgamma_dn_vals[dgamma_nonzero])
+    condition_mask = np.where((dgamma_nonzero) & (Igrid > threshold), 1.0, 0.0)
+    
+    shock_required_vec = np.vectorize(lambda n, I: shock_required(n, I, gfn), otypes=[float])
+    shock_mask = shock_required_vec(N, Igrid).astype(float)
+    
+    lambda_star = 4 * np.pi * u0 / gamma_vals
+    print(lambda_star)
+    x_condition_mask = np.where(L < lambda_star, 1.0, 0.0)
 
-    for iy in range(Igrid.shape[0]):
-        for ix in range(N0.shape[1]):
-            n_val = N0[iy, ix]
-            I_val = Igrid[iy, ix]
-            shock_mask[iy, ix] = 1.0 if shock_required(n_val, I_val, gfn) else 0.0
-            
-            gamma_val = gfn(n_val)
-            dgamma_dn = dgfn(n_val)
-            if np.abs(dgamma_dn) > 1e-10:
-                threshold = np.sqrt(n_val * U / m) * np.sqrt(n_val) * n_val * gamma_val / np.abs(dgamma_dn)
-                condition_mask[iy, ix] = 1.0 if I_val > threshold else 0.0
-            else:
-                condition_mask[iy, ix] = 0.0
-
-    combined_mask = shock_mask + 2 * condition_mask
+    combined_mask = shock_mask + 2 * condition_mask + 4 * x_condition_mask
     pcm = ax.pcolormesh(
         n0_vals, I_vals, combined_mask,
         shading="auto",
@@ -116,8 +125,9 @@ for ax, (label, gfn, dgfn) in zip(axes, GAMMAS):
     ax.set_xlim(n0_vals.min(), n0_vals.max())
     ax.set_ylim(I_vals.min(), I_vals.max())
 
-    ax.contour(N0, Igrid, shock_mask, levels=[0.5], linewidths=2.5, colors='black')
-    ax.contour(N0, Igrid, condition_mask, levels=[0.5], linewidths=2.5, colors='white', linestyles='--')
+    ax.contour(N, Igrid, shock_mask, levels=[0.5], linewidths=3, colors='black')
+    ax.contour(N, Igrid, condition_mask, levels=[0.5], linewidths=2, colors='white', linestyles='--')
+    ax.contour(N, Igrid, x_condition_mask, levels=[0.5], linewidths=2, colors='yellow', linestyles='-.')
 
 for ax in axes:
     ax.set_ylabel("current $I$")
@@ -125,4 +135,69 @@ axes[-1].set_xlabel("density $n_0$")
 plt.tight_layout(h_pad=0)
 plt.savefig("phase_diagram.png", dpi=300, bbox_inches="tight")
 plt.savefig("phase_diagram.svg", dpi=300, bbox_inches="tight")
+
+fig_legend = plt.figure(figsize=(10, 6))
+ax_legend = fig_legend.add_subplot(111)
+ax_legend.axis('off')
+
+cmap = plt.cm.get_cmap('rainbow')
+
+table_data = []
+for code in range(8):
+    is_shock = (code % 2) == 1
+    condition1 = ((code // 2) % 2) == 1
+    condition2 = ((code // 4) % 2) == 1
+    color = cmap(code / 7.0)
+    table_data.append({
+        'code': code,
+        'color': color,
+        'condition1': condition1,
+        'condition2': condition2,
+        'is_shock': is_shock
+    })
+
+y_start = 0.95
+y_step = 0.11
+x_color = 0.05
+x_code = 0.18
+x_cond1 = 0.28
+x_cond2 = 0.45
+x_shock = 0.62
+col_width = 0.12
+
+ax_legend.text(x_color, y_start, 'Color', fontsize=14, fontweight='bold', ha='center')
+ax_legend.text(x_code, y_start, 'Code', fontsize=14, fontweight='bold', ha='center')
+ax_legend.text(x_cond1, y_start, 'Condition 1', fontsize=14, fontweight='bold', ha='center')
+ax_legend.text(x_cond2, y_start, 'Condition 2', fontsize=14, fontweight='bold', ha='center')
+ax_legend.text(x_shock, y_start, 'Is Shock', fontsize=14, fontweight='bold', ha='center')
+
+ax_legend.text(x_cond1, y_start - 0.04, r'$(I > u_0 \cdot \gamma / |d\gamma/dn|)$', 
+              fontsize=10, ha='center', style='italic')
+ax_legend.text(x_cond2, y_start - 0.04, r'$(L < \lambda_* = 4\pi u_0/\gamma(n))$', 
+              fontsize=10, ha='center', style='italic')
+ax_legend.text(x_shock, y_start - 0.04, r'$(x_* < L)$', 
+              fontsize=10, ha='center', style='italic')
+
+for i, data in enumerate(table_data):
+    y_pos = y_start - 0.08 - i * y_step
+    
+    rect = plt.Rectangle((x_color - col_width/2, y_pos - 0.03), col_width, 0.06, 
+                        facecolor=data['color'], edgecolor='black', linewidth=1)
+    ax_legend.add_patch(rect)
+    
+    ax_legend.text(x_code, y_pos, str(data['code']), fontsize=12, ha='center', va='center')
+    ax_legend.text(x_cond1, y_pos, 'Yes' if data['condition1'] else 'No', 
+                  fontsize=12, ha='center', va='center')
+    ax_legend.text(x_cond2, y_pos, 'Yes' if data['condition2'] else 'No', 
+                  fontsize=12, ha='center', va='center')
+    ax_legend.text(x_shock, y_pos, 'Yes' if data['is_shock'] else 'No', 
+                  fontsize=12, ha='center', va='center')
+
+ax_legend.set_xlim(0, 1)
+ax_legend.set_ylim(0, 1)
+ax_legend.set_title("Color Code Legend", fontsize=16, pad=20)
+
+plt.tight_layout()
+plt.savefig("color_legend.png", dpi=300, bbox_inches="tight")
+plt.savefig("color_legend.svg", dpi=300, bbox_inches="tight")
 plt.show()
