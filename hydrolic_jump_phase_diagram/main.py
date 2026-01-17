@@ -14,19 +14,18 @@ plt.rcParams['legend.fontsize'] = 30
 plt.rcParams['figure.titlesize'] = 30
 
 params = {
-    'L_device': 2.0,      # used in shock: x_* < L_device
-    'L_lambda': 2.0,      # used in lambda condition: L_lambda < lambda_*
-    'U': 20,
+    'L_device': 2e8,      # used in shock: x_* < L_device
+    'L_lambda': 2e8,      # used in lambda condition: L_lambda < lambda_*
+    'U': 1,
     'm': 1.0,
     'echarge': 1.0,
-    'gamma0': 200,
-    'w': 0.4,             # for gamma_exp
-    'nref': 2.5,          # for gamma_power
-    'nmin': 0.01,
-    'nmax': 2.0,
-    'Imax_vals': [200, 4, 200],
-    'grid_n': 101,
-    'grid_I': 101,
+    'gamma0': 1e3,
+    'w': 1,             # for gamma_exp
+    'nmin': 20,
+    'nmax': 25,
+    'Imax': 10,
+    'grid_n': 401,
+    'grid_I': 401,
 }
 
 L_device = params['L_device']
@@ -36,37 +35,19 @@ m = params['m']
 echarge = params['echarge']
 gamma0 = params['gamma0']
 w = params['w']
-nref = params['nref']
 nmin = params['nmin']
 nmax = params['nmax']
-Imax_vals = params['Imax_vals']
+Imax = params['Imax']
 
 def p_of_I(I):
     return m * I / echarge
 
-def gamma_const(n):
-    return gamma0 * np.ones_like(n)
-
 def gamma_exp(n):
     return gamma0 * np.exp(-n / w)
-
-def gamma_power(n):
-    return gamma0 / (1 + n**2 / nref**2)
-
-def dgamma_const_dn(n):
-    return np.zeros_like(n)
 
 def dgamma_exp_dn(n):
     return -gamma0 / w * np.exp(-n / w)
 
-def dgamma_power_dn(n):
-    return -2 * gamma0 * n / (nref**2 * (1 + n**2 / nref**2)**2)
-
-GAMMAS = [
-    (r"$\gamma = \gamma_0$", gamma_const, dgamma_const_dn),
-    (rf"$\gamma = \gamma_0 e^{{-n/w}}$", gamma_exp, dgamma_exp_dn),
-    (rf"$\gamma = \frac{{\gamma_0}}{{1+n^2/n_0^2}}$", gamma_power, dgamma_power_dn),
-]
 
 def distance_to_sonic(n0, I, gamma_fn, npts=2000):
     if I == 0:
@@ -87,6 +68,7 @@ def distance_to_sonic(n0, I, gamma_fn, npts=2000):
     integrand = numerator / denom
 
     x_star = np.trapezoid(integrand, n_grid)
+    
     return x_star, n_star, "ok"
 
 def shock_required(n0, I, gamma_fn):
@@ -107,55 +89,48 @@ def get_x_star(n0, I, gamma_fn):
 
 n0_vals = np.linspace(nmin, nmax, params['grid_n'])
 
-fig, axes = plt.subplots(len(GAMMAS), 1, figsize=(6.5, 3.5 * len(GAMMAS)), sharex=True)
+fig, ax = plt.subplots(1, 1, figsize=(8.5, 6.5))
 
-if len(GAMMAS) == 1:
-    axes = [axes]
+I_vals = np.linspace(0.0, Imax, params['grid_I'])
 
-for i, (ax, (label, gfn, dgfn)) in enumerate(zip(axes, GAMMAS)):
-    Imax = Imax_vals[i] if i < len(Imax_vals) else 80
-    I_vals = np.linspace(0.0, Imax, params['grid_I'])
-    
-    N, Igrid = np.meshgrid(n0_vals, I_vals)
-    
-    gamma_vals = gfn(N)
-    dgamma_dn_vals = dgfn(N)
-    
-    u0 = np.sqrt(U * N / m)
-    
-    dgamma_nonzero = np.abs(dgamma_dn_vals) > 1e-10
-    threshold = np.zeros_like(N)
-    threshold[dgamma_nonzero] = echarge * u0[dgamma_nonzero] * gamma_vals[dgamma_nonzero] / np.abs(dgamma_dn_vals[dgamma_nonzero])
-    condition_mask = np.where((dgamma_nonzero) & (Igrid > threshold), 1.0, 0.0)
-    
-    shock_required_vec = np.vectorize(lambda n, I: shock_required(n, I, gfn), otypes=[float])
-    shock_mask = shock_required_vec(N, Igrid).astype(float)
-    
-    lambda_star = 4 * np.pi * u0 / gamma_vals
-    x_condition_mask = np.where(L_lambda < lambda_star, 1.0, 0.0)
+N, Igrid = np.meshgrid(n0_vals, I_vals)
 
-    combined_mask = shock_mask + 2 * condition_mask + 4 * x_condition_mask
-    norm = BoundaryNorm(np.arange(-0.5, 8.5, 1), 256)
-    pcm = ax.pcolormesh(
-        n0_vals, I_vals, combined_mask,
-        shading="auto",
-        cmap="rainbow",
-        norm=norm
-    )
-    # ax.set_title(label)
-    ax.set_xlim(n0_vals.min(), n0_vals.max())
-    ax.set_ylim(I_vals.min(), I_vals.max())
+gamma_vals = gamma_exp(N)
+dgamma_dn_vals = dgamma_exp_dn(N)
 
-    ax.contour(N, Igrid, shock_mask, levels=[0.5], linewidths=3, colors='black')
-    ax.contour(N, Igrid, condition_mask, levels=[0.5], linewidths=2, colors='white', linestyles='--')
-    ax.contour(N, Igrid, x_condition_mask, levels=[0.5], linewidths=2, colors='yellow', linestyles='-.')
-    
-    code2_fraction = np.sum(combined_mask == 2.0) / combined_mask.size
-    print(f"{label}: Code 2 fraction = {code2_fraction:.3f}")
-    
-    ax.set_ylabel("current $I$")
+u0 = np.sqrt(U * N / m)
 
-axes[-1].set_xlabel("density $n_0$")
+dgamma_nonzero = np.abs(dgamma_dn_vals) > 1e-10
+threshold = np.zeros_like(N)
+threshold[dgamma_nonzero] = echarge * u0[dgamma_nonzero] * gamma_vals[dgamma_nonzero] / np.abs(dgamma_dn_vals[dgamma_nonzero])
+condition_mask = np.where((dgamma_nonzero) & (Igrid > threshold), 1.0, 0.0)
+
+shock_required_vec = np.vectorize(lambda n, I: shock_required(n, I, gamma_exp), otypes=[float])
+shock_mask = shock_required_vec(N, Igrid).astype(float)
+
+lambda_star = 4 * np.pi * u0 / gamma_vals
+x_condition_mask = np.where(lambda_star < L_lambda, 1.0, 0.0)
+
+combined_mask = shock_mask + 2 * condition_mask + 4 * x_condition_mask
+norm = BoundaryNorm(np.arange(-0.5, 8.5, 1), 256)
+pcm = ax.pcolormesh(
+    n0_vals, I_vals, combined_mask,
+    shading="auto",
+    cmap="rainbow",
+    norm=norm
+)
+ax.set_xlim(n0_vals.min(), n0_vals.max())
+ax.set_ylim(I_vals.min(), I_vals.max())
+
+ax.contour(N, Igrid, shock_mask, levels=[0.5], linewidths=3, colors='black')
+ax.contour(N, Igrid, condition_mask, levels=[0.5], linewidths=2, colors='white', linestyles='--')
+ax.contour(N, Igrid, x_condition_mask, levels=[0.5], linewidths=2, colors='yellow', linestyles='-.')
+
+code2_fraction = np.sum(combined_mask == 2.0) / combined_mask.size
+print(f"Code 2 fraction = {code2_fraction:.3f}")
+
+ax.set_ylabel("current $I$")
+ax.set_xlabel("density $n_0$")
 plt.tight_layout(h_pad=0)
 plt.savefig("phase_diagram.png", dpi=300, bbox_inches="tight")
 plt.savefig("phase_diagram.svg", dpi=300, bbox_inches="tight")
