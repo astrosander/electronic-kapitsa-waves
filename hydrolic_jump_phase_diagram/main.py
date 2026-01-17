@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.colors import BoundaryNorm
+from matplotlib.colors import BoundaryNorm, ListedColormap
 
 # plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
@@ -15,15 +15,15 @@ plt.rcParams['figure.titlesize'] = 30
 
 params = {
     'L_device': 2e8,      # used in shock: x_* < L_device
-    'L_lambda': 2e8,      # used in lambda condition: L_lambda < lambda_*
+    'L_lambda': 2e8,      # used in lambda condition: lambda_* < L_lambda
     'U': 1,
     'm': 1.0,
     'echarge': 1.0,
     'gamma0': 1e3,
     'w': 1,             # for gamma_exp
     'nmin': 20,
-    'nmax': 25,
-    'Imax': 10,
+    'nmax': 23,
+    'Imax': 4,
     'grid_n': 401,
     'grid_I': 401,
 }
@@ -42,11 +42,29 @@ Imax = params['Imax']
 def p_of_I(I):
     return m * I / echarge
 
-def gamma_exp(n):
-    return gamma0 * np.exp(-n / w)
+def gamma_fn(n):
+    """Finite-contrast CNP peak (logistic/tanh step) function."""
+    nabs = np.abs(n)
+    gamma_lo = 2.5e-7
+    gamma_hi = 7.5e-7
+    n_c = 21.95
+    Delta = 0.05
+    return gamma_lo + (gamma_hi - gamma_lo) / (1.0 + np.exp((nabs - n_c) / Delta))
 
-def dgamma_exp_dn(n):
-    return -gamma0 / w * np.exp(-n / w)
+def dgamma_dn(n):
+    """Derivative of gamma_fn with respect to n."""
+    nabs = np.abs(n)
+    gamma_lo = 2.5e-7
+    gamma_hi = 7.5e-7
+    n_c = 21.95
+    Delta = 0.05
+
+    z = (nabs - n_c) / Delta
+    ez = np.exp(z)
+    dgamma_dn_abs = -(gamma_hi - gamma_lo) * ez / (Delta * (1.0 + ez)**2)
+
+    # Include sign from |n| if n is negative
+    return dgamma_dn_abs * np.sign(n)
 
 
 def distance_to_sonic(n0, I, gamma_fn, npts=2000):
@@ -95,8 +113,8 @@ I_vals = np.linspace(0.0, Imax, params['grid_I'])
 
 N, Igrid = np.meshgrid(n0_vals, I_vals)
 
-gamma_vals = gamma_exp(N)
-dgamma_dn_vals = dgamma_exp_dn(N)
+gamma_vals = gamma_fn(N)
+dgamma_dn_vals = dgamma_dn(N)
 
 u0 = np.sqrt(U * N / m)
 
@@ -105,18 +123,51 @@ threshold = np.zeros_like(N)
 threshold[dgamma_nonzero] = echarge * u0[dgamma_nonzero] * gamma_vals[dgamma_nonzero] / np.abs(dgamma_dn_vals[dgamma_nonzero])
 condition_mask = np.where((dgamma_nonzero) & (Igrid > threshold), 1.0, 0.0)
 
-shock_required_vec = np.vectorize(lambda n, I: shock_required(n, I, gamma_exp), otypes=[float])
-shock_mask = shock_required_vec(N, Igrid).astype(float)
+# Calculate x_star directly from exact solver
+x_star_vec = np.vectorize(lambda n, I: get_x_star(n, I, gamma_fn), otypes=[float])
+x_star = x_star_vec(N, Igrid)
+
+# no_shock_mask: smooth solution survives entire device (x_star >= L_device)
+no_shock_mask = (x_star >= L_device).astype(float)
+# shock_mask: shock forms before end of device (x_star < L_device)
+shock_mask = (x_star < L_device).astype(float)
 
 lambda_star = 4 * np.pi * u0 / gamma_vals
 x_condition_mask = np.where(lambda_star < L_lambda, 1.0, 0.0)
 
 combined_mask = shock_mask + 2 * condition_mask + 4 * x_condition_mask
-norm = BoundaryNorm(np.arange(-0.5, 8.5, 1), 256)
+
+# Check intersection of interest: condition1 AND condition2 AND no_shock
+interest = (condition_mask == 1) & (x_condition_mask == 1) & (no_shock_mask == 1)
+interest_fraction = interest.mean()
+print(f"Interest region fraction (condition1 & condition2 & no_shock): {interest_fraction:.6f}")
+
+# Print exact numeric values at specific points
+n0_test = 21.94375
+I_test1 = 0.3625
+I_test2 = 5.0
+
+gamma_n0 = gamma_fn(n0_test)
+print(f"\nAt n₀ = {n0_test}:")
+print(f"  γ(n₀) = {gamma_n0:.10e}")
+
+x_star_1 = get_x_star(n0_test, I_test1, gamma_fn)
+x_star_2 = get_x_star(n0_test, I_test2, gamma_fn)
+print(f"\nAt n₀ = {n0_test}, I = {I_test1}:")
+print(f"  x_* = {x_star_1:.10e}")
+print(f"\nAt n₀ = {n0_test}, I = {I_test2}:")
+print(f"  x_* = {x_star_2:.10e}")
+
+# Create discrete colormap with exactly 8 colors matching the legend
+base_cmap = plt.cm.get_cmap('rainbow')
+colors = [base_cmap(i / 7.0) for i in range(8)]
+cmap_discrete = ListedColormap(colors)
+norm = BoundaryNorm(np.arange(-0.5, 8.5, 1), cmap_discrete.N)
+
 pcm = ax.pcolormesh(
     n0_vals, I_vals, combined_mask,
     shading="auto",
-    cmap="rainbow",
+    cmap=cmap_discrete,
     norm=norm
 )
 ax.set_xlim(n0_vals.min(), n0_vals.max())
@@ -126,6 +177,11 @@ ax.contour(N, Igrid, shock_mask, levels=[0.5], linewidths=3, colors='black')
 ax.contour(N, Igrid, condition_mask, levels=[0.5], linewidths=2, colors='white', linestyles='--')
 ax.contour(N, Igrid, x_condition_mask, levels=[0.5], linewidths=2, colors='yellow', linestyles='-.')
 
+# Orange contour for relaxed condition (don't reuse x_condition_mask variable)
+# x_condition_mask_relaxed = np.where(lambda_star < L_lambda * 2, 1.0, 0.0)
+# ax.contour(N, Igrid, x_condition_mask_relaxed, levels=[0.5], linewidths=2, colors='orange', linestyles='-.')
+
+
 code2_fraction = np.sum(combined_mask == 2.0) / combined_mask.size
 print(f"Code 2 fraction = {code2_fraction:.3f}")
 
@@ -133,20 +189,24 @@ ax.set_ylabel("current $I$")
 ax.set_xlabel("density $n_0$")
 plt.tight_layout(h_pad=0)
 plt.savefig("phase_diagram.png", dpi=300, bbox_inches="tight")
-plt.savefig("phase_diagram.svg", dpi=300, bbox_inches="tight")
+plt.savefig("phase_diagram.pdf", dpi=300, bbox_inches="tight")
 
 fig_legend = plt.figure(figsize=(10, 6))
 ax_legend = fig_legend.add_subplot(111)
 ax_legend.axis('off')
 
-cmap = plt.cm.get_cmap('rainbow')
+# Use the same discrete colormap as the plot
+base_cmap = plt.cm.get_cmap('rainbow')
+colors = [base_cmap(i / 7.0) for i in range(8)]
 
 table_data = []
 for code in range(8):
-    is_shock = (code % 2) == 1
-    condition1 = ((code // 2) % 2) == 1
-    condition2 = ((code // 4) % 2) == 1
-    color = cmap(code / 7.0)
+    # Encoding: code = shock_mask*1 + condition_mask*2 + x_condition_mask*4
+    # Extract bits: bit0=shock, bit1=condition1, bit2=condition2
+    is_shock = (code & 1) == 1  # bit 0
+    condition1 = (code & 2) == 2  # bit 1
+    condition2 = (code & 4) == 4  # bit 2
+    color = colors[code]  # Use exact color from discrete colormap
     table_data.append({
         'code': code,
         'color': color,
@@ -172,9 +232,9 @@ ax_legend.text(x_shock, y_start, 'Is Shock', fontsize=14, fontweight='bold', ha=
 
 ax_legend.text(x_cond1, y_start - 0.04, r'$(I > e \cdot u_0 \cdot \gamma / |d\gamma/dn|)$', 
               fontsize=10, ha='center', style='italic')
-ax_legend.text(x_cond2, y_start - 0.04, r'$(L < \lambda_* = 4\pi u_0/\gamma(n))$', 
+ax_legend.text(x_cond2, y_start - 0.04, r'$(\lambda_* < L_\lambda)$', 
               fontsize=10, ha='center', style='italic')
-ax_legend.text(x_shock, y_start - 0.04, r'$(x_* < L)$', 
+ax_legend.text(x_shock, y_start - 0.04, r'$(x_* < L_{device})$', 
               fontsize=10, ha='center', style='italic')
 
 for i, data in enumerate(table_data):
