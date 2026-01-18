@@ -19,16 +19,25 @@ params = {
     'U': 1,
     'm': 1.0,
     'echarge': 1.0,
-    # critical changes
-    'gamma0': 6.0e-7,
-    'beta': 120.0,
+
+    # keep lambda condition barely satisfied near n~22
+    'gamma0': 5.95e-7,      # gamma(n0_ref)=2.975e-7 (tight but OK)
+    'beta': 180.0,          # lowers I_min noticeably vs 120
     'n0_ref': 22.0,
-    # zoom to where the overlap actually lives
-    'nmin': 21.8,
-    'nmax': 22.2,
-    'Imax': 3,
+
+    # show the whole wedge
+    'nmin': 21.6,
+    'nmax': 22.4,
+    'Imax': 4.0,
+
     'grid_n': 401,
     'grid_I': 401,
+
+    # observability model (choose "shocks are hard to see")
+    'alpha_jump': 5.0,      # your table: meanPshock_in12 ~ 0.16
+    'delta_factor': 0.7,    # smoother logistic; also helps overflow
+    'alpha_nu': 0.0,
+    'nu': 0.0,
 }
 
 L_device = params['L_device']
@@ -67,8 +76,12 @@ def distance_to_sonic(n0, I, gamma_fn, npts=2000):
     if n0 <= n_star:
         return 0.0, n_star, "inlet-sonic-or-supersonic"
 
-    eps = 1e-8
-    n1 = n_star * (1.0 + eps)
+    # Use delta_n to define sonic layer width (surgical regularization at singularity)
+    delta_n = params.get('delta_n', 0.0)
+    n1 = n_star + delta_n
+    if n1 >= n0:
+        return 0.0, n_star, "inlet-sonic-or-supersonic"
+    
     n_grid = np.linspace(n1, n0, npts)
 
     numerator = U * n_grid - (p * p) / (m * n_grid**2)
@@ -117,10 +130,31 @@ condition_mask = np.where((dgamma_nonzero) & (Igrid > threshold), 1.0, 0.0)
 x_star_vec = np.vectorize(lambda n, I: get_x_star(n, I, gamma_fn), otypes=[float])
 x_star = x_star_vec(N, Igrid)
 
-# no_shock_mask: smooth solution survives entire device (x_star >= L_device)
-no_shock_mask = (x_star >= L_device).astype(float)
-# shock_mask: shock forms before end of device (x_star < L_device)
-shock_mask = (x_star < L_device).astype(float)
+# Shock observability: use local damping length with soft transition
+# Use local damping length: ell_jump = alpha * u0/gamma + alpha_nu * nu/u0
+alpha_jump = params.get('alpha_jump', 1.0)
+alpha_nu = params.get('alpha_nu', 0.0)
+nu = params.get('nu', 0.0)
+delta_factor = params.get('delta_factor', 0.5)
+
+ell_jump_grid = alpha_jump * (u0 / gamma_vals)
+if alpha_nu > 0 and nu > 0:
+    ell_jump_grid = ell_jump_grid + alpha_nu * (nu / u0)
+delta_ell = delta_factor * (u0 / gamma_vals)
+
+# Probability shock is observable (soft transition instead of hard cutoff)
+# Clip z to avoid overflow in exp
+z = (ell_jump_grid - (L_device - x_star)) / delta_ell
+z = np.clip(z, -60.0, 60.0)  # avoids overflow; 60 is plenty for exp
+Pshock = 1.0 / (1.0 + np.exp(z))
+
+# Binary masks for phase diagram (using 0.5 threshold)
+shock_mask = ((x_star < L_device) & (Pshock > 0.5)).astype(float)
+# Everything else counts as "no observable shock"
+no_shock_mask = (shock_mask == 0).astype(float)
+
+# Expected "no-shock" weight (probability that shock is NOT observable)
+w_no_shock = 1.0 - Pshock
 
 lambda_star = 4 * np.pi * u0 / gamma_vals
 x_condition_mask = np.where(lambda_star < L_lambda, 1.0, 0.0)
@@ -128,9 +162,22 @@ x_condition_mask = np.where(lambda_star < L_lambda, 1.0, 0.0)
 combined_mask = shock_mask + 2 * condition_mask + 4 * x_condition_mask
 
 # Check intersection of interest: condition1 AND condition2 AND no_shock
-interest = (condition_mask == 1) & (x_condition_mask == 1) & (no_shock_mask == 1)
-interest_fraction = interest.mean()
-print(f"Interest region fraction (condition1 & condition2 & no_shock): {interest_fraction:.6f}")
+# Hard version (binary threshold)
+interest_hard = (condition_mask == 1) & (x_condition_mask == 1) & (shock_mask == 0)
+interest_fraction_hard = interest_hard.mean()
+
+# Soft/weighted version (weighted by probability that shock is NOT observable)
+mask12 = (condition_mask == 1) & (x_condition_mask == 1)
+interest_fraction_soft = np.mean(mask12 * w_no_shock)
+
+print(f"Interest region fraction (hard): {interest_fraction_hard:.6f}")
+print(f"Interest region fraction (soft-weighted): {interest_fraction_soft:.6f}")
+
+# Diagnostic: mean observability inside cond1&2
+print(f"\nObservability diagnostics inside cond1&2:")
+print(f"  Mean (1-Pshock) = {np.mean(w_no_shock[mask12]):.6f}")
+print(f"  Mean Pshock = {np.mean(Pshock[mask12]):.6f}")
+print(f"  Pure cond1&2 area fraction = {mask12.mean():.6f}")
 
 # Diagnostic code to verify inequalities
 R = (N / gamma_vals) * np.abs(dgamma_dn_vals)
@@ -166,6 +213,49 @@ print(f"  x_* = {x_star_1:.10e}")
 print(f"\nAt n₀ = {n0_test}, I = {I_test2}:")
 print(f"  x_* = {x_star_2:.10e}")
 
+# Diagnostic: show effect of alpha_jump on observable shock criterion
+print(f"\nShock suppression diagnostic (alpha_jump sweep):")
+alpha_jump_original = params['alpha_jump']
+mask12 = (condition_mask == 1) & (x_condition_mask == 1)
+delta_factor = params.get('delta_factor', 0.5)
+
+for a in [0.0, 0.5, 1.0, 2.0, 3.0]:
+    params['alpha_jump'] = a
+    ell_jump_grid_test = a * (u0 / gamma_vals)
+    if alpha_nu > 0 and nu > 0:
+        ell_jump_grid_test = ell_jump_grid_test + alpha_nu * (nu / u0)
+    
+    shock_eff = ((x_star < L_device) & ((L_device - x_star) > ell_jump_grid_test))
+    interest_eff = mask12 & (~shock_eff)
+    print(f"  alpha_jump={a:0.1f}: interest_fraction={interest_eff.mean():.6f}, shock_fraction={shock_eff.mean():.6f}")
+# Restore original value
+params['alpha_jump'] = alpha_jump_original
+
+# Comprehensive diagnostic: Mean(Pshock) inside cond1&2 vs alpha_jump
+print(f"\nComprehensive alpha_jump diagnostic (Mean Pshock in cond1&2):")
+print(f"{'alpha':>6}  {'meanPshock_in12':>15}  {'hard_interest':>13}  {'soft_interest':>13}")
+print("-" * 60)
+alphas = [0.0, 0.5, 1.0, 2.0, 3.0, 4.0, 5.0]
+
+for a in alphas:
+    ell_jump_grid_test = a * (u0 / gamma_vals)
+    if alpha_nu > 0 and nu > 0:
+        ell_jump_grid_test = ell_jump_grid_test + alpha_nu * (nu / u0)
+    delta_ell_test = delta_factor * (u0 / gamma_vals)
+    
+    z_test = (ell_jump_grid_test - (L_device - x_star)) / delta_ell_test
+    z_test = np.clip(z_test, -60.0, 60.0)
+    Pshock_test = 1.0 / (1.0 + np.exp(z_test))
+    
+    hard_no_shock = ~((x_star < L_device) & ((L_device - x_star) > ell_jump_grid_test))
+    interest_hard = np.mean(mask12 & hard_no_shock)
+    
+    interest_soft = np.mean(mask12 * (1.0 - Pshock_test))
+    
+    mean_P_in12 = np.mean(Pshock_test[mask12]) if np.any(mask12) else np.nan
+    
+    print(f"{a:>6.1f}  {mean_P_in12:>15.3f}  {interest_hard:>13.6f}  {interest_soft:>13.6f}")
+
 # Create discrete colormap with exactly 8 colors matching the legend
 base_cmap = plt.cm.get_cmap('rainbow')
 colors = [base_cmap(i / 7.0) for i in range(8)]
@@ -184,6 +274,11 @@ ax.set_ylim(I_vals.min(), I_vals.max())
 ax.contour(N, Igrid, shock_mask, levels=[0.5], linewidths=3, colors='black')
 ax.contour(N, Igrid, condition_mask, levels=[0.5], linewidths=2, colors='white', linestyles='--')
 ax.contour(N, Igrid, x_condition_mask, levels=[0.5], linewidths=2, colors='yellow', linestyles='-.')
+
+# Boundary where L - x_star = ell_jump (observable shock boundary)
+# ax.contour(N, Igrid, (L_device - x_star) - ell_jump_grid, levels=[0.0],
+#            linewidths=2, colors='cyan', linestyles=':')
+# ax.contour(N, Igrid, Pshock, levels=[0.5], linewidths=2, colors='cyan', linestyles='--', alpha=0.7)
 
 # Orange contour for relaxed condition (don't reuse x_condition_mask variable)
 # x_condition_mask_relaxed = np.where(lambda_star < L_lambda * 2, 1.0, 0.0)
