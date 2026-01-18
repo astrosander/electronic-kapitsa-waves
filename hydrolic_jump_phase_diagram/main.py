@@ -14,16 +14,19 @@ plt.rcParams['legend.fontsize'] = 30
 plt.rcParams['figure.titlesize'] = 30
 
 params = {
-    'L_device': 2e8,      # used in shock: x_* < L_device
-    'L_lambda': 2e8,      # used in lambda condition: lambda_* < L_lambda
+    'L_device': 2e8,
+    'L_lambda': 2e8,
     'U': 1,
     'm': 1.0,
     'echarge': 1.0,
-    'gamma0': 1e3,
-    'w': 1,             # for gamma_exp
-    'nmin': 21,
-    'nmax': 23,
-    'Imax': 4,
+    # critical changes
+    'gamma0': 6.1e-7,
+    'beta': 120.0,
+    'n0_ref': 22.0,
+    # zoom to where the overlap actually lives
+    'nmin': 21.8,
+    'nmax': 22.2,
+    'Imax': 3,
     'grid_n': 401,
     'grid_I': 401,
 }
@@ -34,7 +37,8 @@ U = params['U']
 m = params['m']
 echarge = params['echarge']
 gamma0 = params['gamma0']
-w = params['w']
+beta = params['beta']
+n0_ref = params['n0_ref']
 nmin = params['nmin']
 nmax = params['nmax']
 Imax = params['Imax']
@@ -43,28 +47,14 @@ def p_of_I(I):
     return m * I / echarge
 
 def gamma_fn(n):
-    """Finite-contrast CNP peak (logistic/tanh step) function."""
-    nabs = np.abs(n)
-    gamma_lo = 2.5e-7
-    gamma_hi = 7.5e-7
-    n_c = 21.95
-    Delta = 0.05
-    return gamma_lo + (gamma_hi - gamma_lo) / (1.0 + np.exp((nabs - n_c) / Delta))
+    """Power-law gamma function: gamma(n) = gamma0 / (1 + n^beta / n0_ref^beta)."""
+    return gamma0 / (1.0 + (n / n0_ref)**beta)
 
 def dgamma_dn(n):
     """Derivative of gamma_fn with respect to n."""
-    nabs = np.abs(n)
-    gamma_lo = 2.5e-7
-    gamma_hi = 7.5e-7
-    n_c = 21.95
-    Delta = 0.05
-
-    z = (nabs - n_c) / Delta
-    ez = np.exp(z)
-    dgamma_dn_abs = -(gamma_hi - gamma_lo) * ez / (Delta * (1.0 + ez)**2)
-
-    # Include sign from |n| if n is negative
-    return dgamma_dn_abs * np.sign(n)
+    n_power = (n / n0_ref)**beta
+    denominator = (1.0 + n_power)**2
+    return -gamma0 * beta * (n / n0_ref)**(beta - 1) / (n0_ref * denominator)
 
 
 def distance_to_sonic(n0, I, gamma_fn, npts=2000):
@@ -109,7 +99,7 @@ n0_vals = np.linspace(nmin, nmax, params['grid_n'])
 
 fig, ax = plt.subplots(1, 1, figsize=(8.5, 6.5))
 
-I_vals = np.linspace(0.0, Imax, params['grid_I'])
+I_vals = np.linspace(0, Imax, params['grid_I'])
 
 N, Igrid = np.meshgrid(n0_vals, I_vals)
 
@@ -118,7 +108,7 @@ dgamma_dn_vals = dgamma_dn(N)
 
 u0 = np.sqrt(U * N / m)
 
-dgamma_nonzero = np.abs(dgamma_dn_vals) > 1e-10
+dgamma_nonzero = np.abs(dgamma_dn_vals) > 1e-20
 threshold = np.zeros_like(N)
 threshold[dgamma_nonzero] = echarge * u0[dgamma_nonzero] * gamma_vals[dgamma_nonzero] / np.abs(dgamma_dn_vals[dgamma_nonzero])
 condition_mask = np.where((dgamma_nonzero) & (Igrid > threshold), 1.0, 0.0)
@@ -142,10 +132,28 @@ interest = (condition_mask == 1) & (x_condition_mask == 1) & (no_shock_mask == 1
 interest_fraction = interest.mean()
 print(f"Interest region fraction (condition1 & condition2 & no_shock): {interest_fraction:.6f}")
 
+# Diagnostic code to verify inequalities
+R = (N / gamma_vals) * np.abs(dgamma_dn_vals)
+
+jmin = echarge * N * u0 / R
+sigma = N * echarge**2 / (m * gamma_vals)
+jmax = U * N * sigma / (L_device * echarge)
+
+# Find R at n=22 (interpolate from grid - use middle row for representative I)
+n_test_diag = 22.0
+mid_I_idx = len(I_vals) // 2
+R_at_n22 = np.interp(n_test_diag, n0_vals, R[mid_I_idx, :])
+print(f"\nDiagnostics:")
+print(f"  R at n={n_test_diag} ~ {R_at_n22:.6f}")
+print(f"  min(jmax - jmin) over grid = {np.min(jmax - jmin):.10e}")
+print(f"  fraction where jmin<j<jmax = {np.mean((Igrid > jmin) & (Igrid < jmax)):.6f}")
+print(f"  fraction where lambda*<L = {np.mean(lambda_star < L_lambda):.6f}")
+print(f"  fraction no shock = {np.mean(no_shock_mask == 1):.6f}")
+
 # Print exact numeric values at specific points
-n0_test = 21.94375
-I_test1 = 0.3625
-I_test2 = 5.0
+n0_test = 22.0
+I_test1 = 2.2
+I_test2 = 3.0
 
 gamma_n0 = gamma_fn(n0_test)
 print(f"\nAt n₀ = {n0_test}:")
