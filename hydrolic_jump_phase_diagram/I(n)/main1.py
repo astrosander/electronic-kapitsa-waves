@@ -13,20 +13,20 @@ plt.rcParams['ytick.labelsize'] = 30
 plt.rcParams['legend.fontsize'] = 30
 plt.rcParams['figure.titlesize'] = 30
 
-U = 1.0
+U = 20
 m = 1.0
-L = 1.0
+L = 2.0
 eps = 1e-12
 
-n_min, n_max = 1e-4, 0.1
-I_min, I_max = 0.0, 0.1
+n_min, n_max = 0.01, 2.0
+I_min, I_max = 0.0, 15.0
 
 Nn, NI = 700, 550
 
-def gamma_of_n(n, gamma0=2.5, w=0.04):
+def gamma_of_n(n, gamma0=200, w=0.4):
     return gamma0 * np.exp(-np.abs(n) / w)
 
-def dgamma_dn(n, gamma0=2.5, w=0.04):
+def dgamma_dn(n, gamma0=200, w=0.4):
     g = gamma_of_n(n, gamma0=gamma0, w=w)
     return -(np.sign(n) / w) * g
 
@@ -55,14 +55,14 @@ norm = BoundaryNorm(np.arange(-0.5, 2.5, 1), 256)
 plt.contourf(NN, II, unstable.astype(float), levels=[-0.5, 0.5, 1.5], 
              cmap="rainbow", norm=norm, alpha=0.85)
 
-plt.plot(n, I_crit_line, linewidth=2, linestyle="--", color='white',
-         label=r"$\dfrac{\gamma\,m\,u_0}{|\gamma'|}$")
+plt.plot(n, I_crit_line, linewidth=2.5, linestyle="--", color='cyan',
+         label=r"$u_c n$")
 
-plt.plot(n, I_shock, linewidth=3, linestyle="-", color='orange',
+plt.plot(n, I_shock, linewidth=3.5, linestyle="-", color='black',
          label=r"$\sqrt{U}\,n^{3/2}$")
 
-plt.plot(n, lambda_line, linewidth=2, linestyle="-.", color='yellow',
-         label=r"$\lambda(n)$")
+plt.plot(n, lambda_line, linewidth=2.5, linestyle="-.", color='lime',
+         label=r"$\lambda_*(n)$")
 
 plt.xlim(n_min, n_max)
 plt.ylim(I_min, I_max)

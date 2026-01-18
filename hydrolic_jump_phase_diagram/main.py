@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import BoundaryNorm, ListedColormap
 
-# plt.rcParams['text.usetex'] = True
+plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
 plt.rcParams['font.size'] = 30
@@ -21,7 +21,7 @@ params = {
     'echarge': 1.0,
     'gamma0': 1e3,
     'w': 1,             # for gamma_exp
-    'nmin': 20,
+    'nmin': 21,
     'nmax': 23,
     'Imax': 4,
     'grid_n': 401,
