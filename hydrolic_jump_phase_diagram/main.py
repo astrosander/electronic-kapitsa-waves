@@ -22,20 +22,19 @@ params = {
 
     # keep lambda condition barely satisfied near n~22
     'gamma0': 5.95e-7,      # gamma(n0_ref)=2.975e-7 (tight but OK)
-    'beta': 180.0,          # lowers I_min noticeably vs 120
+    'beta': 90.0,          # lowers I_min noticeably vs 120
     'n0_ref': 22.0,
 
     # show the whole wedge
     'nmin': 21.6,
     'nmax': 22.4,
-    'Imax': 4.0,
+    'Imax': 6.0,
 
     'grid_n': 401,
     'grid_I': 401,
 
-    # observability model (choose "shocks are hard to see")
-    'alpha_jump': 5.0,      # your table: meanPshock_in12 ~ 0.16
-    'delta_factor': 0.7,    # smoother logistic; also helps overflow
+    'alpha_jump': 8.0,
+    'delta_factor': 0,#0.7,
     'alpha_nu': 0.0,
     'nu': 0.0,
 }
