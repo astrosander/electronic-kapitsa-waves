@@ -20,7 +20,7 @@ params = {
     'm': 1.0,
     'echarge': 1.0,
     # critical changes
-    'gamma0': 6.1e-7,
+    'gamma0': 6.0e-7,
     'beta': 120.0,
     'n0_ref': 22.0,
     # zoom to where the overlap actually lives
