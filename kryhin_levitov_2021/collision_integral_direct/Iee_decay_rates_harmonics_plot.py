@@ -15,6 +15,7 @@ import math
 import pickle
 import numpy as np
 from matplotlib import pyplot as plt
+from matplotlib.colors import TwoSlopeNorm
 
 # --- Only needed for eigenmodes ---
 from scipy.sparse import csr_matrix, diags
@@ -265,7 +266,24 @@ def compute_and_plot_eigenmodes():
             continue
 
         grid = values_to_grid(full_modes[k], nx, ny, half, meta["Nmax"])
-        im = ax.imshow(grid.T, origin="lower", extent=[pmin, pmax, pmin, pmax], aspect="equal", cmap='rainbow')
+        # Compute adaptive scale: use symmetric scaling for diverging colormap
+        grid_valid = grid[~np.isnan(grid)]
+        if len(grid_valid) > 0:
+            vmax_abs = np.max(np.abs(grid_valid))
+            # Use symmetric scale for better visualization of eigenmodes
+            vmin = -vmax_abs
+            vmax = vmax_abs
+            # Use TwoSlopeNorm to enhance visibility of small non-zero values
+            # This stretches the colormap around zero, making small deviations more visible
+            norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+        else:
+            vmin, vmax = -0.1, 0.1
+            norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+        
+        # Use 'seismic' colormap: high contrast, designed for visualizing small deviations from zero
+        # Dark red/blue at extremes, white at center - makes small non-zero values very visible
+        im = ax.imshow(grid.T, origin="lower", extent=[pmin, pmax, pmin, pmax], aspect="equal", cmap='seismic', norm=norm)
+        print(grid.T[grid.T != 0])
         lambda_str = format_scientific_latex(vals[k], precision=3)
         ax.set_title(rf"$m={k+1}$, $\lambda = {lambda_str}$")
         ax.set_xlabel("$p_x$")
