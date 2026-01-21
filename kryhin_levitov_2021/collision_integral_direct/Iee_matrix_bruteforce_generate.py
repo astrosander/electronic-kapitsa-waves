@@ -247,6 +247,7 @@ def build_matrix_for_theta(Theta: float):
     meta = {
         "Theta": float(Theta),
         "Nmax": int(Nmax),
+        "half": int(half),
         "dp": float(dp),
         "lambda": float(LAMBDA),
         "V2": float(V2),

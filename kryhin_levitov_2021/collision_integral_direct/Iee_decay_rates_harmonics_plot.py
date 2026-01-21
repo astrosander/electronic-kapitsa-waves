@@ -8,6 +8,11 @@ Iee_grid_diagnostics.py
 Eigenmodes are computed from the ACTIVE subspace only (meta["active"]) to reduce cost.
 You need SciPy for eigenmodes:
   pip install scipy
+
+IMPORTANT:
+The paper's spectrum is a GENERALIZED eigenproblem:
+  (-M) v = gamma * W v,   W = diag(f(1-f))
+not the ordinary eigenproblem of (-M).
 """
 
 import os
@@ -43,7 +48,7 @@ dp   = 0.08
 Thetas_weight = [1.0, 0.1, 0.01]
 
 # For part (2): choose one temperature that you have already generated a matrix for
-Theta_eigs = 0.01
+Theta_eigs = 0.2
 N_EIG_PLOT = 6              # how many eigenfunctions to plot
 ZERO_TOL = 1e-10            # treat |lambda|<ZERO_TOL as "conserved/zero" mode
 
@@ -177,7 +182,6 @@ def compute_and_plot_eigenmodes():
 
     nx = meta["nx"]
     ny = meta["ny"]
-    # half = meta["half"]
     half = int(meta.get("half", meta["Nmax"] // 2))
     Nstates = nx.size
 
@@ -188,43 +192,60 @@ def compute_and_plot_eigenmodes():
     # Restrict to active subspace
     Maa = M[np.ix_(active, active)]
 
-    # We want decay rates => eigenvalues of A = -M
+    # Build generalized weight matrix W = diag(f(1-f)) on the active subspace
+    f_full = meta.get("f", None)
+    if f_full is None:
+        raise KeyError("meta['f'] not found. Regenerate matrices with f stored in meta.")
+
+    w = f_full[active] * (1.0 - f_full[active])
+    w = np.asarray(w, dtype=np.float64)
+    w = np.clip(w, 0.0, None)
+
+    # Avoid exact zeros in the generalized mass matrix (ARPACK dislikes singular M)
+    w_eps = 1e-30
+    w_safe = np.where(w > 0.0, w, w_eps)
+    W = diags(w_safe, 0, format="csr")
+
+    # Paper spectrum: (-Maa) v = gamma * W v
     A = csr_matrix(-Maa)
 
-    # Regularize a tiny bit to help ARPACK with near-zero modes
-    reg = 1e-14
-    A = A + diags([reg] * A.shape[0], 0, format="csr")
+    # Tiny regularization on A helps convergence near conserved modes
+    regA = 1e-14
+    A = A + diags([regA] * A.shape[0], 0, format="csr")
 
-    # Ask for a few more than needed, then discard near-zero
-    k_calc = min(A.shape[0] - 2, max(N_EIG_PLOT + 8, N_EIG_PLOT))
+    n = A.shape[0]
+    k_calc = min(n - 2, max(N_EIG_PLOT + 8, N_EIG_PLOT))
     if k_calc <= 0:
         raise RuntimeError("Active subspace too small to compute eigenmodes.")
 
-    # "SM" = smallest magnitude (will include near-zero modes)
-    # vals, vecs = eigs(A, k=k_calc, which="SM")
+    # Target slow modes (small gamma). Shift-invert around small sigma.
     sigma = 1e-10
 
     vals, vecs = eigs(
         A,
+        M=W,
         k=k_calc,
-        sigma=sigma,        # target eigenvalues near sigma
-        which="LM",         # after shift-invert, "LM" is what you want
+        sigma=sigma,
+        which="LM",
         tol=1e-8,
         maxiter=20000
     )
 
-    vals = np.real(vals)
-    vecs = np.real(vecs)
+    # Warn if eigenvalues have significant imaginary parts (non-normal / numerical noise)
+    max_im = float(np.max(np.abs(np.imag(vals)))) if vals.size else 0.0
+    max_re = float(np.max(np.abs(np.real(vals)))) if vals.size else 0.0
+    if max_im > 1e-8 * (max_re + 1e-14):
+        print(f"WARNING: eigenvalues have non-negligible imaginary parts: max|Im|={max_im:.3e}")
 
     vals = np.real(vals)
     vecs = np.real(vecs)
 
-    # sort by eigenvalue
+    # Sort by gamma (ascending = slowest first)
     order = np.argsort(vals)
     vals = vals[order]
     vecs = vecs[:, order]
 
-    # remove near-zero modes
+    # Remove near-zero modes (conserved/zero modes)
     keep = np.where(np.abs(vals) > ZERO_TOL)[0]
     if keep.size == 0:
         raise RuntimeError("All computed modes are ~zero. Increase k_calc or change ZERO_TOL.")
@@ -232,15 +253,31 @@ def compute_and_plot_eigenmodes():
     vals = vals[keep]
     vecs = vecs[:, keep]
 
-    # take first N_EIG_PLOT
+    # Take first N_EIG_PLOT
     n_show = min(N_EIG_PLOT, vals.size)
     vals = vals[:n_show]
     vecs = vecs[:, :n_show]
 
+    # Normalize eigenvectors in the generalized inner product: v^T W v = 1
+    for i in range(n_show):
+        v = vecs[:, i]
+        norm2 = float(np.dot(v, w_safe * v))
+        if norm2 <= 0.0:
+            continue
+        vecs[:, i] = v / math.sqrt(norm2)
+
+    # Check generalized orthogonality: G_ij = v_i^T W v_j should be ~delta_ij
+    G = vecs.T @ (w_safe[:, None] * vecs)
+    diagG = np.diag(G)
+    offG = G - np.diag(diagG)
+    max_off = float(np.max(np.abs(offG))) if offG.size else 0.0
+    max_diag_dev = float(np.max(np.abs(diagG - 1.0))) if diagG.size else 0.0
+    print(f"[W-orthogonality] max|offdiag|={max_off:.3e}, max|diag-1|={max_diag_dev:.3e}")
+
     # Embed eigenvectors back into full lattice for plotting
     full_modes = []
     for i in range(n_show):
-        v_active = vecs[:, i]
+        v_active = vecs[:, i].copy()
 
         # sign convention: make max-abs component positive (visual stability)
         j = int(np.argmax(np.abs(v_active)))
@@ -265,20 +302,17 @@ def compute_and_plot_eigenmodes():
     for k in range(n_show):
         grid = values_to_grid(full_modes[k], nx, ny, half, meta["Nmax"])
         grid_valid = grid[~np.isnan(grid)]
-        if len(grid_valid) > 0:
-            vmax_abs = np.max(np.abs(grid_valid))
+        if grid_valid.size > 0:
+            vmax_abs = float(np.max(np.abs(grid_valid)))
             global_vmax_abs = max(global_vmax_abs, vmax_abs)
-    
+
     if global_vmax_abs > 0:
         global_vmin = -global_vmax_abs
         global_vmax = global_vmax_abs
     else:
         global_vmin, global_vmax = -0.1, 0.1
-    
-    # Create common norm for all plots
-    global_norm = TwoSlopeNorm(vmin=global_vmin, vcenter=0, vmax=global_vmax)
 
-    # Store the last image for colorbar
+    global_norm = TwoSlopeNorm(vmin=global_vmin, vcenter=0, vmax=global_vmax)
     im_common = None
 
     for k in range(nrows * ncols):
@@ -288,28 +322,29 @@ def compute_and_plot_eigenmodes():
             continue
 
         grid = values_to_grid(full_modes[k], nx, ny, half, meta["Nmax"])
-        
-        # Use 'seismic' colormap: high contrast, designed for visualizing small deviations from zero
-        # Dark red/blue at extremes, white at center - makes small non-zero values very visible
-        im = ax.imshow(grid.T, origin="lower", extent=[pmin, pmax, pmin, pmax], aspect="equal", cmap='seismic', norm=global_norm)
-        im_common = im  # Store for common colorbar
-        print(grid.T[grid.T != 0])
-        lambda_str = format_scientific_latex(vals[k], precision=3)
-        ax.set_title(rf"$m={k+1}$, $\lambda = {lambda_str}$")
+        im = ax.imshow(
+            grid.T,
+            origin="lower",
+            extent=[pmin, pmax, pmin, pmax],
+            aspect="equal",
+            cmap="seismic",
+            norm=global_norm
+        )
+        im_common = im
+
+        gamma_str = format_scientific_latex(vals[k], precision=3)
+        ax.set_title(rf"$m={k+1}$, $\gamma = {gamma_str}$")
         ax.set_xlabel("$p_x$")
         ax.set_ylabel("$p_y$")
 
-    # Add single common colorbar for all plots
     if im_common is not None:
         cbar = fig.colorbar(im_common, ax=axes, fraction=0.03, pad=0.02, aspect=30)
         cbar.ax.tick_params(labelsize=10)
 
-    # fig.suptitle(rf"Eigenfunctions on momentum lattice (T/E_F={Theta_eigs})", y=1.02)
     fig.savefig(f"eigenmodes_T{Theta_eigs:.6g}.png", dpi=300)
     fig.savefig(f"eigenmodes_T{Theta_eigs:.6g}.svg")
     print(f"Saved: eigenmodes_T{Theta_eigs:.6g}.png")
     print(f"Saved: eigenmodes_T{Theta_eigs:.6g}.svg")
-    # plt.show()
 
 
 if __name__ == "__main__":
