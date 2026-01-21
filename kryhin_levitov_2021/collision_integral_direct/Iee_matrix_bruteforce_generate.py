@@ -52,7 +52,7 @@ if USE_NUMBA:
 
 
 # --------------------------- USER PARAMETERS ---------------------------
-Nmax = 256#24          # lattice is Nmax x Nmax -> N = Nmax^2
+Nmax = 100#24          # lattice is Nmax x Nmax -> N = Nmax^2
 dp   = 0.08        # Δp, choose so p_F~1 is resolved
 LAMBDA = 1e-3      # λ in Lorentzian δ_ε
 V2   = 1.0         # |V|^2
@@ -70,6 +70,10 @@ INCLUDE_DIMLESS_PREF = True
 
 OUT_DIR = "Matrixes_bruteforce"
 # ----------------------------------------------------------------------
+
+# Build and save ONLY the closed active-subspace operator (recommended).
+# This avoids huge Nstates^2 memory and preserves the weighted symmetry better.
+BUILD_ACTIVE_ONLY = True
 
 
 def f_scalar(P: float, Theta: float) -> float:
@@ -132,30 +136,33 @@ def active_indices(f: np.ndarray, cutoff: float) -> np.ndarray:
 
 if USE_NUMBA:
     @njit(cache=True, fastmath=True, parallel=True)
-    def assemble_rows_numba(M, nx, ny, idx_map, half, eps, f, active,
-                            dp, lam, pref, dimless_scale):
+    def assemble_rows_numba_active(Ma, nx, ny, idx_map, half, eps, f,
+                                   active, pos, dp, lam, pref, dimless_scale):
         """
-        Parallel over i1 rows: safe because only writes into row i1.
+        Assemble CLOSED active-subspace operator Ma (shape Nactive x Nactive).
+        Only include processes where i2' is also active (closure).
+
+        Parallel over active-row index a1: safe because only writes into row a1.
         """
         dp4 = dp ** 4
         Nactive = active.size
 
-        for a in prange(Nactive):
-            i1 = active[a]
+        for a1 in prange(Nactive):
+            i1 = active[a1]
             n1x = nx[i1]
             n1y = ny[i1]
             e1  = eps[i1]
             f1  = f[i1]
 
-            for b in range(Nactive):
-                i2 = active[b]
+            for a2 in range(Nactive):
+                i2 = active[a2]
                 n2x = nx[i2]
                 n2y = ny[i2]
                 e2  = eps[i2]
                 f2  = f[i2]
 
-                for c in range(Nactive):
-                    i1p = active[c]
+                for a1p in range(Nactive):
+                    i1p = active[a1p]
                     n1px = nx[i1p]
                     n1py = ny[i1p]
                     e1p  = eps[i1p]
@@ -174,6 +181,11 @@ if USE_NUMBA:
                     if i2p < 0:
                         continue
 
+                    # closure: require i2' to be active
+                    a2p = pos[i2p]
+                    if a2p < 0:
+                        continue
+
                     e2p = eps[i2p]
                     f2p = f[i2p]
 
@@ -186,10 +198,10 @@ if USE_NUMBA:
                     W = pref * dimless_scale * F * delta_eps * dp4
 
                     # (eta_{1'} + eta_{2'} - eta_1 - eta_2)
-                    M[i1, i1p] += W
-                    M[i1, i2p] += W
-                    M[i1, i1]  -= W
-                    M[i1, i2]  -= W
+                    Ma[a1, a1p] += W
+                    Ma[a1, a2p] += W
+                    Ma[a1, a1]  -= W
+                    Ma[a1, a2]  -= W
 
 
 def build_matrix_for_theta(Theta: float):
@@ -199,50 +211,72 @@ def build_matrix_for_theta(Theta: float):
 
     active = active_indices(f, ACTIVE_CUTOFF)
     Nstates = nx.size
-    print(f"Theta={Theta:.6g}  Nstates={Nstates}  Nactive={active.size}  USE_NUMBA={USE_NUMBA}")
+    Nactive = int(active.size)
+    print(f"Theta={Theta:.6g}  Nstates={Nstates}  Nactive={Nactive}  USE_NUMBA={USE_NUMBA}  ACTIVE_ONLY={BUILD_ACTIVE_ONLY}")
+
+    # map global index -> active subspace index (or -1 if inactive)
+    pos = -np.ones(Nstates, dtype=np.int32)
+    pos[active] = np.arange(Nactive, dtype=np.int32)
 
     pref = (2.0 * math.pi / HBAR) * V2
     dimless_scale = 1.0
     if INCLUDE_DIMLESS_PREF:
         dimless_scale = 1.0 / (Theta * (2.0 * math.pi) ** 4)
 
-    M = np.zeros((Nstates, Nstates), dtype=np.float64)
+    if BUILD_ACTIVE_ONLY:
+        Ma = np.zeros((Nactive, Nactive), dtype=np.float64)
 
-    if USE_NUMBA:
-        assemble_rows_numba(M, nx, ny, idx_map, half, eps, f, active,
-                            float(dp), float(LAMBDA), float(pref), float(dimless_scale))
+        if USE_NUMBA:
+            assemble_rows_numba_active(
+                Ma, nx, ny, idx_map, half, eps, f,
+                active, pos,
+                float(dp), float(LAMBDA), float(pref), float(dimless_scale)
+            )
+        else:
+            dp4 = dp ** 4
+            for a1, i1 in enumerate(active):
+                n1x, n1y = int(nx[i1]), int(ny[i1])
+                e1, f1 = float(eps[i1]), float(f[i1])
+                for a2, i2 in enumerate(active):
+                    n2x, n2y = int(nx[i2]), int(ny[i2])
+                    e2, f2 = float(eps[i2]), float(f[i2])
+                    for a1p, i1p in enumerate(active):
+                        n1px, n1py = int(nx[i1p]), int(ny[i1p])
+                        e1p, f1p = float(eps[i1p]), float(f[i1p])
+
+                        n2px = n1x + n2x - n1px
+                        n2py = n1y + n2y - n1py
+                        ix, iy = n2px + half, n2py + half
+                        if ix < 0 or ix >= Nmax or iy < 0 or iy >= Nmax:
+                            continue
+                        i2p = int(idx_map[ix, iy])
+                        if i2p < 0:
+                            continue
+                        a2p = int(pos[i2p])
+                        if a2p < 0:
+                            continue
+
+                        e2p, f2p = float(eps[i2p]), float(f[i2p])
+                        dE = e1 + e2 - e1p - e2p
+                        delta_eps = (1.0 / math.pi) * LAMBDA / (dE * dE + LAMBDA * LAMBDA)
+                        F = f1 * f2 * (1.0 - f1p) * (1.0 - f2p)
+                        W = pref * dimless_scale * F * delta_eps * dp4
+
+                        Ma[a1, a1p] += W
+                        Ma[a1, a2p] += W
+                        Ma[a1, a1]  -= W
+                        Ma[a1, a2]  -= W
+
+        # save sparse to disk
+        from scipy.sparse import csr_matrix
+        M_to_save = csr_matrix(Ma)
     else:
-        # Pure python fallback (very slow unless Nactive is tiny)
-        dp4 = dp ** 4
-        for i1 in active:
-            n1x, n1y = int(nx[i1]), int(ny[i1])
-            e1, f1 = float(eps[i1]), float(f[i1])
-            for i2 in active:
-                n2x, n2y = int(nx[i2]), int(ny[i2])
-                e2, f2 = float(eps[i2]), float(f[i2])
-                for i1p in active:
-                    n1px, n1py = int(nx[i1p]), int(ny[i1p])
-                    e1p, f1p = float(eps[i1p]), float(f[i1p])
-
-                    n2px = n1x + n2x - n1px
-                    n2py = n1y + n2y - n1py
-                    ix, iy = n2px + half, n2py + half
-                    if ix < 0 or ix >= Nmax or iy < 0 or iy >= Nmax:
-                        continue
-                    i2p = int(idx_map[ix, iy])
-                    if i2p < 0:
-                        continue
-                    e2p, f2p = float(eps[i2p]), float(f[i2p])
-
-                    dE = e1 + e2 - e1p - e2p
-                    delta_eps = (1.0 / math.pi) * LAMBDA / (dE * dE + LAMBDA * LAMBDA)
-                    F = f1 * f2 * (1.0 - f1p) * (1.0 - f2p)
-                    W = pref * dimless_scale * F * delta_eps * dp4
-
-                    M[i1, i1p] += W
-                    M[i1, i2p] += W
-                    M[i1, i1]  -= W
-                    M[i1, i2]  -= W
+        # legacy full matrix mode (very large for big Nmax)
+        M_to_save = np.zeros((Nstates, Nstates), dtype=np.float64)
+        if USE_NUMBA:
+            raise RuntimeError("Full-matrix numba assembly removed in ACTIVE_ONLY workflow.")
+        else:
+            raise RuntimeError("Full-matrix mode disabled. Set BUILD_ACTIVE_ONLY=True.")
 
     meta = {
         "Theta": float(Theta),
@@ -254,6 +288,7 @@ def build_matrix_for_theta(Theta: float):
         "hbar": float(HBAR),
         "include_dimless_pref": bool(INCLUDE_DIMLESS_PREF),
         "active_cutoff": float(ACTIVE_CUTOFF),
+        "active_only": bool(BUILD_ACTIVE_ONLY),
         "nx": nx, "ny": ny,
         "px": px, "py": py,
         "P": P, "eps": eps, "f": f,
@@ -263,7 +298,7 @@ def build_matrix_for_theta(Theta: float):
     os.makedirs(OUT_DIR, exist_ok=True)
     fname = os.path.join(OUT_DIR, f"M_Iee_N{Nmax}_dp{dp:g}_T{Theta:.10g}.pkl")
     with open(fname, "wb") as fp:
-        pickle.dump((M, meta), fp, protocol=pickle.HIGHEST_PROTOCOL)
+        pickle.dump((M_to_save, meta), fp, protocol=pickle.HIGHEST_PROTOCOL)
     print(f"Saved: {fname}")
 
 
