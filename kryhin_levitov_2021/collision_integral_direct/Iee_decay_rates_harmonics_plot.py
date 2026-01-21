@@ -21,16 +21,16 @@ from matplotlib.colors import TwoSlopeNorm
 from scipy.sparse import csr_matrix, diags
 from scipy.sparse.linalg import eigs
 
-plt.rcParams['text.usetex'] = True
+# plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
-plt.rcParams['font.size'] = 20
-plt.rcParams['axes.labelsize'] = 20
-plt.rcParams['axes.titlesize'] = 20
-plt.rcParams['xtick.labelsize'] = 20
-plt.rcParams['ytick.labelsize'] = 20
-plt.rcParams['legend.fontsize'] = 20
-plt.rcParams['figure.titlesize'] = 20
+# plt.rcParams['font.size'] = 20
+# plt.rcParams['axes.labelsize'] = 20
+# plt.rcParams['axes.titlesize'] = 20
+# plt.rcParams['xtick.labelsize'] = 20
+# plt.rcParams['ytick.labelsize'] = 20
+# plt.rcParams['legend.fontsize'] = 20
+# plt.rcParams['figure.titlesize'] = 20
 
 
 
@@ -117,7 +117,8 @@ def plot_f1mf():
         ax.set_title(f"$T/E_F = {T}$")
         ax.set_xlabel("$p_x$")
         ax.set_ylabel("$p_y$")
-        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04, label=r"$f(1-f)$")
+        cbar = plt.colorbar(im, ax=ax, fraction=0.03, pad=0.02, aspect=30, label=r"$f(1-f)$")
+        cbar.ax.tick_params(labelsize=10)
 
     # fig.suptitle(r"Weight $f_0(1-f_0)$ over momentum lattice", y=1.02)
     fig.savefig("f0_weight_grid.png", dpi=300)
@@ -259,6 +260,27 @@ def compute_and_plot_eigenmodes():
     pmin = (-half) * meta["dp"]
     pmax = (half - 1) * meta["dp"]
 
+    # Compute global min/max across all eigenmodes for common colorbar
+    global_vmax_abs = 0.0
+    for k in range(n_show):
+        grid = values_to_grid(full_modes[k], nx, ny, half, meta["Nmax"])
+        grid_valid = grid[~np.isnan(grid)]
+        if len(grid_valid) > 0:
+            vmax_abs = np.max(np.abs(grid_valid))
+            global_vmax_abs = max(global_vmax_abs, vmax_abs)
+    
+    if global_vmax_abs > 0:
+        global_vmin = -global_vmax_abs
+        global_vmax = global_vmax_abs
+    else:
+        global_vmin, global_vmax = -0.1, 0.1
+    
+    # Create common norm for all plots
+    global_norm = TwoSlopeNorm(vmin=global_vmin, vcenter=0, vmax=global_vmax)
+
+    # Store the last image for colorbar
+    im_common = None
+
     for k in range(nrows * ncols):
         ax = axes[k // ncols, k % ncols]
         if k >= n_show:
@@ -266,29 +288,21 @@ def compute_and_plot_eigenmodes():
             continue
 
         grid = values_to_grid(full_modes[k], nx, ny, half, meta["Nmax"])
-        # Compute adaptive scale: use symmetric scaling for diverging colormap
-        grid_valid = grid[~np.isnan(grid)]
-        if len(grid_valid) > 0:
-            vmax_abs = np.max(np.abs(grid_valid))
-            # Use symmetric scale for better visualization of eigenmodes
-            vmin = -vmax_abs
-            vmax = vmax_abs
-            # Use TwoSlopeNorm to enhance visibility of small non-zero values
-            # This stretches the colormap around zero, making small deviations more visible
-            norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
-        else:
-            vmin, vmax = -0.1, 0.1
-            norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
         
         # Use 'seismic' colormap: high contrast, designed for visualizing small deviations from zero
         # Dark red/blue at extremes, white at center - makes small non-zero values very visible
-        im = ax.imshow(grid.T, origin="lower", extent=[pmin, pmax, pmin, pmax], aspect="equal", cmap='seismic', norm=norm)
+        im = ax.imshow(grid.T, origin="lower", extent=[pmin, pmax, pmin, pmax], aspect="equal", cmap='seismic', norm=global_norm)
+        im_common = im  # Store for common colorbar
         print(grid.T[grid.T != 0])
         lambda_str = format_scientific_latex(vals[k], precision=3)
         ax.set_title(rf"$m={k+1}$, $\lambda = {lambda_str}$")
         ax.set_xlabel("$p_x$")
         ax.set_ylabel("$p_y$")
-        plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+
+    # Add single common colorbar for all plots
+    if im_common is not None:
+        cbar = fig.colorbar(im_common, ax=axes, fraction=0.03, pad=0.02, aspect=30)
+        cbar.ax.tick_params(labelsize=10)
 
     # fig.suptitle(rf"Eigenfunctions on momentum lattice (T/E_F={Theta_eigs})", y=1.02)
     fig.savefig(f"eigenmodes_T{Theta_eigs:.6g}.png", dpi=300)
