@@ -24,7 +24,7 @@ from matplotlib.colors import TwoSlopeNorm
 
 # --- Only needed for eigenmodes ---
 from scipy.sparse import csr_matrix, diags
-from scipy.sparse.linalg import eigs
+from scipy.sparse.linalg import eigs, eigsh, norm as spnorm
 
 # plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
@@ -48,7 +48,7 @@ dp   = 0.08
 Thetas_weight = [1.0, 0.1, 0.01]
 
 # For part (2): choose one temperature that you have already generated a matrix for
-Theta_eigs = 0.2
+Theta_eigs = 0.02
 N_EIG_PLOT = 6              # how many eigenfunctions to plot
 ZERO_TOL = 1e-10            # treat |lambda|<ZERO_TOL as "conserved/zero" mode
 
@@ -175,8 +175,14 @@ def load_matrix(theta: float):
     with open(path, "rb") as fp:
         M, meta = pickle.load(fp)
     return M, meta, path
-def compute_and_plot_eigenmodes():
-    M, meta, path = load_matrix(Theta_eigs)
+
+def _as_csr(X):
+    return X if hasattr(X, "tocsr") else csr_matrix(X)
+
+def compute_and_plot_eigenmodes(theta=None):
+    if theta is None:
+        theta = Theta_eigs
+    M, meta, path = load_matrix(theta)
     print(f"Loaded matrix: {path}")
     print(f"Matrix shape: {M.shape}")
 
@@ -188,9 +194,16 @@ def compute_and_plot_eigenmodes():
     active = meta.get("active", None)
     if active is None or len(active) == 0:
         active = np.arange(Nstates, dtype=np.int32)
+    active = np.asarray(active, dtype=np.int32)
+    Nactive = int(active.size)
 
     # Restrict to active subspace
-    Maa = M[np.ix_(active, active)]
+    # New format: generator may save the active-only operator directly (CSR, shape Nactive x Nactive).
+    if getattr(M, "shape", None) == (Nactive, Nactive) and bool(meta.get("active_only", False)):
+        Maa = _as_csr(M)
+    else:
+        # Legacy full-matrix format (may be huge)
+        Maa = _as_csr(M[np.ix_(active, active)])
 
     # Build generalized weight matrix W = diag(f(1-f)) on the active subspace
     f_full = meta.get("f", None)
@@ -207,7 +220,7 @@ def compute_and_plot_eigenmodes():
     W = diags(w_safe, 0, format="csr")
 
     # Paper spectrum: (-Maa) v = gamma * W v
-    A = csr_matrix(-Maa)
+    A = _as_csr(-Maa)
 
     # Tiny regularization on A helps convergence near conserved modes
     regA = 1e-14
@@ -218,18 +231,40 @@ def compute_and_plot_eigenmodes():
     if k_calc <= 0:
         raise RuntimeError("Active subspace too small to compute eigenmodes.")
 
-    # Target slow modes (small gamma). Shift-invert around small sigma.
+    # Symmetry check in the weighted inner product:
+    # A is W-self-adjoint if A^T W ≈ W A  (equivalently B = D^{-1/2} A D^{-1/2} symmetric)
+    Dinv_sqrt = diags(1.0 / np.sqrt(w_safe), 0, format="csr")
+    B = Dinv_sqrt @ A @ Dinv_sqrt
+    sym_num = spnorm(B - B.T)
+    sym_den = spnorm(B) + 1e-30
+    sym_err = float(sym_num / sym_den)
+    print(f"[W-symmetry] ||B-B^T||/||B|| = {sym_err:.3e}")
+
     sigma = 1e-10
 
-    vals, vecs = eigs(
-        A,
-        M=W,
-        k=k_calc,
-        sigma=sigma,
-        which="LM",
-        tol=1e-8,
-        maxiter=20000
-    )
+    if sym_err < 1e-8:
+        # Use symmetric solver -> returns orthonormal y, which implies W-orthonormal v
+        vals, y = eigsh(
+            B,
+            k=k_calc,
+            sigma=sigma,
+            which="LM",
+            tol=1e-8,
+            maxiter=20000
+        )
+        # Recover v = D^{-1/2} y
+        vecs = (Dinv_sqrt @ y).astype(np.float64)
+    else:
+        # Non-symmetric fallback (you should expect failure of simple W-orthogonality here)
+        vals, vecs = eigs(
+            A,
+            M=W,
+            k=k_calc,
+            sigma=sigma,
+            which="LM",
+            tol=1e-8,
+            maxiter=20000
+        )
 
     # Warn if eigenvalues have significant imaginary parts (non-normal / numerical noise)
     max_im = float(np.max(np.abs(np.imag(vals)))) if vals.size else 0.0
@@ -341,10 +376,10 @@ def compute_and_plot_eigenmodes():
         cbar = fig.colorbar(im_common, ax=axes, fraction=0.03, pad=0.02, aspect=30)
         cbar.ax.tick_params(labelsize=10)
 
-    fig.savefig(f"eigenmodes_T{Theta_eigs:.6g}.png", dpi=300)
-    fig.savefig(f"eigenmodes_T{Theta_eigs:.6g}.svg")
-    print(f"Saved: eigenmodes_T{Theta_eigs:.6g}.png")
-    print(f"Saved: eigenmodes_T{Theta_eigs:.6g}.svg")
+    fig.savefig(f"eigenmodes_T{theta:.6g}.png", dpi=300)
+    fig.savefig(f"eigenmodes_T{theta:.6g}.svg")
+    print(f"Saved: eigenmodes_T{theta:.6g}.png")
+    print(f"Saved: eigenmodes_T{theta:.6g}.svg")
 
 
 if __name__ == "__main__":
@@ -352,4 +387,45 @@ if __name__ == "__main__":
     plot_f1mf()
 
     # Part (2): requires saved matrix for Theta_eigs
-    compute_and_plot_eigenmodes()
+    # Run for all specified theta values
+    theta_list = [
+        0.0025,
+        0.00310001,
+        0.00384403,
+        0.00476661,
+        0.00591061,
+        0.00732918,
+        0.00908822,
+        0.0112694,
+        0.0139741,
+        0.017328,
+        0.0214868,
+        0.0266437,
+        0.0330383,
+        0.0409676,
+        0.0508,
+        0.0629922,
+        0.0781105,
+        0.0968574,
+        0.120104,
+        0.148929,
+        0.184672,
+        0.228995,
+        0.283954,
+        0.352104,
+        0.436611,
+        0.541399,
+        0.671337,
+    ]
+    
+    for theta in theta_list:
+        print(f"\n{'='*60}")
+        print(f"Processing Theta = {theta:.6g}")
+        print(f"{'='*60}")
+        try:
+            compute_and_plot_eigenmodes(theta=theta)
+        except Exception as e:
+            print(f"ERROR processing Theta={theta:.6g}: {e}")
+            import traceback
+            traceback.print_exc()
+            continue
