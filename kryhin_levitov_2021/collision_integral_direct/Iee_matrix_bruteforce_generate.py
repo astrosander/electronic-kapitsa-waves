@@ -31,16 +31,28 @@ import math
 import pickle
 import numpy as np
 
+USE_NUMBA = False
 try:
     import numba
     from numba import njit, prange
     USE_NUMBA = True
-except Exception:
-    USE_NUMBA = False
+except ImportError as e:
+    print("Numba import failed:", e)
+
+if USE_NUMBA:
+    # Optional diagnostics: NEVER disable numba if these fail
+    try:
+        print("cpu_count:", os.cpu_count())
+        print("affinity:", len(os.sched_getaffinity(0)))
+        print("numba threads:", numba.get_num_threads())
+        print("numba layer:", numba.threading_layer())
+    except Exception as e:
+        print("Numba OK; diagnostics failed:", repr(e))
+
 
 
 # --------------------------- USER PARAMETERS ---------------------------
-Nmax = 100#24          # lattice is Nmax x Nmax -> N = Nmax^2
+Nmax = 256#24          # lattice is Nmax x Nmax -> N = Nmax^2
 dp   = 0.08        # Δp, choose so p_F~1 is resolved
 LAMBDA = 1e-3      # λ in Lorentzian δ_ε
 V2   = 1.0         # |V|^2
