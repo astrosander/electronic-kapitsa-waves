@@ -8,14 +8,14 @@ from matplotlib import pyplot as plt
 # Must match the matrix generator
 N_p   = 40
 N_th  = 100
-N0_th = 201
+N0_th = 101
 N = 1
 
-Thetas = np.geomspace(0.0025, 1.28, 30).tolist()
-# Thetas = [0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
-#           0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28]
+# Thetas = np.geomspace(0.0025, 1.28, 30).tolist()
+Thetas = [0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
+          0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28]
 
-ms = [0, 1, 2, 3, 4, 5, 6]
+ms = [0, 1, 2, 3, 4, 5]
 k = 0  # Figure-1 style (no "-a2" files)
 
 plt.rcParams['text.usetex'] = False#True
@@ -70,6 +70,9 @@ for Theta in Thetas:
     dVth_s[Theta] = dV_th
     I1s[Theta] = np.diag(I1)
 
+
+print("Thetas=", Thetas)
+print()
 # Compute eigenvalues
 for Theta in Thetas:
     print(f"[compute] Theta={Theta}", flush=True)
@@ -99,6 +102,7 @@ for Theta in Thetas:
 # ---- Plot eigenvalues as in your original script (Figure-1 style) ----
 f10, ax10 = plt.subplots(figsize=(8*0.9, 6*0.9))
 
+
 for m in ms:
     y = []
     y0 = []
@@ -117,6 +121,9 @@ for m in ms:
                   np.log((np.array(y) - np.array(y0))/(np.array(Thetas)**power))[6:],
                   label=f"m = {m}", linewidth=1.5)
 
+    print(f"m={m}",np.log(Thetas)[6:], 3*np.log(2*np.pi) +
+                  np.log((np.array(y) - np.array(y0))/(np.array(Thetas)**power))[6:])
+
 # m=1 dashed special line (as in your original)
 if k == 0:
     m = 1
@@ -129,7 +136,8 @@ if k == 0:
     ax10.plot(np.log(Thetas)[5:], 3*np.log(2*np.pi) +
               np.log((np.array(y) - np.array(y0))/(np.array(Thetas)**power))[5:],
               label="m = 1", linestyle="--", linewidth=1.5, color="gray")
-
+    print("m=1", 3*np.log(2*np.pi) +
+              np.log((np.array(y) - np.array(y0))/(np.array(Thetas)**power))[5:])
 x_ref = np.linspace(-4.7, -3.0, 100)  
 y_center = (2.2 + (-3.0)) / 2
 x_center = -3.0  # middle of x-range for ln(T/T_F) < -2
@@ -160,3 +168,5 @@ f10.tight_layout()
 f10.savefig('./Eigenvals.svg')
 f10.savefig('./Eigenvals.png', dpi=300)
 print("Saved: ./Eigenvals.svg", flush=True)
+
+plt.show()
