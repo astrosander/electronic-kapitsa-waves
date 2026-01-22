@@ -52,6 +52,26 @@ Theta_eigs = 0.02
 N_EIG_PLOT = 12             # how many eigenfunctions to plot
 ZERO_TOL = 1e-10            # treat |lambda|<ZERO_TOL as "conserved/zero" mode
 
+# ---- NEW: select "physical" C4-symmetric modes with m = 4*n ----
+# We compute MORE eigenpairs than we plot, then FILTER them.
+N_EIG_CANDIDATES = 80       # compute this many candidates (must be < Nactive-2)
+
+# C4 classification via 90° rotation R:  (px,py)->(-py,px) on the discrete torus
+# For m = 4*n, we expect R v ≈ +v  (in W-inner-product)
+C4_MIN_CORR  = 0.85         # keep if <v, Rv>_W / <v,v>_W >= this
+INV_MIN_CORR = 0.85         # also enforce inversion evenness: v(p)≈v(-p) for even m
+
+# "n is integer number of sign switches": on the FS ring,
+# sign_switches ≈ 2*m  => m_est ≈ sign_switches/2.
+# Requiring m multiple of 4 means sign_switches must be multiple of 8.
+REQUIRE_M_MULTIPLE_OF_4 = True
+REQUIRE_N_ODD = False       # if True: keep only n odd => m = 4*(odd) = 4,12,20,...
+
+# ring used to estimate sign switches around the Fermi surface
+RING_WIDTH_FACTOR = 2.5     # ring half-width ≈ factor * dp in |p|
+MIN_RING_POINTS   = 200     # if too few points, widen ring automatically
+N_ANGLE_BINS_MIN  = 256     # angular binning makes sign-switch count robust on a Cartesian grid
+
 # Where your generator saved matrices
 IN_DIR = "Matrixes_bruteforce"
 # ----------------------------------------------
@@ -76,6 +96,130 @@ def build_centered_lattice(Nmax: int):
     ns = np.arange(-half, half, dtype=np.int32)
     nx, ny = np.meshgrid(ns, ns, indexing="ij")
     return nx.reshape(-1), ny.reshape(-1), half
+
+
+def make_index_map(nx: np.ndarray, ny: np.ndarray, Nmax: int, half: int) -> np.ndarray:
+    """
+    Map discrete (n_x, n_y) -> flattened index i.
+    IMPORTANT: The grid uses FFT-style indices n in [-N/2, ..., N/2-1] so we treat
+    symmetry operations with modulo-N wrap (discrete torus).
+    """
+    idx_map = -np.ones((Nmax, Nmax), dtype=np.int32)
+    idx_map[nx + half, ny + half] = np.arange(nx.size, dtype=np.int32)
+    return idx_map
+
+
+def build_symmetry_maps(nx: np.ndarray, ny: np.ndarray, idx_map: np.ndarray, Nmax: int, half: int):
+    """
+    Return permutations (arrays of indices) implementing:
+      inv: (nx,ny)->(-nx,-ny)  with modulo wrap
+      rot90: (nx,ny)->(-ny,nx) with modulo wrap
+    """
+    # array-index coordinates in 0..Nmax-1
+    ix = (nx + half) % Nmax
+    iy = (ny + half) % Nmax
+
+    inv_ix = (-nx + half) % Nmax
+    inv_iy = (-ny + half) % Nmax
+    inv = idx_map[inv_ix, inv_iy].astype(np.int32)
+
+    rot_ix = (-ny + half) % Nmax
+    rot_iy = (nx + half) % Nmax
+    rot90 = idx_map[rot_ix, rot_iy].astype(np.int32)
+
+    return inv, rot90
+
+
+def w_corr(v: np.ndarray, u: np.ndarray, w: np.ndarray) -> float:
+    """Weighted correlation <v,u>_W / <v,v>_W."""
+    num = float(np.dot(v, w * u))
+    den = float(np.dot(v, w * v)) + 1e-30
+    return num / den
+
+
+def estimate_sign_switches_on_ring(
+    v_full: np.ndarray,
+    active: np.ndarray,
+    px: np.ndarray,
+    py: np.ndarray,
+    P: np.ndarray,
+    dp_val: float,
+    theta_val: float,
+):
+    """
+    Estimate number of sign switches around the FS:
+      - restrict to active indices near |p|≈1
+      - bin by polar angle for robustness
+    Returns: (sign_switches:int, m_est:float, n_est:float)
+      with m_est ≈ sign_switches/2, and n_est ≈ m_est/4
+    """
+    ring_w = RING_WIDTH_FACTOR * float(dp_val)
+
+    idx = active[np.abs(P[active] - 1.0) <= ring_w]
+    # widen ring until we have enough points (important at small Theta or coarse dp)
+    while idx.size < MIN_RING_POINTS and ring_w < 0.5:
+        ring_w *= 1.5
+        idx = active[np.abs(P[active] - 1.0) <= ring_w]
+
+    if idx.size < 16:
+        return 0, 0.0, 0.0
+
+    ang = np.arctan2(py[idx], px[idx])
+    ang = (ang + 2.0 * math.pi) % (2.0 * math.pi)
+
+    # choose angular bins based on dp (coarser dp => fewer distinct angles)
+    nbin = max(N_ANGLE_BINS_MIN, int((2.0 * math.pi / max(dp_val, 1e-12)) * 2))
+    bins = np.floor(ang / (2.0 * math.pi) * nbin).astype(np.int64)
+
+    prof = np.zeros(nbin, dtype=np.float64)
+    cnt  = np.zeros(nbin, dtype=np.int64)
+    for b, val in zip(bins, v_full[idx]):
+        prof[b] += float(val)
+        cnt[b]  += 1
+
+    has = cnt > 0
+    if not np.any(has):
+        return 0, 0.0, 0.0
+    prof[has] /= cnt[has]
+
+    # fill empty bins by forward fill then backward fill to make a closed loop
+    s = np.sign(prof)
+    # ignore tiny amplitudes as "no data"
+    thr = 1e-10 * (float(np.max(np.abs(prof[has]))) + 1e-300)
+    s[np.abs(prof) < thr] = 0.0
+
+    # forward fill zeros
+    last = 0.0
+    for i in range(nbin):
+        if s[i] == 0.0:
+            s[i] = last
+        else:
+            last = s[i]
+    # backward fill if the start was zero
+    if s[0] == 0.0:
+        # find first nonzero
+        j = -1
+        for i in range(nbin):
+            if s[i] != 0.0:
+                j = i
+                break
+        if j >= 0:
+            s[:j] = s[j]
+
+    if np.all(s == 0.0):
+        return 0, 0.0, 0.0
+
+    # count sign changes around the loop
+    switches = 0
+    for i in range(nbin):
+        a = s[i]
+        b = s[(i + 1) % nbin]
+        if a * b < 0.0:
+            switches += 1
+
+    m_est = 0.5 * float(switches)
+    n_est = 0.25 * m_est
+    return int(switches), float(m_est), float(n_est)
 
 
 def precompute_for_grid(Nmax: int, dp: float, Theta: float):
@@ -197,6 +341,24 @@ def compute_and_plot_eigenmodes(theta=None):
     active = np.asarray(active, dtype=np.int32)
     Nactive = int(active.size)
 
+    # symmetry maps on the FULL lattice (discrete torus)
+    idx_map = make_index_map(nx.astype(np.int32), ny.astype(np.int32), int(meta["Nmax"]), half)
+    inv_map, rot90_map = build_symmetry_maps(nx.astype(np.int32), ny.astype(np.int32), idx_map, int(meta["Nmax"]), half)
+
+    # arrays needed for ring + symmetry diagnostics (use saved meta if present)
+    px = meta.get("px", None)
+    py = meta.get("py", None)
+    P  = meta.get("P", None)
+    if px is None or py is None or P is None:
+        # fallback: rebuild from nx,ny and dp
+        dp_val = float(meta["dp"])
+        px = dp_val * nx.astype(np.float64)
+        py = dp_val * ny.astype(np.float64)
+        P  = np.sqrt(px * px + py * py)
+    px = np.asarray(px, dtype=np.float64)
+    py = np.asarray(py, dtype=np.float64)
+    P  = np.asarray(P, dtype=np.float64)
+
     # Restrict to active subspace
     # New format: generator may save the active-only operator directly (CSR, shape Nactive x Nactive).
     if getattr(M, "shape", None) == (Nactive, Nactive) and bool(meta.get("active_only", False)):
@@ -227,7 +389,8 @@ def compute_and_plot_eigenmodes(theta=None):
     A = A + diags([regA] * A.shape[0], 0, format="csr")
 
     n = A.shape[0]
-    k_calc = min(n - 2, max(N_EIG_PLOT + 8, N_EIG_PLOT))
+    # compute extra candidates, then filter down to the "physical" m=4*n family
+    k_calc = min(n - 2, max(N_EIG_CANDIDATES, N_EIG_PLOT + 8))
     if k_calc <= 0:
         raise RuntimeError("Active subspace too small to compute eigenmodes.")
 
@@ -288,30 +451,17 @@ def compute_and_plot_eigenmodes(theta=None):
     vals = vals[keep]
     vecs = vecs[:, keep]
 
-    # Take first N_EIG_PLOT
-    n_show = min(N_EIG_PLOT, vals.size)
-    vals = vals[:n_show]
-    vecs = vecs[:, :n_show]
-
-    # Normalize eigenvectors in the generalized inner product: v^T W v = 1
-    for i in range(n_show):
+    # Normalize all candidate eigenvectors in the generalized inner product: v^T W v = 1
+    for i in range(vecs.shape[1]):
         v = vecs[:, i]
         norm2 = float(np.dot(v, w_safe * v))
-        if norm2 <= 0.0:
-            continue
-        vecs[:, i] = v / math.sqrt(norm2)
+        if norm2 > 0.0:
+            vecs[:, i] = v / math.sqrt(norm2)
 
-    # Check generalized orthogonality: G_ij = v_i^T W v_j should be ~delta_ij
-    G = vecs.T @ (w_safe[:, None] * vecs)
-    diagG = np.diag(G)
-    offG = G - np.diag(diagG)
-    max_off = float(np.max(np.abs(offG))) if offG.size else 0.0
-    max_diag_dev = float(np.max(np.abs(diagG - 1.0))) if diagG.size else 0.0
-    print(f"[W-orthogonality] max|offdiag|={max_off:.3e}, max|diag-1|={max_diag_dev:.3e}")
-
-    # Embed eigenvectors back into full lattice for plotting
-    full_modes = []
-    for i in range(n_show):
+    # Embed candidates back into full lattice and classify by C4 + inversion + sign-switch count
+    w_full = np.asarray(meta["f"], dtype=np.float64) * (1.0 - np.asarray(meta["f"], dtype=np.float64))
+    candidates = []
+    for i in range(vecs.shape[1]):
         v_active = vecs[:, i].copy()
 
         # sign convention: make max-abs component positive (visual stability)
@@ -321,7 +471,78 @@ def compute_and_plot_eigenmodes(theta=None):
 
         v_full = np.zeros(Nstates, dtype=np.float64)
         v_full[active] = v_active
-        full_modes.append(v_full)
+
+        # symmetry correlations in W-inner-product on FULL lattice
+        c_inv = w_corr(v_full, v_full[inv_map],  w_full)
+        c_c4  = w_corr(v_full, v_full[rot90_map], w_full)
+
+        switches, m_est, n_est = estimate_sign_switches_on_ring(
+            v_full=v_full,
+            active=active,
+            px=px, py=py, P=P,
+            dp_val=float(meta["dp"]),
+            theta_val=float(theta),
+        )
+
+        # convert to the "physical" label m = 4*n (n integer if switches multiple of 8)
+        m_round = int(np.rint(m_est))
+        n_round = int(np.rint(n_est))
+
+        candidates.append({
+            "gamma": float(vals[i]),
+            "v_full": v_full,
+            "c_inv": float(c_inv),
+            "c_c4": float(c_c4),
+            "switches": int(switches),
+            "m_est": float(m_est),
+            "m_round": int(m_round),
+            "n_round": int(n_round),
+        })
+
+    # Filter to the family you asked for: m = 4*n, i.e. C4-even and inversion-even
+    filtered = []
+    for c in candidates:
+        if c["c_inv"] < INV_MIN_CORR:
+            continue
+        if c["c_c4"] < C4_MIN_CORR:
+            continue
+        if REQUIRE_M_MULTIPLE_OF_4:
+            # require m_est close to an integer multiple of 4 and switches multiple of 8
+            if (c["switches"] % 8) != 0:
+                continue
+            if (c["m_round"] % 4) != 0:
+                continue
+            if abs(c["m_est"] - c["m_round"]) > 0.25:
+                continue
+        if REQUIRE_N_ODD:
+            # n = m/4 must be odd
+            if (c["n_round"] % 2) == 0:
+                continue
+        filtered.append(c)
+
+    # Sort filtered by gamma (slowest first) and take N_EIG_PLOT
+    filtered.sort(key=lambda d: d["gamma"])
+    if len(filtered) < N_EIG_PLOT:
+        print(f"WARNING: only {len(filtered)} modes passed m=4*n filters; "
+              f"falling back to unfiltered first {N_EIG_PLOT}.")
+        # fallback: just take first N_EIG_PLOT by gamma
+        candidates.sort(key=lambda d: d["gamma"])
+        chosen = candidates[:min(N_EIG_PLOT, len(candidates))]
+    else:
+        chosen = filtered[:N_EIG_PLOT]
+
+    # Print a compact table so you can verify you are getting m=4,8,12,...
+    print("\n[mode selection]")
+    print("  idx   gamma         cC4     cInv    switches   m_est   m_round   n_round")
+    for k, c in enumerate(chosen):
+        print(f"  {k:3d}  {c['gamma']:.6e}  {c['c_c4']:+.3f}  {c['c_inv']:+.3f}   "
+              f"{c['switches']:4d}     {c['m_est']:6.2f}    {c['m_round']:4d}      {c['n_round']:4d}")
+
+    # Final arrays for plotting
+    vals = np.array([c["gamma"] for c in chosen], dtype=np.float64)
+    full_modes = [c["v_full"] for c in chosen]
+    mode_labels = [(c["m_round"], c["n_round"], c["switches"], c["c_c4"], c["c_inv"]) for c in chosen]
+    n_show = len(full_modes)
 
     # Plot on the same grid
     ncols = 3
@@ -368,7 +589,11 @@ def compute_and_plot_eigenmodes(theta=None):
         im_common = im
 
         gamma_str = format_scientific_latex(vals[k], precision=3)
-        ax.set_title(rf"$m={k+1}$, $\gamma = {gamma_str}$")
+        m_round, n_round, switches, c4, cinv = mode_labels[k]
+        # Your requested "physical m": m = 4*n, with n from sign switches.
+        ax.set_title(rf"$m={m_round}\;(=4\cdot{n_round})$, "
+                     rf"$\gamma={gamma_str}$" "\n"
+                     rf"$N_{{\rm sw}}={switches}$, $C_4={c4:.2f}$, $I={cinv:.2f}$")
         ax.set_xlabel("$p_x$")
         ax.set_ylabel("$p_y$")
 
@@ -389,33 +614,33 @@ if __name__ == "__main__":
     # Part (2): requires saved matrix for Theta_eigs
     # Run for all specified theta values
     theta_list = [
-        # 0.0025,
-        # 0.00310001,
-        # 0.00384403,
-        # 0.00476661,
-        # 0.00591061,
-        # 0.00732918,
-        # 0.00908822,
-        # 0.0112694,
-        # 0.0139741,
-        # 0.017328,
-        # 0.0214868,
-        # 0.0266437,
-        # 0.0330383,
-        # 0.0409676,
+        0.0025,
+        0.00310001,
+        0.00384403,
+        0.00476661,
+        0.00591061,
+        0.00732918,
+        0.00908822,
+        0.0112694,
+        0.0139741,
+        0.017328,
+        0.0214868,
+        0.0266437,
+        0.0330383,
+        0.0409676,
         0.0508,
         0.0629922,
         0.0781105,
         0.0968574,
         0.120104,
-        # 0.148929,
-        # 0.184672,
-        # 0.228995,
-        # 0.283954,
-        # 0.352104,
-        # 0.436611,
-        # 0.541399,
-        # 0.671337,
+        0.148929,
+        0.184672,
+        0.228995,
+        0.283954,
+        0.352104,
+        0.436611,
+        0.541399,
+        0.671337,
     ]
     
     for theta in theta_list:
