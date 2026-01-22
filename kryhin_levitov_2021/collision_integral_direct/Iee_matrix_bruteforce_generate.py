@@ -31,6 +31,7 @@ import math
 import pickle
 import numpy as np
 
+from typing import Tuple
 USE_NUMBA = False
 try:
     import numba
@@ -52,9 +53,18 @@ if USE_NUMBA:
 
 
 # --------------------------- USER PARAMETERS ---------------------------
-Nmax = 100#24          # lattice is Nmax x Nmax -> N = Nmax^2
-dp   = 0.08        # Δp, choose so p_F~1 is resolved
-LAMBDA = 1e-3      # λ in Lorentzian δ_ε
+Nmax = 100          # lattice is Nmax x Nmax -> N = Nmax^2
+dp   = 0.08         # Δp
+
+# IMPORTANT:
+# For low-T scaling you must resolve the thermal shell: need dp^2 << Theta_min.
+# With Theta_min=0.0025 you want dp <= ~0.03 (since dp^2=9e-4).
+# dp=0.08 => dp^2=6.4e-3 > Theta_min, which produces a T->0 "floor".
+
+# Energy delta broadening (Lorentzian) --- MUST scale with temperature to avoid T->0 floor
+LAMBDA_REL = 0.25    # sets lambda_eff = LAMBDA_REL * Theta
+LAMBDA_MIN = 1e-12
+
 V2   = 1.0         # |V|^2
 HBAR = 1.0         # ħ (set 1 for dimensionless)
 
@@ -64,9 +74,10 @@ Thetas = np.geomspace(0.0025, 1.28, 30).astype(float).tolist()
 # active-shell cutoff: only include states where f(1-f) > cutoff
 ACTIVE_CUTOFF = 1e-8
 
-# include extra dimensionless prefactor like your original kernel code:
-# (1 / (Theta * (2π)^4))  -- set False to follow the bare formula strictly
+# DO NOT include an explicit 1/Theta prefactor.
+# If you want a constant phase-space normalization, keep only the constant (2π)^-4.
 INCLUDE_DIMLESS_PREF = True
+DIMLESS_CONST = 1.0 / ((2.0 * math.pi) ** 4)
 
 OUT_DIR = "Matrixes_bruteforce"
 # ----------------------------------------------------------------------
@@ -129,18 +140,28 @@ def precompute(nx, ny, dp: float, Theta: float):
     return px, py, P, eps, f
 
 
-def active_indices(f: np.ndarray, cutoff: float) -> np.ndarray:
+def active_indices(f: np.ndarray, eps: np.ndarray, Theta: float, cutoff: float) -> np.ndarray:
+    """
+    Active set should follow the thermal shell width ~ Theta.
+    Using only w=f(1-f) on a coarse Cartesian grid can "freeze" the shell at the lattice energy spacing ~ dp^2.
+    """
     w = f * (1.0 - f)
-    return np.where(w > cutoff)[0].astype(np.int32)
+    # Require near the Fermi surface in ENERGY (since eps = p^2 and eps_F = 1 in your units)
+    # The multiplier 10 is conservative; tighten/loosen if needed.
+    shell = np.abs(eps - 1.0) < (10.0 * Theta)
+    return np.where((w > cutoff) & shell)[0].astype(np.int32)
 
 
 if USE_NUMBA:
     @njit(cache=True, fastmath=True, parallel=True)
     def assemble_rows_numba_active(Ma, nx, ny, idx_map, half, eps, f,
-                                   active, pos, dp, lam, pref, dimless_scale):
+                                   active, pos, dp, lam_eff, pref, dimless_scale):
         """
         Assemble CLOSED active-subspace operator Ma (shape Nactive x Nactive).
-        Only include processes where i2' is also active (closure).
+        NOTE: This implements P I P projection:
+          - row index i1 is active (output restricted to active)
+          - columns correspond to active eta only
+          - if i2' is inactive, we keep the event but drop the +eta_{2'} term (since eta=0 there)
 
         Parallel over active-row index a1: safe because only writes into row a1.
         """
@@ -181,25 +202,27 @@ if USE_NUMBA:
                     if i2p < 0:
                         continue
 
-                    # closure: require i2' to be active
+                    # PIP projection: a2p may be -1 (inactive); that's OK
                     a2p = pos[i2p]
-                    if a2p < 0:
-                        continue
 
                     e2p = eps[i2p]
                     f2p = f[i2p]
 
                     dE = (e1 + e2 - e1p - e2p)
-                    delta_eps = (1.0 / math.pi) * lam / (dE * dE + lam * lam)
+                    delta_eps = (1.0 / math.pi) * lam_eff / (dE * dE + lam_eff * lam_eff)
 
-                    # F_{121'2'} = f1 f2 (1-f1')(1-f2')
-                    F = f1 * f2 * (1.0 - f1p) * (1.0 - f2p)
+                    # Symmetrize Pauli factor to enforce microreversibility on a discrete/approx grid:
+                    # F_sym = 1/2 [ f1 f2 (1-f1')(1-f2') + f1' f2' (1-f1)(1-f2) ]
+                    F_fwd = f1 * f2 * (1.0 - f1p) * (1.0 - f2p)
+                    F_bwd = f1p * f2p * (1.0 - f1) * (1.0 - f2)
+                    F = 0.5 * (F_fwd + F_bwd)
 
                     W = pref * dimless_scale * F * delta_eps * dp4
 
                     # (eta_{1'} + eta_{2'} - eta_1 - eta_2)
                     Ma[a1, a1p] += W
-                    Ma[a1, a2p] += W
+                    if a2p >= 0:
+                        Ma[a1, a2p] += W
                     Ma[a1, a1]  -= W
                     Ma[a1, a2]  -= W
 
@@ -209,10 +232,16 @@ def build_matrix_for_theta(Theta: float):
     idx_map = make_index_map(nx, ny, Nmax, half)
     px, py, P, eps, f = precompute(nx, ny, dp, Theta)
 
-    active = active_indices(f, ACTIVE_CUTOFF)
+    # Temperature-following active shell
+    active = active_indices(f, eps, Theta, ACTIVE_CUTOFF)
     Nstates = nx.size
     Nactive = int(active.size)
     print(f"Theta={Theta:.6g}  Nstates={Nstates}  Nactive={Nactive}  USE_NUMBA={USE_NUMBA}  ACTIVE_ONLY={BUILD_ACTIVE_ONLY}")
+
+    # Resolution warning (this is *the* main reason your curves don't scale at very low T on a Cartesian grid)
+    if (dp * dp) > (0.5 * Theta):
+        print(f"WARNING: dp^2={dp*dp:.3e} is not << Theta={Theta:.3e}. "
+              f"Low-T scaling will saturate/fail. Consider dp<=sqrt(Theta_min)/3.")
 
     # map global index -> active subspace index (or -1 if inactive)
     pos = -np.ones(Nstates, dtype=np.int32)
@@ -221,7 +250,11 @@ def build_matrix_for_theta(Theta: float):
     pref = (2.0 * math.pi / HBAR) * V2
     dimless_scale = 1.0
     if INCLUDE_DIMLESS_PREF:
-        dimless_scale = 1.0 / (Theta * (2.0 * math.pi) ** 4)
+        # keep ONLY constant (2π)^-4, NOT 1/Theta
+        dimless_scale = DIMLESS_CONST
+
+    # Temperature-scaled Lorentzian width to avoid T->0 floor
+    lam_eff = max(LAMBDA_REL * Theta, LAMBDA_MIN)
 
     if BUILD_ACTIVE_ONLY:
         Ma = np.zeros((Nactive, Nactive), dtype=np.float64)
@@ -230,7 +263,7 @@ def build_matrix_for_theta(Theta: float):
             assemble_rows_numba_active(
                 Ma, nx, ny, idx_map, half, eps, f,
                 active, pos,
-                float(dp), float(LAMBDA), float(pref), float(dimless_scale)
+                float(dp), float(lam_eff), float(pref), float(dimless_scale)
             )
         else:
             dp4 = dp ** 4
@@ -252,18 +285,21 @@ def build_matrix_for_theta(Theta: float):
                         i2p = int(idx_map[ix, iy])
                         if i2p < 0:
                             continue
-                        a2p = int(pos[i2p])
-                        if a2p < 0:
-                            continue
+                        a2p = int(pos[i2p])  # may be -1 (inactive); that's OK for PIP projection
 
                         e2p, f2p = float(eps[i2p]), float(f[i2p])
                         dE = e1 + e2 - e1p - e2p
-                        delta_eps = (1.0 / math.pi) * LAMBDA / (dE * dE + LAMBDA * LAMBDA)
-                        F = f1 * f2 * (1.0 - f1p) * (1.0 - f2p)
+                        delta_eps = (1.0 / math.pi) * lam_eff / (dE * dE + lam_eff * lam_eff)
+
+                        # Symmetrized Pauli factor
+                        F_fwd = f1 * f2 * (1.0 - f1p) * (1.0 - f2p)
+                        F_bwd = f1p * f2p * (1.0 - f1) * (1.0 - f2)
+                        F = 0.5 * (F_fwd + F_bwd)
                         W = pref * dimless_scale * F * delta_eps * dp4
 
                         Ma[a1, a1p] += W
-                        Ma[a1, a2p] += W
+                        if a2p >= 0:
+                            Ma[a1, a2p] += W
                         Ma[a1, a1]  -= W
                         Ma[a1, a2]  -= W
 
@@ -283,7 +319,7 @@ def build_matrix_for_theta(Theta: float):
         "Nmax": int(Nmax),
         "half": int(half),
         "dp": float(dp),
-        "lambda": float(LAMBDA),
+        "lambda": float(lam_eff),
         "V2": float(V2),
         "hbar": float(HBAR),
         "include_dimless_pref": bool(INCLUDE_DIMLESS_PREF),

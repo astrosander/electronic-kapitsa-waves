@@ -49,7 +49,7 @@ Thetas_weight = [1.0, 0.1, 0.01]
 
 # For part (2): choose one temperature that you have already generated a matrix for
 Theta_eigs = 0.02
-N_EIG_PLOT = 6              # how many eigenfunctions to plot
+N_EIG_PLOT = 12             # how many eigenfunctions to plot
 ZERO_TOL = 1e-10            # treat |lambda|<ZERO_TOL as "conserved/zero" mode
 
 # Where your generator saved matrices
@@ -389,33 +389,33 @@ if __name__ == "__main__":
     # Part (2): requires saved matrix for Theta_eigs
     # Run for all specified theta values
     theta_list = [
-        0.0025,
-        0.00310001,
-        0.00384403,
-        0.00476661,
-        0.00591061,
-        0.00732918,
-        0.00908822,
-        0.0112694,
-        0.0139741,
-        0.017328,
-        0.0214868,
-        0.0266437,
-        0.0330383,
-        0.0409676,
+        # 0.0025,
+        # 0.00310001,
+        # 0.00384403,
+        # 0.00476661,
+        # 0.00591061,
+        # 0.00732918,
+        # 0.00908822,
+        # 0.0112694,
+        # 0.0139741,
+        # 0.017328,
+        # 0.0214868,
+        # 0.0266437,
+        # 0.0330383,
+        # 0.0409676,
         0.0508,
         0.0629922,
         0.0781105,
         0.0968574,
         0.120104,
-        0.148929,
-        0.184672,
-        0.228995,
-        0.283954,
-        0.352104,
-        0.436611,
-        0.541399,
-        0.671337,
+        # 0.148929,
+        # 0.184672,
+        # 0.228995,
+        # 0.283954,
+        # 0.352104,
+        # 0.436611,
+        # 0.541399,
+        # 0.671337,
     ]
     
     for theta in theta_list:

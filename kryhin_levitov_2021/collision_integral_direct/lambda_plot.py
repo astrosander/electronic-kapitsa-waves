@@ -38,7 +38,7 @@ IN_DIR = "Matrixes_bruteforce"
 Thetas_req = np.geomspace(0.0025, 1.28, 30).astype(float).tolist()
 
 # angular harmonics m to plot
-ms = [0, 1, 2, 3, 4, 5, 6]
+ms = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
 
 OUT_PNG = "Eigenvals_bruteforce_generalized.png"
 OUT_SVG = "Eigenvals_bruteforce_generalized.svg"
@@ -168,6 +168,8 @@ def main():
 
     for Treq in Thetas_req:
         M, meta, path, Tused = load_matrix_nearest(float(Treq))
+        if len(Ts_used) > 0 and np.isclose(Tused, Ts_used[-1], rtol=0, atol=0):
+            continue
         Ma, active = get_active_operator(M, meta)
 
         print(f"[load] requested Theta={Treq:.6g}, using nearest Theta={Tused:.6g}  |  {os.path.basename(path)}  |  shape={Ma.shape}")
