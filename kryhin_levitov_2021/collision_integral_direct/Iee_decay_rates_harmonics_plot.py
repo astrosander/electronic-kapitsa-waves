@@ -26,7 +26,7 @@ from matplotlib.colors import TwoSlopeNorm
 from scipy.sparse import csr_matrix, diags
 from scipy.sparse.linalg import eigs, eigsh, norm as spnorm
 
-# plt.rcParams['text.usetex'] = True
+plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
 # plt.rcParams['font.size'] = 20
@@ -49,12 +49,13 @@ Thetas_weight = [1.0, 0.1, 0.01]
 
 # For part (2): choose one temperature that you have already generated a matrix for
 Theta_eigs = 0.02
-N_EIG_PLOT = 12             # how many eigenfunctions to plot
+TARGET_MS = list(range(12)) # plot m = 0..12 (one representative per m)
+N_EIG_PLOT = len(TARGET_MS)
 ZERO_TOL = 1e-10            # treat |lambda|<ZERO_TOL as "conserved/zero" mode
 
 # ---- NEW: select "physical" C4-symmetric modes with m = 4*n ----
 # We compute MORE eigenpairs than we plot, then FILTER them.
-N_EIG_CANDIDATES = 80       # compute this many candidates (must be < Nactive-2)
+N_EIG_CANDIDATES = 250      # need more to reliably cover m=0..12
 
 # C4 classification via 90° rotation R:  (px,py)->(-py,px) on the discrete torus
 # For m = 4*n, we expect R v ≈ +v  (in W-inner-product)
@@ -64,13 +65,22 @@ INV_MIN_CORR = 0.85         # also enforce inversion evenness: v(p)≈v(-p) for 
 # "n is integer number of sign switches": on the FS ring,
 # sign_switches ≈ 2*m  => m_est ≈ sign_switches/2.
 # Requiring m multiple of 4 means sign_switches must be multiple of 8.
-REQUIRE_M_MULTIPLE_OF_4 = True
+REQUIRE_M_MULTIPLE_OF_4 = False
 REQUIRE_N_ODD = False       # if True: keep only n odd => m = 4*(odd) = 4,12,20,...
+
+# NEW: how tightly m_est must match an integer m
+M_TOL = 0.35                # relax if you miss some m's
+
+# NEW: whether to keep the conserved/near-zero modes (needed to see m=1, and usually one of m=0)
+INCLUDE_CONSERVED = True
 
 # ring used to estimate sign switches around the Fermi surface
 RING_WIDTH_FACTOR = 2.5     # ring half-width ≈ factor * dp in |p|
 MIN_RING_POINTS   = 200     # if too few points, widen ring automatically
 N_ANGLE_BINS_MIN  = 256     # angular binning makes sign-switch count robust on a Cartesian grid
+
+# Plotting scale: > 1.0 zooms out (shows more), < 1.0 zooms in (shows less)
+PLOT_SCALE_FACTOR = 0.25     # increase to see more of the momentum space
 
 # Where your generator saved matrices
 IN_DIR = "Matrixes_bruteforce"
@@ -262,7 +272,14 @@ def plot_f1mf():
         # extent in momentum units
         pmin = (-half) * dp
         pmax = (half - 1) * dp
+        pcenter = (pmin + pmax) / 2.0
+        prange = (pmax - pmin) / 2.0
+        pmin_plot = pcenter - prange * PLOT_SCALE_FACTOR
+        pmax_plot = pcenter + prange * PLOT_SCALE_FACTOR
         im = ax.imshow(grid.T, origin="lower", extent=[pmin, pmax, pmin, pmax], aspect="equal", cmap='rainbow')
+        # Increase visible range
+        ax.set_xlim(pmin_plot, pmax_plot)
+        ax.set_ylim(pmin_plot, pmax_plot)
         ax.set_title(f"$T/E_F = {T}$")
         ax.set_xlabel("$p_x$")
         ax.set_ylabel("$p_y$")
@@ -443,13 +460,13 @@ def compute_and_plot_eigenmodes(theta=None):
     vals = vals[order]
     vecs = vecs[:, order]
 
-    # Remove near-zero modes (conserved/zero modes)
-    keep = np.where(np.abs(vals) > ZERO_TOL)[0]
-    if keep.size == 0:
-        raise RuntimeError("All computed modes are ~zero. Increase k_calc or change ZERO_TOL.")
-
-    vals = vals[keep]
-    vecs = vecs[:, keep]
+    # Optionally drop near-zero (conserved) modes
+    if not INCLUDE_CONSERVED:
+        keep = np.where(np.abs(vals) > ZERO_TOL)[0]
+        if keep.size == 0:
+            raise RuntimeError("All computed modes are ~zero. Increase k_calc or change ZERO_TOL.")
+        vals = vals[keep]
+        vecs = vecs[:, keep]
 
     # Normalize all candidate eigenvectors in the generalized inner product: v^T W v = 1
     for i in range(vecs.shape[1]):
@@ -499,49 +516,47 @@ def compute_and_plot_eigenmodes(theta=None):
             "n_round": int(n_round),
         })
 
-    # Filter to the family you asked for: m = 4*n, i.e. C4-even and inversion-even
-    filtered = []
+    # NEW: pick one representative per desired m using sign-switch m_est
+    by_m = {m: [] for m in TARGET_MS}
     for c in candidates:
-        if c["c_inv"] < INV_MIN_CORR:
+        m = int(c["m_round"])
+        if m not in by_m:
             continue
-        if c["c_c4"] < C4_MIN_CORR:
+        if abs(c["m_est"] - float(m)) > M_TOL:
             continue
-        if REQUIRE_M_MULTIPLE_OF_4:
-            # require m_est close to an integer multiple of 4 and switches multiple of 8
-            if (c["switches"] % 8) != 0:
+        # parity sanity check under inversion: even m => +1, odd m => -1 (approximately)
+        if (m % 2) == 0:
+            if c["c_inv"] < INV_MIN_CORR:
                 continue
-            if (c["m_round"] % 4) != 0:
+        else:
+            if c["c_inv"] > -INV_MIN_CORR:
                 continue
-            if abs(c["m_est"] - c["m_round"]) > 0.25:
-                continue
-        if REQUIRE_N_ODD:
-            # n = m/4 must be odd
-            if (c["n_round"] % 2) == 0:
-                continue
-        filtered.append(c)
+        by_m[m].append(c)
 
-    # Sort filtered by gamma (slowest first) and take N_EIG_PLOT
-    filtered.sort(key=lambda d: d["gamma"])
-    if len(filtered) < N_EIG_PLOT:
-        print(f"WARNING: only {len(filtered)} modes passed m=4*n filters; "
-              f"falling back to unfiltered first {N_EIG_PLOT}.")
-        # fallback: just take first N_EIG_PLOT by gamma
-        candidates.sort(key=lambda d: d["gamma"])
-        chosen = candidates[:min(N_EIG_PLOT, len(candidates))]
-    else:
-        chosen = filtered[:N_EIG_PLOT]
+    chosen = []
+    missing = []
+    for m in TARGET_MS:
+        lst = by_m[m]
+        if not lst:
+            missing.append(m)
+            continue
+        lst.sort(key=lambda d: d["gamma"])  # slowest (smallest gamma) first
+        chosen.append(lst[0])
 
-    # Print a compact table so you can verify you are getting m=4,8,12,...
+    if missing:
+        print(f"WARNING: missing m={missing}. Try increasing N_EIG_CANDIDATES or relaxing M_TOL/INV_MIN_CORR.")
+
+    # Print a compact table so you can verify you are getting m=0..12
     print("\n[mode selection]")
-    print("  idx   gamma         cC4     cInv    switches   m_est   m_round   n_round")
+    print("  idx   gamma         cC4     cInv    switches   m_est   m_round")
     for k, c in enumerate(chosen):
         print(f"  {k:3d}  {c['gamma']:.6e}  {c['c_c4']:+.3f}  {c['c_inv']:+.3f}   "
-              f"{c['switches']:4d}     {c['m_est']:6.2f}    {c['m_round']:4d}      {c['n_round']:4d}")
+              f"{c['switches']:4d}     {c['m_est']:6.2f}    {c['m_round']:4d}")
 
     # Final arrays for plotting
     vals = np.array([c["gamma"] for c in chosen], dtype=np.float64)
     full_modes = [c["v_full"] for c in chosen]
-    mode_labels = [(c["m_round"], c["n_round"], c["switches"], c["c_c4"], c["c_inv"]) for c in chosen]
+    mode_labels = [(c["m_round"], c["switches"], c["c_c4"], c["c_inv"]) for c in chosen]
     n_show = len(full_modes)
 
     # Plot on the same grid
@@ -552,6 +567,10 @@ def compute_and_plot_eigenmodes(theta=None):
 
     pmin = (-half) * meta["dp"]
     pmax = (half - 1) * meta["dp"]
+    pcenter = (pmin + pmax) / 2.0
+    prange = (pmax - pmin) / 2.0
+    pmin_plot = pcenter - prange * PLOT_SCALE_FACTOR
+    pmax_plot = pcenter + prange * PLOT_SCALE_FACTOR
 
     # Compute global min/max across all eigenmodes for common colorbar
     global_vmax_abs = 0.0
@@ -588,12 +607,13 @@ def compute_and_plot_eigenmodes(theta=None):
         )
         im_common = im
 
+        # Increase visible range
+        ax.set_xlim(pmin_plot, pmax_plot)
+        ax.set_ylim(pmin_plot, pmax_plot)
+
         gamma_str = format_scientific_latex(vals[k], precision=3)
-        m_round, n_round, switches, c4, cinv = mode_labels[k]
-        # Your requested "physical m": m = 4*n, with n from sign switches.
-        ax.set_title(rf"$m={m_round}\;(=4\cdot{n_round})$, "
-                     rf"$\gamma={gamma_str}$" "\n"
-                     rf"$N_{{\rm sw}}={switches}$, $C_4={c4:.2f}$, $I={cinv:.2f}$")
+        m_round, switches, c4, cinv = mode_labels[k]
+        ax.set_title(rf"$m={m_round}$", fontsize=20)
         ax.set_xlabel("$p_x$")
         ax.set_ylabel("$p_y$")
 
@@ -614,33 +634,33 @@ if __name__ == "__main__":
     # Part (2): requires saved matrix for Theta_eigs
     # Run for all specified theta values
     theta_list = [
-        0.0025,
-        0.00310001,
-        0.00384403,
-        0.00476661,
-        0.00591061,
-        0.00732918,
-        0.00908822,
-        0.0112694,
-        0.0139741,
-        0.017328,
-        0.0214868,
-        0.0266437,
-        0.0330383,
-        0.0409676,
-        0.0508,
-        0.0629922,
-        0.0781105,
-        0.0968574,
-        0.120104,
-        0.148929,
-        0.184672,
-        0.228995,
+        # 0.0025,
+        # 0.00310001,
+        # 0.00384403,
+        # 0.00476661,
+        # 0.00591061,
+        # 0.00732918,
+        # 0.00908822,
+        # 0.0112694,
+        # 0.0139741,
+        # 0.017328,
+        # 0.0214868,
+        # 0.0266437,
+        # 0.0330383,
+        # 0.0409676,
+        # 0.0508,
+        # 0.0629922,
+        # 0.0781105,
+        # 0.0968574,
+        # 0.120104,
+        # 0.148929,
+        # 0.184672,
+        # 0.228995,
         0.283954,
-        0.352104,
-        0.436611,
-        0.541399,
-        0.671337,
+        # 0.352104,
+        # 0.436611,
+        # 0.541399,
+        # 0.671337,
     ]
     
     for theta in theta_list:
