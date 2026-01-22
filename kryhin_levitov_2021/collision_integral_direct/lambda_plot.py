@@ -43,6 +43,7 @@ ms = list(range(9))  # m = 0..12
 
 OUT_PNG = "Eigenvals_bruteforce_generalized.png"
 OUT_SVG = "Eigenvals_bruteforce_generalized.svg"
+OUT_NPZ = "Eigenvals_bruteforce_generalized.npz"
 
 # --- NEW: eigenmode selection knobs (same spirit as your diagnostics code) ---
 N_EIG_CANDIDATES = 120   # compute this many eigenpairs near sigma~0 (reduced to avoid memory issues)
@@ -382,6 +383,20 @@ def main():
     fig.savefig(OUT_PNG, dpi=300)
     print(f"Saved: {OUT_SVG}")
     print(f"Saved: {OUT_PNG}")
+
+    # --- save data to NPZ for reproducibility ---
+    save_dict = {
+        "T": Ts,
+        "T_requested": np.array(Ts_req_used, dtype=np.float64),
+        "modes": np.array(ms, dtype=np.int32),
+    }
+    # Save gamma_m for each mode m
+    for m in ms:
+        gm = np.array(gammas[m], dtype=np.float64)
+        save_dict[f"gamma_{m}"] = gm
+
+    np.savez(OUT_NPZ, **save_dict)
+    print(f"Saved: {OUT_NPZ}")
 
 
 if __name__ == "__main__":
