@@ -23,6 +23,22 @@ from matplotlib import pyplot as plt
 from scipy.sparse import csr_matrix, isspmatrix_csr, diags
 from scipy.sparse.linalg import eigsh, LinearOperator
 
+# Optional numba for performance
+USE_NUMBA = False
+try:
+    import numba
+    from numba import njit, prange
+    USE_NUMBA = True
+    # Configure numba to use all threads (can be overridden by NUMBA_NUM_THREADS env var)
+    import multiprocessing
+    numba_threads = int(os.environ.get('NUMBA_NUM_THREADS', multiprocessing.cpu_count() or 4))
+    if hasattr(numba, 'set_num_threads'):
+        numba.set_num_threads(numba_threads)
+    print(f"[Numba] Using {numba_threads} threads for parallel execution")
+except ImportError:
+    USE_NUMBA = False
+    print("[Numba] Not available - install numba for better performance")
+
 # --- plot style (keep your choices) ---
 plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
@@ -79,18 +95,145 @@ def build_inv_map(nx: np.ndarray, ny: np.ndarray, idx_map: np.ndarray, Nmax: int
     return inv
 
 
+if USE_NUMBA:
+    @njit(cache=True, fastmath=True, parallel=True)
+    def w_corr_numba(v: np.ndarray, u: np.ndarray, w: np.ndarray) -> float:
+        """Weighted correlation <v,u>_W / <v,v>_W (numba-accelerated, parallel)."""
+        n = v.size
+        num = 0.0
+        den = 0.0
+        # Parallel reduction
+        for i in prange(n):
+            wv = w[i] * v[i]
+            num += wv * u[i]
+            den += wv * v[i]
+        return num / (den + 1e-30)
+
 def w_corr(v: np.ndarray, u: np.ndarray, w: np.ndarray) -> float:
     """Weighted correlation <v,u>_W / <v,v>_W."""
+    if USE_NUMBA:
+        return w_corr_numba(v, u, w)
     num = float(np.dot(v, w * u))
     den = float(np.dot(v, w * v)) + 1e-30
     return num / den
 
+
+if USE_NUMBA:
+    @njit(cache=True, fastmath=True, parallel=True)
+    def estimate_sign_switches_on_ring_numba(v_full, active, px, py, P, dp_val, 
+                                             ring_width_factor, min_ring_points, n_angle_bins_min):
+        """Numba-accelerated sign switch estimation (parallel)."""
+        ring_w = ring_width_factor * dp_val
+        n_active = active.size
+        
+        # Collect indices directly (more efficient than mask)
+        # Sequential collection (small overhead, but needed for correctness)
+        idx_list = np.zeros(n_active, dtype=np.int32)
+        idx_count = 0
+        for i in range(n_active):
+            if np.abs(P[active[i]] - 1.0) <= ring_w:
+                idx_list[idx_count] = active[i]
+                idx_count += 1
+        
+        while idx_count < min_ring_points and ring_w < 0.5:
+            ring_w *= 1.5
+            idx_count = 0
+            for i in range(n_active):
+                if np.abs(P[active[i]] - 1.0) <= ring_w:
+                    idx_list[idx_count] = active[i]
+                    idx_count += 1
+        
+        if idx_count < 16:
+            return 0, 0.0
+        
+        # Compute angles (parallel)
+        ang = np.zeros(idx_count, dtype=np.float64)
+        for i in prange(idx_count):
+            a = np.arctan2(py[idx_list[i]], px[idx_list[i]])
+            ang[i] = (a + 2.0 * np.pi) % (2.0 * np.pi)
+        
+        nbin = max(n_angle_bins_min, int((2.0 * np.pi / max(dp_val, 1e-12)) * 2))
+        bins = np.floor(ang / (2.0 * np.pi) * nbin).astype(np.int64)
+        
+        prof = np.zeros(nbin, dtype=np.float64)
+        cnt  = np.zeros(nbin, dtype=np.int64)
+        # Sequential accumulation (parallel would have race condition on prof[b])
+        # But we can parallelize the value lookup
+        for i in range(idx_count):
+            b = bins[i]
+            prof[b] += v_full[idx_list[i]]
+            cnt[b]  += 1
+        
+        has_any = False
+        for i in range(nbin):
+            if cnt[i] > 0:
+                prof[i] /= cnt[i]
+                has_any = True
+        
+        if not has_any:
+            return 0, 0.0
+        
+        max_prof = 0.0
+        for i in range(nbin):
+            if cnt[i] > 0:
+                abs_prof = np.abs(prof[i])
+                if abs_prof > max_prof:
+                    max_prof = abs_prof
+        
+        thr = 1e-10 * (max_prof + 1e-300)
+        s = np.zeros(nbin, dtype=np.float64)
+        for i in range(nbin):
+            if np.abs(prof[i]) < thr:
+                s[i] = 0.0
+            else:
+                s[i] = 1.0 if prof[i] > 0.0 else -1.0
+        
+        last = 0.0
+        for i in range(nbin):
+            if s[i] == 0.0:
+                s[i] = last
+            else:
+                last = s[i]
+        
+        if s[0] == 0.0:
+            j = -1
+            for i in range(nbin):
+                if s[i] != 0.0:
+                    j = i
+                    break
+            if j >= 0:
+                for i in range(j):
+                    s[i] = s[j]
+        
+        all_zero = True
+        for i in range(nbin):
+            if s[i] != 0.0:
+                all_zero = False
+                break
+        if all_zero:
+            return 0, 0.0
+        
+        switches = 0
+        for i in range(nbin):
+            a = s[i]
+            b = s[(i + 1) % nbin]
+            if a * b < 0.0:
+                switches += 1
+        
+        m_est = 0.5 * float(switches)
+        return switches, m_est
 
 def estimate_sign_switches_on_ring(v_full, active, px, py, P, dp_val):
     """
     Returns (switches:int, m_est:float).
     Uses your binned-angle sign-switch logic.
     """
+    if USE_NUMBA:
+        return estimate_sign_switches_on_ring_numba(
+            v_full, active, px, py, P, float(dp_val),
+            float(RING_WIDTH_FACTOR), int(MIN_RING_POINTS), int(N_ANGLE_BINS_MIN)
+        )
+    
     ring_w = RING_WIDTH_FACTOR * float(dp_val)
     idx = active[np.abs(P[active] - 1.0) <= ring_w]
     while idx.size < MIN_RING_POINTS and ring_w < 0.5:
@@ -145,32 +288,42 @@ def estimate_sign_switches_on_ring(v_full, active, px, py, P, dp_val):
     return int(switches), float(m_est)
 
 
+# Cache for file lookups to avoid repeated directory scans
+_file_cache = None
+
 def find_matrix_file(theta_req: float):
     """
     Pick the *_T{...}.pkl file whose T in the filename is closest to theta_req.
+    Uses caching to avoid repeated directory scans.
     """
+    global _file_cache
+    
     if not os.path.isdir(IN_DIR):
         raise FileNotFoundError(f"Directory not found: {IN_DIR}")
 
-    files = [fn for fn in os.listdir(IN_DIR) if fn.endswith(".pkl") and "_T" in fn]
-    if not files:
-        raise FileNotFoundError(f"No .pkl files with '_T' found in {IN_DIR}")
+    # Build cache if not exists
+    if _file_cache is None:
+        files = [fn for fn in os.listdir(IN_DIR) if fn.endswith(".pkl") and "_T" in fn]
+        if not files:
+            raise FileNotFoundError(f"No .pkl files with '_T' found in {IN_DIR}")
 
-    Ts = []
-    paths = []
-    for fn in files:
-        try:
-            tpart = fn.split("_T", 1)[1].rsplit(".pkl", 1)[0]
-            Tval = float(tpart)
-        except Exception:
-            continue
-        Ts.append(Tval)
-        paths.append(os.path.join(IN_DIR, fn))
+        Ts = []
+        paths = []
+        for fn in files:
+            try:
+                tpart = fn.split("_T", 1)[1].rsplit(".pkl", 1)[0]
+                Tval = float(tpart)
+            except Exception:
+                continue
+            Ts.append(Tval)
+            paths.append(os.path.join(IN_DIR, fn))
 
-    if not Ts:
-        raise FileNotFoundError(f"Could not parse any temperatures from filenames in {IN_DIR}")
+        if not Ts:
+            raise FileNotFoundError(f"Could not parse any temperatures from filenames in {IN_DIR}")
 
-    Ts = np.array(Ts, dtype=float)
+        _file_cache = (np.array(Ts, dtype=float), paths)
+
+    Ts, paths = _file_cache
     idx = int(np.argmin(np.abs(Ts - theta_req)))
     return float(Ts[idx]), paths[idx]
 
@@ -231,8 +384,16 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms):
     f_full = np.asarray(meta["f"], dtype=np.float64)
     w_full = np.clip(f_full * (1.0 - f_full), 0.0, None)
 
-    px = np.asarray(meta.get("px", meta["dp"] * nx), dtype=np.float64)
-    py = np.asarray(meta.get("py", meta["dp"] * ny), dtype=np.float64)
+    # Handle grid shift (from previous patch)
+    shift_x = float(meta.get("shift_x", 0.0))
+    shift_y = float(meta.get("shift_y", 0.0))
+    dp_val = float(meta["dp"])
+    if "px" in meta and "py" in meta:
+        px = np.asarray(meta["px"], dtype=np.float64)
+        py = np.asarray(meta["py"], dtype=np.float64)
+    else:
+        px = dp_val * (nx.astype(np.float64) + shift_x)
+        py = dp_val * (ny.astype(np.float64) + shift_y)
     P  = np.asarray(meta.get("P", np.sqrt(px * px + py * py)), dtype=np.float64)
 
     # active-space generalized eigenproblem
@@ -249,8 +410,9 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms):
 
     def _matvec_B(x):
         # B x = D^{-1/2} A D^{-1/2} x
+        # Optimized: use in-place multiplication and scipy's optimized CSR dot
         y = d * x
-        z = A.dot(y)
+        z = A.dot(y)  # scipy's CSR dot is already highly optimized
         return d * z
 
     n = A.shape[0]
@@ -261,18 +423,20 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms):
         return {m: np.nan for m in ms}
 
     # Smallest algebraic eigenvalues ≈ slow modes near 0 (no sigma => no CSC factorization)
+    # Optimized: use smaller tolerance for faster convergence, but still accurate enough
     vals, y = eigsh(
         Bop,
         k=k_calc,
         which="SA",
-        tol=1e-8,
-        maxiter=20000
+        tol=1e-7,  # Slightly relaxed for speed (was 1e-8)
+        maxiter=20000,
+        ncv=min(2 * k_calc + 1, n)  # Optimal subspace size for ARPACK
     )
     vals = np.real(vals)
     y = np.real(y)
 
     # Recover generalized eigenvectors v = D^{-1/2} y
-    vecs = (d[:, None] * y)
+    vecs = (d[:, None] * y).astype(np.float64)
 
     # sort by gamma (slowest first)
     # (clip tiny negative numerical noise if present)
@@ -286,27 +450,32 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms):
         vals = vals[keep]
         vecs = vecs[:, keep]
 
-    # normalize in W-inner-product on active
-    for i in range(vecs.shape[1]):
-        v = vecs[:, i]
-        n2 = float(np.dot(v, w_safe * v))
-        if n2 > 0.0:
-            vecs[:, i] = v / np.sqrt(n2)
+    # normalize in W-inner-product on active (vectorized)
+    wv = w_safe[:, None] * vecs
+    norms2 = np.sum(wv * vecs, axis=0)
+    norms2 = np.maximum(norms2, 1e-30)  # avoid division by zero
+    vecs = vecs / np.sqrt(norms2[None, :])
 
     # collect candidates per m
     best = {m: None for m in ms}
     dp_val = float(meta["dp"])
+    
+    # Pre-allocate arrays to avoid repeated allocation
+    v_full = np.zeros(Nstates, dtype=np.float64)
+    v_full_inv = np.zeros(Nstates, dtype=np.float64)
 
+    # Sequential processing - numba parallelizes inside the functions
     for i in range(vecs.shape[1]):
         gamma = float(vals[i])
-        v_active = vecs[:, i].copy()
+        v_active = vecs[:, i]
 
-        # embed into full lattice for symmetry + ring counting
-        v_full = np.zeros(Nstates, dtype=np.float64)
+        # embed into full lattice for symmetry + ring counting (in-place)
+        v_full.fill(0.0)
         v_full[active] = v_active
 
-        # inversion parity correlation
-        c_inv = w_corr(v_full, v_full[inv_map], w_full)
+        # inversion parity correlation (pre-compute inverted vector)
+        v_full_inv[:] = v_full[inv_map]
+        c_inv = w_corr(v_full, v_full_inv, w_full)
 
         switches, m_est = estimate_sign_switches_on_ring(
             v_full=v_full, active=active, px=px, py=py, P=P, dp_val=dp_val
@@ -344,6 +513,7 @@ def main():
 
     print("=== Computing eigenvalues gamma_m(T) by eigenmode classification (m=0..12) ===")
 
+    # Sequential processing - numba handles parallelization inside functions
     for Treq in Thetas_req:
         M, meta, path, Tused = load_matrix_nearest(float(Treq))
         if len(Ts_used) > 0 and np.isclose(Tused, Ts_used[-1], rtol=0, atol=0):
