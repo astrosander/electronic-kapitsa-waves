@@ -19,6 +19,8 @@ import os
 import pickle
 import numpy as np
 from matplotlib import pyplot as plt
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import multiprocessing
 
 from scipy.sparse import csr_matrix, isspmatrix_csr, diags
 from scipy.sparse.linalg import eigsh, LinearOperator
@@ -30,7 +32,6 @@ try:
     from numba import njit, prange
     USE_NUMBA = True
     # Configure numba to use all threads (can be overridden by NUMBA_NUM_THREADS env var)
-    import multiprocessing
     numba_threads = int(os.environ.get('NUMBA_NUM_THREADS', multiprocessing.cpu_count() or 4))
     if hasattr(numba, 'set_num_threads'):
         numba.set_num_threads(numba_threads)
@@ -38,6 +39,10 @@ try:
 except ImportError:
     USE_NUMBA = False
     print("[Numba] Not available - install numba for better performance")
+
+# Number of parallel workers for temperature processing
+N_WORKERS = int(os.environ.get('N_WORKERS', multiprocessing.cpu_count() or 4))
+print(f"[Parallel] Using {N_WORKERS} workers for temperature processing")
 
 # --- plot style (keep your choices) ---
 plt.rcParams['text.usetex'] = True
@@ -62,7 +67,7 @@ OUT_SVG = "Eigenvals_bruteforce_generalized.svg"
 OUT_NPZ = "Eigenvals_bruteforce_generalized.npz"
 
 # --- NEW: eigenmode selection knobs (same spirit as your diagnostics code) ---
-N_EIG_CANDIDATES = 120   # compute this many eigenpairs near sigma~0 (reduced to avoid memory issues)
+N_EIG_CANDIDATES = 120#120   # compute this many eigenpairs near sigma~0 (reduced to avoid memory issues)
 SIGMA = 1e-8             # shift-invert target (near slow modes, increased to help convergence without reg)
 ZERO_TOL = 1e-10         # used only if you decide to drop conserved; we keep them by default
 INCLUDE_CONSERVED = True # keep near-zero modes so m=0 and m=1 show up
@@ -339,6 +344,22 @@ def load_matrix_nearest(theta_req: float):
     return M, meta, path, theta_used
 
 
+def load_matrix_with_size(path: str):
+    """
+    Load matrix and return (M, meta, size) where size is active matrix size.
+    """
+    with open(path, "rb") as fp:
+        M, meta = pickle.load(fp)
+    active = meta.get("active", None)
+    if active is not None and len(active) > 0:
+        size = int(len(active))
+    elif hasattr(M, 'shape'):
+        size = int(M.shape[0])
+    else:
+        size = 0
+    return M, meta, size
+
+
 def get_active_operator(M, meta):
     """
     Returns:
@@ -424,13 +445,17 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms):
 
     # Smallest algebraic eigenvalues ≈ slow modes near 0 (no sigma => no CSC factorization)
     # Optimized: use smaller tolerance for faster convergence, but still accurate enough
+    # Reduce k_calc if we only need a few modes (ms is small)
+    k_needed = max(len(ms) * 2, 20)  # Need at least 2x modes for safety, but minimum 20
+    k_calc = min(k_calc, max(k_needed, n - 2))
+    
     vals, y = eigsh(
         Bop,
         k=k_calc,
         which="SA",
-        tol=1e-7,  # Slightly relaxed for speed (was 1e-8)
-        maxiter=20000,
-        ncv=min(2 * k_calc + 1, n)  # Optimal subspace size for ARPACK
+        tol=1e-6,  # Further relaxed for speed (was 1e-7)
+        maxiter=10000,  # Reduced maxiter
+        ncv=min(max(2 * k_calc + 1, 20), n)  # Optimal subspace size for ARPACK
     )
     vals = np.real(vals)
     y = np.real(y)
@@ -460,42 +485,57 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms):
     best = {m: None for m in ms}
     dp_val = float(meta["dp"])
     
-    # Pre-allocate arrays to avoid repeated allocation
-    v_full = np.zeros(Nstates, dtype=np.float64)
-    v_full_inv = np.zeros(Nstates, dtype=np.float64)
-
-    # Sequential processing - numba parallelizes inside the functions
-    for i in range(vecs.shape[1]):
+    # Process eigenvectors in parallel (numba releases GIL, so threading works well)
+    def process_eigenvector(i):
+        """Process a single eigenvector and return result if valid."""
         gamma = float(vals[i])
-        v_active = vecs[:, i]
-
-        # embed into full lattice for symmetry + ring counting (in-place)
-        v_full.fill(0.0)
+        v_active = vecs[:, i].copy()
+        
+        # embed into full lattice for symmetry + ring counting
+        v_full = np.zeros(Nstates, dtype=np.float64)
         v_full[active] = v_active
-
-        # inversion parity correlation (pre-compute inverted vector)
-        v_full_inv[:] = v_full[inv_map]
+        
+        # inversion parity correlation
+        v_full_inv = v_full[inv_map]
         c_inv = w_corr(v_full, v_full_inv, w_full)
-
+        
         switches, m_est = estimate_sign_switches_on_ring(
             v_full=v_full, active=active, px=px, py=py, P=P, dp_val=dp_val
         )
         m_round = int(np.rint(m_est))
-
-        if m_round not in best:
-            continue
+        
+        if m_round not in ms:
+            return None
         if abs(m_est - float(m_round)) > M_TOL:
-            continue
-
+            return None
+        
         # parity sanity: even m => c_inv ~ +1, odd m => c_inv ~ -1
         if (m_round % 2) == 0:
             if c_inv < INV_MIN_CORR:
-                continue
+                return None
         else:
             if c_inv > -INV_MIN_CORR:
-                continue
-
-        # keep slowest (smallest gamma) for that m
+                return None
+        
+        return (i, m_round, gamma, c_inv, m_est, switches)
+    
+    # Parallel processing of eigenvectors using threading (numba releases GIL)
+    n_vecs = vecs.shape[1]
+    results = []
+    if n_vecs > 3 and N_WORKERS > 1:
+        # Use threading - numba functions release GIL so this works well
+        with ThreadPoolExecutor(max_workers=N_WORKERS) as executor:
+            futures = [executor.submit(process_eigenvector, i) for i in range(n_vecs)]
+            results = [f.result() for f in as_completed(futures)]
+    else:
+        # Sequential for small number of vectors
+        results = [process_eigenvector(i) for i in range(n_vecs)]
+    
+    # Collect best results (keep slowest gamma for each m)
+    for result in results:
+        if result is None:
+            continue
+        i, m_round, gamma, c_inv, m_est, switches = result
         cur = best[m_round]
         if (cur is None) or (gamma < cur["gamma"]):
             best[m_round] = {"gamma": gamma, "c_inv": c_inv, "m_est": m_est, "switches": switches}
@@ -512,22 +552,94 @@ def main():
     Ts_req_used = [] # requested temperatures (for reference)
 
     print("=== Computing eigenvalues gamma_m(T) by eigenmode classification (m=0..12) ===")
-
-    # Sequential processing - numba handles parallelization inside functions
+    
+    # Pre-load all files to get sizes and sort by matrix size (largest first)
+    print("[Pre-scan] Loading files to determine processing order...")
+    file_tasks = []
+    seen_paths = {}  # path -> (theta_used, M, meta, size, Treq_list)
+    
     for Treq in Thetas_req:
-        M, meta, path, Tused = load_matrix_nearest(float(Treq))
-        if len(Ts_used) > 0 and np.isclose(Tused, Ts_used[-1], rtol=0, atol=0):
-            continue
+        try:
+            theta_used, path = find_matrix_file(float(Treq))
+            # Check if we've already loaded this file
+            if path not in seen_paths:
+                # Load once and get size
+                M, meta, size = load_matrix_with_size(path)
+                seen_paths[path] = (theta_used, M, meta, size, [Treq])
+            else:
+                # File already loaded, just add this Treq to the list
+                seen_paths[path][4].append(Treq)
+        except Exception as e:
+            print(f"[Warning] Could not load Theta={Treq:.6g}: {e}")
+    
+    # Convert to list of tasks, one per unique file
+    for path, (theta_used, M, meta, size, Treq_list) in seen_paths.items():
+        # Use the first Treq as representative, but keep all for tracking
+        file_tasks.append((Treq_list[0], theta_used, path, M, meta, size, Treq_list))
+    
+    # Sort by size (largest first), then by temperature for stability
+    file_tasks.sort(key=lambda x: (-x[5], x[0]))
+    
+    valid_files = [t for t in file_tasks if t[5] > 0]
+    print(f"[Pre-scan] Processing {len(valid_files)} unique files (from {len(Thetas_req)} requests), "
+          f"size range: {min([t[5] for t in valid_files]) or 0} - "
+          f"{max([t[5] for t in valid_files]) or 0}")
+
+    # Process files in parallel (starting with largest matrices)
+    def process_single_file(task):
+        """Process a single file and return results for all requested temperatures."""
+        # Task structure: (Treq_first, theta_used, path, M, meta, size, Treq_list)
+        Treq_first, theta_used, path, M, meta, size, Treq_list = task
+        if M is None or meta is None:
+            return None
+            
         Ma, active = get_active_operator(M, meta)
-
-        print(f"[load] requested Theta={Treq:.6g}, using nearest Theta={Tused:.6g}  |  {os.path.basename(path)}  |  shape={Ma.shape}")
-
+        print(f"[process] Theta={theta_used:.6g}  |  {os.path.basename(path)}  |  shape={Ma.shape}")
+        
+        # Process once and reuse for all requested temperatures
         sel = select_physical_eigs_per_m(Ma, meta, active, ms)
-        for m in ms:
-            gammas[m].append(sel[m])
-
-        Ts_used.append(Tused)
-        Ts_req_used.append(Treq)
+        
+        # Return results for all requested temperatures (they all map to same file)
+        results = []
+        for Treq in Treq_list:
+            results.append((theta_used, Treq, sel))
+        return results
+    
+    # Parallel processing of files using threading
+    # (numba releases GIL, so threading is efficient)
+    processed_results = []
+    if len(valid_files) > 1 and N_WORKERS > 1:
+        with ThreadPoolExecutor(max_workers=N_WORKERS) as executor:
+            futures = {executor.submit(process_single_file, task): task for task in file_tasks if task[5] > 0}
+            
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                    if result is not None:
+                        processed_results.extend(result)
+                except Exception as e:
+                    task = futures[future]
+                    print(f"[Error] Processing file {task[2]}: {e}")
+    else:
+        # Sequential processing
+        for task in file_tasks:
+            if task[5] > 0:
+                result = process_single_file(task)
+                if result is not None:
+                    processed_results.extend(result)
+    
+    # Sort results by temperature to maintain order
+    processed_results.sort(key=lambda x: x[0])
+    
+    # Collect results, avoiding duplicates
+    seen_temps = set()
+    for theta_used, Treq, sel in processed_results:
+        if not any(np.isclose(theta_used, t, rtol=0, atol=0) for t in seen_temps):
+            for m in ms:
+                gammas[m].append(sel[m])
+            Ts_used.append(theta_used)
+            Ts_req_used.append(Treq)
+            seen_temps.add(theta_used)
 
     Ts = np.array(Ts_used, dtype=np.float64)
     print("Ts=", Ts)
