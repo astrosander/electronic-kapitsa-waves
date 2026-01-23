@@ -17,13 +17,13 @@ import os
 plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
-plt.rcParams['font.size'] = 16
-plt.rcParams['axes.labelsize'] = 16
-plt.rcParams['axes.titlesize'] = 16
-plt.rcParams['xtick.labelsize'] = 16
-plt.rcParams['ytick.labelsize'] = 16
+plt.rcParams['font.size'] = 20
+plt.rcParams['axes.labelsize'] = 20
+plt.rcParams['axes.titlesize'] = 20
+plt.rcParams['xtick.labelsize'] = 20
+plt.rcParams['ytick.labelsize'] = 20
 plt.rcParams['legend.fontsize'] = 16
-plt.rcParams['figure.titlesize'] = 16
+plt.rcParams['figure.titlesize'] = 20
 
 # Default input/output filenames
 DEFAULT_IN_CSV = "Eigenvals_bruteforce_generalized.csv"
@@ -110,8 +110,8 @@ def get_color_and_alpha(m, max_m=8):
     
     if m <= 1:
         # m=0,1: use darker gray with reduced alpha (dashed lines)
-        color = '#2C3E50' if m == 0 else '#34495E'  # Darker grays
-        return color, 0.3  # Reduced alpha for dashed lines
+        color = 'black' if m == 0 else '#34495E'  # Darker grays
+        return color, 0.4  # Reduced alpha for dashed lines
     elif m % 2 == 0:
         # Even modes (2,4,6,8): map to darker blue-green part of rainbow
         # Avoid light cyan, use darker blues and greens (0.55 to 0.75)
@@ -202,7 +202,7 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
             C_T4 = gamma_ref / (T_mid ** 4)
             
             # T^2 reference: constant line at C_T2
-            ref_T2_normalized = np.full_like(T_ref, C_T2)
+            ref_T2_normalized = np.full_like(T_ref, C_T2)*10
             # T^4 reference: C_T4 * T^2
             ref_T4_normalized = C_T4 * (T_ref ** 2)
             
@@ -215,6 +215,9 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
         gamma_over_T2_valid = np.array(gamma_over_T2_valid)
         ax.set_xlim([T_valid.min(), T_valid.max()])
         ax.set_ylim([gamma_over_T2_valid.min(), gamma_over_T2_valid.max()])
+
+    # ax.set_xlim([T_valid.min(), T_valid.max()])
+    ax.set_ylim(1e-3, 3e-1)
 
     ax.set_xlabel(r"Temperature, $T/T_F$")
     ax.set_ylabel(r"Decay rate (eigenvalue), $\gamma_m / T^2$")
@@ -229,7 +232,7 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
     if out_png:
         fig.savefig(out_png, dpi=300)
         print(f"Saved: {out_png}")
-
+    plt.show()
 
 def main():
     parser = argparse.ArgumentParser(
