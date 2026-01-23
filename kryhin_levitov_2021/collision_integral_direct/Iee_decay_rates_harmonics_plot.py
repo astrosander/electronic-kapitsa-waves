@@ -26,7 +26,7 @@ from matplotlib.colors import TwoSlopeNorm
 from scipy.sparse import csr_matrix, diags
 from scipy.sparse.linalg import eigs, eigsh, norm as spnorm
 
-plt.rcParams['text.usetex'] = True
+# plt.rcParams['text.usetex'] = temperature
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
 # plt.rcParams['font.size'] = 20
@@ -41,21 +41,24 @@ plt.rcParams["legend.frameon"] = False
 
 # ---------------- USER SETTINGS ----------------
 # Grid (must match your generator choices if you want to compare to saved matrices)
-Nmax = 100
-dp   = 0.08
+# IMPORTANT: These must match the values used in Iee_matrix_bruteforce_generate.py
+Nmax = 100#300  # increased for better resolution (must match generator)
+dp   = 0.08#0.027  # reduced proportionally to improve ring resolution (must match generator)
 
 # For part (1)
 Thetas_weight = [1.0, 0.1, 0.01]
 
 # For part (2): choose one temperature that you have already generated a matrix for
 Theta_eigs = 0.02
-TARGET_MS = list(range(12)) # plot m = 0..12 (one representative per m)
-N_EIG_PLOT = len(TARGET_MS)
+# TARGET_MS is no longer used - we plot ALL solutions
+TARGET_MS = list(range(12)) # kept for backward compatibility but not used for filtering
+N_EIG_PLOT = 100  # not used when plotting all solutions
 ZERO_TOL = 1e-10            # treat |lambda|<ZERO_TOL as "conserved/zero" mode
 
 # ---- NEW: select "physical" C4-symmetric modes with m = 4*n ----
 # We compute MORE eigenpairs than we plot, then FILTER them.
-N_EIG_CANDIDATES = 250      # need more to reliably cover m=0..12
+# Increase this to capture odd modes which may appear at higher eigenvalues
+N_EIG_CANDIDATES = 100      # increased to get more solutions to plot, including odd modes
 
 # C4 classification via 90° rotation R:  (px,py)->(-py,px) on the discrete torus
 # For m = 4*n, we expect R v ≈ +v  (in W-inner-product)
@@ -69,7 +72,7 @@ REQUIRE_M_MULTIPLE_OF_4 = False
 REQUIRE_N_ODD = False       # if True: keep only n odd => m = 4*(odd) = 4,12,20,...
 
 # NEW: how tightly m_est must match an integer m
-M_TOL = 0.35                # relax if you miss some m's
+M_TOL = 0.35#5                # relax if you miss some m's
 
 # NEW: whether to keep the conserved/near-zero modes (needed to see m=1, and usually one of m=0)
 INCLUDE_CONSERVED = True
@@ -80,7 +83,10 @@ MIN_RING_POINTS   = 200     # if too few points, widen ring automatically
 N_ANGLE_BINS_MIN  = 256     # angular binning makes sign-switch count robust on a Cartesian grid
 
 # Plotting scale: > 1.0 zooms out (shows more), < 1.0 zooms in (shows less)
-PLOT_SCALE_FACTOR = 0.25     # increase to see more of the momentum space
+PLOT_SCALE_FACTOR = 1#0.5#06     # increase to see more of the momentum space
+
+# Table layout settings
+MAX_COLUMNS_PER_M = 5        # maximum number of modes to show per m value (to avoid very wide tables)
 
 # Where your generator saved matrices
 IN_DIR = "Matrixes_bruteforce"
@@ -157,11 +163,11 @@ def estimate_sign_switches_on_ring(
     theta_val: float,
 ):
     """
-    Estimate number of sign switches around the FS:
+    Estimate angular momentum m using FFT on angular profile:
       - restrict to active indices near |p|≈1
-      - bin by polar angle for robustness
+      - bin by polar angle and perform FFT to find dominant frequency
     Returns: (sign_switches:int, m_est:float, n_est:float)
-      with m_est ≈ sign_switches/2, and n_est ≈ m_est/4
+      with m_est from FFT analysis, and n_est ≈ m_est/4
     """
     ring_w = RING_WIDTH_FACTOR * float(dp_val)
 
@@ -192,34 +198,208 @@ def estimate_sign_switches_on_ring(
         return 0, 0.0, 0.0
     prof[has] /= cnt[has]
 
-    # fill empty bins by forward fill then backward fill to make a closed loop
-    s = np.sign(prof)
-    # ignore tiny amplitudes as "no data"
-    thr = 1e-10 * (float(np.max(np.abs(prof[has]))) + 1e-300)
-    s[np.abs(prof) < thr] = 0.0
-
-    # forward fill zeros
-    last = 0.0
-    for i in range(nbin):
-        if s[i] == 0.0:
-            s[i] = last
+    # Fill empty bins by interpolation
+    if not np.all(has):
+        # Use linear interpolation for empty bins
+        valid_indices = np.where(has)[0]
+        if valid_indices.size > 0:
+            valid_values = prof[valid_indices]
+            all_indices = np.arange(nbin)
+            prof = np.interp(all_indices, valid_indices, valid_values)
         else:
-            last = s[i]
-    # backward fill if the start was zero
-    if s[0] == 0.0:
-        # find first nonzero
-        j = -1
+            return 0, 0.0, 0.0
+
+    # Save original profile for m=0 correlation check
+    prof_original = prof.copy()
+    
+    # Check for m=0 (constant/nearly constant profile) BEFORE removing DC
+    prof_std = np.std(prof)
+    prof_mean = np.mean(prof)
+    prof_abs_max = np.max(np.abs(prof - prof_mean))
+    
+    # If profile is nearly constant (low variance relative to mean), it's likely m=0
+    # Use relative standard deviation: if std/|mean| is very small, it's constant
+    if abs(prof_mean) > 1e-10:
+        rel_std = prof_std / abs(prof_mean)
+    else:
+        rel_std = prof_std
+    
+    # If the profile is nearly constant, return m=0
+    if prof_abs_max < 1e-8 or rel_std < 0.01:
+        # Count sign switches for backward compatibility (should be 0 for constant)
+        s = np.sign(prof - prof_mean)
+        switches = 0
         for i in range(nbin):
-            if s[i] != 0.0:
-                j = i
-                break
-        if j >= 0:
-            s[:j] = s[j]
+            a = s[i]
+            b = s[(i + 1) % nbin]
+            if a * b < 0.0:
+                switches += 1
+        return switches, 0.0, 0.0
 
-    if np.all(s == 0.0):
+    # Remove DC component (mean) for non-constant profiles
+    prof_centered = prof - prof_mean
+    
+    # Normalize
+    prof_max = np.max(np.abs(prof_centered))
+    if prof_max < 1e-10:
+        # Still nearly constant after centering - treat as m=0
+        switches = 0
+        return switches, 0.0, 0.0
+    prof = prof_centered / prof_max
+
+    # Perform FFT to find dominant angular frequency
+    # Use the original profile (before centering) for FFT to preserve DC component
+    fft_result = np.fft.fft(prof_original)
+    fft_power = np.abs(fft_result)
+    
+    # Check DC component (index 0) for m=0
+    dc_power = fft_power[0]
+    
+    # For a mode with angular momentum m, we expect cos(m*phi) or sin(m*phi)
+    # This gives peaks at frequencies m and (nbin-m) in the FFT
+    # We only need to check the first half (Nyquist limit)
+    max_freq = min(nbin // 2, 50)  # limit to reasonable m values
+    if max_freq < 1:
         return 0, 0.0, 0.0
-
-    # count sign changes around the loop
+    
+    # Find dominant frequency (excluding DC at index 0)
+    # Check frequencies 1 to max_freq
+    freq_range = fft_power[1:max_freq+1]
+    if len(freq_range) == 0:
+        # Only DC component - this is m=0
+        switches = 0
+        return switches, 0.0, 0.0
+    
+    dominant_idx = np.argmax(freq_range) + 1
+    dominant_power = fft_power[dominant_idx]
+    
+    # If DC component is dominant or comparable, likely m=0
+    # Compare DC to the strongest non-DC component
+    if dc_power > 0.5 * dominant_power and dc_power > np.sum(fft_power[1:]) * 0.3:
+        # DC is significant - likely m=0
+        switches = 0
+        return switches, 0.0, 0.0
+    
+    # The frequency index k in FFT corresponds to k periods in 2π, so m = k
+    m_est = float(dominant_idx)
+    
+    # Refine: check nearby frequencies if they have comparable power
+    # This handles cases where the true m is between FFT bins
+    if dominant_idx > 1:
+        prev_power = fft_power[dominant_idx - 1]
+        # If previous frequency has >70% of dominant power, consider it
+        if prev_power > 0.7 * dominant_power and prev_power > dominant_power * 0.9:
+            m_est = float(dominant_idx - 1)
+    
+    if dominant_idx < max_freq:
+        next_power = fft_power[dominant_idx + 1]
+        # If next frequency is significantly stronger, use it
+        if next_power > 1.1 * dominant_power:
+            m_est = float(dominant_idx + 1)
+    
+    # Additional check: sometimes harmonics (2*m, 3*m) can be strong
+    # If 2*dominant_idx has very strong power relative to dominant, might be aliasing
+    # But for now, trust the dominant frequency
+    
+    # Fallback: also compute sign switches for validation
+    # For cos(m*phi), there should be 2*m sign changes in [0, 2π)
+    # So m_sign = switches/2
+    s = np.sign(prof)
+    switches = 0
+    for i in range(nbin):
+        a = s[i]
+        b = s[(i + 1) % nbin]
+        if a * b < 0.0:
+            switches += 1
+    
+    # Refinement: use correlation with cos(m*phi) and sin(m*phi) templates
+    # to verify and refine the m estimate
+    # Check a wider range around the FFT estimate to catch misdetections
+    phi_bins = np.linspace(0, 2.0 * math.pi, nbin, endpoint=False)
+    m_fft_rounded = int(np.round(m_est))
+    # Check m values from m_fft-3 to m_fft+3 to catch cases where FFT is off
+    # Always include m=0 in candidates
+    m_candidates = list(range(max(0, m_fft_rounded - 3), min(max_freq + 1, m_fft_rounded + 4)))
+    if 0 not in m_candidates:
+        m_candidates.append(0)
+    m_candidates = list(set(m_candidates))  # remove duplicates
+    m_candidates.sort()
+    
+    best_m = int(np.round(m_est))
+    best_corr = -1.0
+    
+    for m_test in m_candidates:
+        if m_test == 0:
+            # m=0 is constant, check correlation with constant using original profile
+            # Normalize original profile for fair comparison
+            prof_orig_norm = prof_original.copy()
+            prof_orig_mean = np.mean(prof_orig_norm)
+            prof_orig_std = np.std(prof_orig_norm)
+            if prof_orig_std > 1e-10:
+                prof_orig_norm = (prof_orig_norm - prof_orig_mean) / prof_orig_std
+            else:
+                # Already constant
+                prof_orig_norm = prof_orig_norm - prof_orig_mean
+            
+            template = np.ones_like(prof_orig_norm)
+            template = template / (np.linalg.norm(template) + 1e-10)
+            corr = abs(np.dot(prof_orig_norm, template))
+        else:
+            # Try both cos and sin, take the maximum correlation
+            template_cos = np.cos(m_test * phi_bins)
+            template_sin = np.sin(m_test * phi_bins)
+            
+            # Normalize templates
+            template_cos = template_cos / (np.linalg.norm(template_cos) + 1e-10)
+            template_sin = template_sin / (np.linalg.norm(template_sin) + 1e-10)
+            
+            # Compute correlations
+            corr_cos = abs(np.dot(prof, template_cos))
+            corr_sin = abs(np.dot(prof, template_sin))
+            corr = max(corr_cos, corr_sin)
+        
+        if corr > best_corr:
+            best_corr = corr
+            best_m = m_test
+    
+    # If correlation is low, expand search range (FFT might be significantly off)
+    if best_corr < 0.5:
+        # Search wider range: check all m from 0 to min(30, max_freq)
+        expanded_range = list(range(0, min(31, max_freq + 1)))
+        for m_test in expanded_range:
+            if m_test in m_candidates:
+                continue  # already checked
+            if m_test == 0:
+                # m=0 is constant, use original profile
+                prof_orig_norm = prof_original.copy()
+                prof_orig_mean = np.mean(prof_orig_norm)
+                prof_orig_std = np.std(prof_orig_norm)
+                if prof_orig_std > 1e-10:
+                    prof_orig_norm = (prof_orig_norm - prof_orig_mean) / prof_orig_std
+                else:
+                    prof_orig_norm = prof_orig_norm - prof_orig_mean
+                template = np.ones_like(prof_orig_norm)
+                template = template / (np.linalg.norm(template) + 1e-10)
+                corr = abs(np.dot(prof_orig_norm, template))
+            else:
+                template_cos = np.cos(m_test * phi_bins)
+                template_sin = np.sin(m_test * phi_bins)
+                template_cos = template_cos / (np.linalg.norm(template_cos) + 1e-10)
+                template_sin = template_sin / (np.linalg.norm(template_sin) + 1e-10)
+                corr_cos = abs(np.dot(prof, template_cos))
+                corr_sin = abs(np.dot(prof, template_sin))
+                corr = max(corr_cos, corr_sin)
+            
+            if corr > best_corr:
+                best_corr = corr
+                best_m = m_test
+    
+    # Use the refined m if correlation is reasonable
+    if best_corr > 0.2:  # threshold for reliable detection
+        m_est = float(best_m)
+    
+    # Compute sign switches for backward compatibility
+    s = np.sign(prof)
     switches = 0
     for i in range(nbin):
         a = s[i]
@@ -227,7 +407,6 @@ def estimate_sign_switches_on_ring(
         if a * b < 0.0:
             switches += 1
 
-    m_est = 0.5 * float(switches)
     n_est = 0.25 * m_est
     return int(switches), float(m_est), float(n_est)
 
@@ -245,6 +424,20 @@ def values_to_grid(values_flat: np.ndarray, nx: np.ndarray, ny: np.ndarray, half
     grid = np.full((Nmax, Nmax), np.nan, dtype=np.float64)
     grid[nx + half, ny + half] = values_flat
     return grid
+
+
+def create_pcolormesh_coords(half: int, dp: float, Nmax: int):
+    """
+    Create coordinate arrays for pcolormesh (needs edge coordinates, not centers).
+    Returns X, Y arrays of shape (Nmax+1, Nmax+1) for pcolormesh.
+    Grid centers are at: -half*dp, (-half+1)*dp, ..., (half-1)*dp
+    So edges should be at: -half*dp - dp/2, -half*dp + dp/2, ..., (half-1)*dp + dp/2
+    """
+    # Create edge coordinates: from -half*dp - dp/2 to (half-1)*dp + dp/2
+    # This properly centers the grid cells
+    p_edges = np.linspace(-half * dp - dp/2, (half - 1) * dp + dp/2, Nmax + 1)
+    X, Y = np.meshgrid(p_edges, p_edges, indexing='ij')
+    return X, Y
 
 
 def format_scientific_latex(value: float, precision: int = 3) -> str:
@@ -269,6 +462,9 @@ def plot_f1mf():
 
         grid = values_to_grid(w, nx, ny, half, Nmax)
 
+        # Create coordinate arrays for pcolormesh (smoother rendering without interpolation)
+        X, Y = create_pcolormesh_coords(half, dp, Nmax)
+        
         # extent in momentum units
         pmin = (-half) * dp
         pmax = (half - 1) * dp
@@ -276,7 +472,9 @@ def plot_f1mf():
         prange = (pmax - pmin) / 2.0
         pmin_plot = pcenter - prange * PLOT_SCALE_FACTOR
         pmax_plot = pcenter + prange * PLOT_SCALE_FACTOR
-        im = ax.imshow(grid.T, origin="lower", extent=[pmin, pmax, pmin, pmax], aspect="equal", cmap='rainbow')
+        
+        # Use pcolormesh for smoother ring visualization (no interpolation needed)
+        im = ax.pcolormesh(X, Y, grid.T, cmap='rainbow', shading='flat', rasterized=True)
         # Increase visible range
         ax.set_xlim(pmin_plot, pmax_plot)
         ax.set_ylim(pmin_plot, pmax_plot)
@@ -333,6 +531,7 @@ def find_matrix_file(theta: float):
 
 def load_matrix(theta: float):
     path = find_matrix_file(theta)
+    path=r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_N100_dp0.027_T0.0508.pkl"
     with open(path, "rb") as fp:
         M, meta = pickle.load(fp)
     return M, meta, path
@@ -406,10 +605,11 @@ def compute_and_plot_eigenmodes(theta=None):
     A = A + diags([regA] * A.shape[0], 0, format="csr")
 
     n = A.shape[0]
-    # compute extra candidates, then filter down to the "physical" m=4*n family
-    k_calc = min(n - 2, max(N_EIG_CANDIDATES, N_EIG_PLOT + 8))
+    # compute all candidates (plotting ALL solutions, not filtering)
+    k_calc = min(n - 2, N_EIG_CANDIDATES)
     if k_calc <= 0:
         raise RuntimeError("Active subspace too small to compute eigenmodes.")
+    print(f"[eigenmodes] Computing {k_calc} eigenmodes (will plot all of them)")
 
     # Symmetry check in the weighted inner product:
     # A is W-self-adjoint if A^T W ≈ W A  (equivalently B = D^{-1/2} A D^{-1/2} symmetric)
@@ -420,6 +620,9 @@ def compute_and_plot_eigenmodes(theta=None):
     sym_err = float(sym_num / sym_den)
     print(f"[W-symmetry] ||B-B^T||/||B|| = {sym_err:.3e}")
 
+    # Use shift-and-invert with sigma to find eigenvalues near sigma
+    # "LM" with sigma finds eigenvalues closest to sigma (smallest decay rates)
+    # If odd modes have larger decay rates, increase N_EIG_CANDIDATES to capture them
     sigma = 1e-10
 
     if sym_err < 1e-8:
@@ -459,6 +662,14 @@ def compute_and_plot_eigenmodes(theta=None):
     order = np.argsort(vals)
     vals = vals[order]
     vecs = vecs[:, order]
+    
+    # Diagnostic: print eigenvalue range
+    if len(vals) > 0:
+        print(f"[eigenvalues] Computed {len(vals)} eigenvalues:")
+        print(f"  Range: gamma_min = {vals[0]:.6e}, gamma_max = {vals[-1]:.6e}")
+        print(f"  First 5: {vals[:min(5, len(vals))]}")
+        if len(vals) > 5:
+            print(f"  Last 5: {vals[-5:]}")
 
     # Optionally drop near-zero (conserved) modes
     if not INCLUDE_CONSERVED:
@@ -516,54 +727,63 @@ def compute_and_plot_eigenmodes(theta=None):
             "n_round": int(n_round),
         })
 
-    # NEW: pick one representative per desired m using sign-switch m_est
-    by_m = {m: [] for m in TARGET_MS}
-    for c in candidates:
-        m = int(c["m_round"])
-        if m not in by_m:
-            continue
-        if abs(c["m_est"] - float(m)) > M_TOL:
-            continue
-        # parity sanity check under inversion: even m => +1, odd m => -1 (approximately)
-        if (m % 2) == 0:
-            if c["c_inv"] < INV_MIN_CORR:
-                continue
-        else:
-            if c["c_inv"] > -INV_MIN_CORR:
-                continue
-        by_m[m].append(c)
+    # Plot ALL solutions (no filtering by m)
+    # Sort all candidates by m_round (ascending = smaller m first), then by gamma as secondary key
+    candidates_sorted = sorted(candidates, key=lambda d: (d["m_round"], d["gamma"]))
+    chosen = candidates_sorted
 
-    chosen = []
-    missing = []
-    for m in TARGET_MS:
-        lst = by_m[m]
-        if not lst:
-            missing.append(m)
-            continue
-        lst.sort(key=lambda d: d["gamma"])  # slowest (smallest gamma) first
-        chosen.append(lst[0])
+    # Diagnostic: count odd vs even modes
+    odd_modes = [c for c in chosen if c["m_round"] % 2 == 1]
+    even_modes = [c for c in chosen if c["m_round"] % 2 == 0]
+    print(f"\n[mode statistics] Total: {len(chosen)}, Even m: {len(even_modes)}, Odd m: {len(odd_modes)}")
+    if len(odd_modes) == 0:
+        print("  WARNING: No odd modes detected! They may be at higher eigenvalues.")
+        print("  Try increasing N_EIG_CANDIDATES or check if odd modes have larger decay rates.")
 
-    if missing:
-        print(f"WARNING: missing m={missing}. Try increasing N_EIG_CANDIDATES or relaxing M_TOL/INV_MIN_CORR.")
-
-    # Print a compact table so you can verify you are getting m=0..12
-    print("\n[mode selection]")
+    # Print a compact table showing all solutions
+    print(f"\n[mode selection] - plotting ALL {len(chosen)} solutions (sorted by m, then gamma)")
     print("  idx   gamma         cC4     cInv    switches   m_est   m_round")
     for k, c in enumerate(chosen):
         print(f"  {k:3d}  {c['gamma']:.6e}  {c['c_c4']:+.3f}  {c['c_inv']:+.3f}   "
               f"{c['switches']:4d}     {c['m_est']:6.2f}    {c['m_round']:4d}")
 
-    # Final arrays for plotting
-    vals = np.array([c["gamma"] for c in chosen], dtype=np.float64)
-    full_modes = [c["v_full"] for c in chosen]
-    mode_labels = [(c["m_round"], c["switches"], c["c_c4"], c["c_inv"]) for c in chosen]
-    n_show = len(full_modes)
+    # Group candidates by m_round for table layout
+    modes_by_m = {}
+    for c in chosen:
+        m = c["m_round"]
+        if m not in modes_by_m:
+            modes_by_m[m] = []
+        modes_by_m[m].append(c)
+    
+    # Sort m values and limit modes per m to MAX_COLUMNS_PER_M
+    m_values = sorted(modes_by_m.keys())
+    for m in m_values:
+        # Keep only the first MAX_COLUMNS_PER_M modes (sorted by gamma, so slowest first)
+        modes_by_m[m] = modes_by_m[m][:MAX_COLUMNS_PER_M]
+    
+    max_modes_per_m = max(len(modes_by_m[m]) for m in m_values) if m_values else 0
+    
+    print(f"\n[table layout] {len(m_values)} rows (m values), up to {max_modes_per_m} columns (modes per m)")
 
-    # Plot on the same grid
-    ncols = 3
-    nrows = int(math.ceil(n_show / ncols))
-    fig, axes = plt.subplots(nrows, ncols, figsize=(14, 4.5 * nrows), constrained_layout=True)
-    axes = np.atleast_1d(axes).reshape(nrows, ncols)
+    # Create table layout: rows = m values, columns = modes per m
+    nrows_table = len(m_values)
+    ncols_table = max_modes_per_m
+    
+    if nrows_table == 0:
+        print("WARNING: No modes to plot!")
+        return
+    
+    fig, axes = plt.subplots(nrows_table, ncols_table, 
+                             figsize=(4.5 * ncols_table, 4.5 * nrows_table), 
+                             constrained_layout=True)
+    
+    # Handle case where there's only one row or one column
+    if nrows_table == 1:
+        axes = axes.reshape(1, -1)
+    elif ncols_table == 1:
+        axes = axes.reshape(-1, 1)
+    else:
+        axes = axes.reshape(nrows_table, ncols_table)
 
     pmin = (-half) * meta["dp"]
     pmax = (half - 1) * meta["dp"]
@@ -572,14 +792,18 @@ def compute_and_plot_eigenmodes(theta=None):
     pmin_plot = pcenter - prange * PLOT_SCALE_FACTOR
     pmax_plot = pcenter + prange * PLOT_SCALE_FACTOR
 
+    # Create coordinate arrays for pcolormesh (smoother rendering without interpolation)
+    X, Y = create_pcolormesh_coords(half, meta["dp"], meta["Nmax"])
+
     # Compute global min/max across all eigenmodes for common colorbar
     global_vmax_abs = 0.0
-    for k in range(n_show):
-        grid = values_to_grid(full_modes[k], nx, ny, half, meta["Nmax"])
-        grid_valid = grid[~np.isnan(grid)]
-        if grid_valid.size > 0:
-            vmax_abs = float(np.max(np.abs(grid_valid)))
-            global_vmax_abs = max(global_vmax_abs, vmax_abs)
+    for m in m_values:
+        for c in modes_by_m[m]:
+            grid = values_to_grid(c["v_full"], nx, ny, half, meta["Nmax"])
+            grid_valid = grid[~np.isnan(grid)]
+            if grid_valid.size > 0:
+                vmax_abs = float(np.max(np.abs(grid_valid)))
+                global_vmax_abs = max(global_vmax_abs, vmax_abs)
 
     if global_vmax_abs > 0:
         global_vmin = -global_vmax_abs
@@ -590,38 +814,47 @@ def compute_and_plot_eigenmodes(theta=None):
     global_norm = TwoSlopeNorm(vmin=global_vmin, vcenter=0, vmax=global_vmax)
     im_common = None
 
-    for k in range(nrows * ncols):
-        ax = axes[k // ncols, k % ncols]
-        if k >= n_show:
-            ax.axis("off")
-            continue
+    # Fill table: rows = m values, columns = modes per m
+    for row_idx, m in enumerate(m_values):
+        modes_for_m = modes_by_m[m]
+        for col_idx in range(ncols_table):
+            ax = axes[row_idx, col_idx]
+            
+            if col_idx < len(modes_for_m):
+                # Plot this mode
+                c = modes_for_m[col_idx]
+                grid = values_to_grid(c["v_full"], nx, ny, half, meta["Nmax"])
+                
+                # Use pcolormesh for smoother ring visualization (no interpolation needed)
+                im = ax.pcolormesh(X, Y, grid.T, cmap="seismic", norm=global_norm, 
+                                  shading='flat', rasterized=True)
+                im_common = im
 
-        grid = values_to_grid(full_modes[k], nx, ny, half, meta["Nmax"])
-        im = ax.imshow(
-            grid.T,
-            origin="lower",
-            extent=[pmin, pmax, pmin, pmax],
-            aspect="equal",
-            cmap="seismic",
-            norm=global_norm
-        )
-        im_common = im
+                # Increase visible range
+                ax.set_xlim(pmin_plot, pmax_plot)
+                ax.set_ylim(pmin_plot, pmax_plot)
 
-        # Increase visible range
-        ax.set_xlim(pmin_plot, pmax_plot)
-        ax.set_ylim(pmin_plot, pmax_plot)
-
-        gamma_str = format_scientific_latex(vals[k], precision=3)
-        m_round, switches, c4, cinv = mode_labels[k]
-        ax.set_title(rf"$m={m_round}$", fontsize=20)
-        ax.set_xlabel("$p_x$")
-        ax.set_ylabel("$p_y$")
+                gamma_str = format_scientific_latex(c["gamma"], precision=3)
+                # Title: show m value on left column, gamma on all columns
+                if col_idx == 0:
+                    ax.set_title(rf"$m={m}$" + "\n" + rf"$\gamma={gamma_str}$", fontsize=14)
+                else:
+                    ax.set_title(rf"$\gamma={gamma_str}$", fontsize=14)
+                ax.set_xlabel("$p_x$")
+                ax.set_ylabel("$p_y$")
+            else:
+                # Empty cell - turn off axis
+                ax.axis("off")
+    
+    # Add row labels (m values) on the left
+    for row_idx, m in enumerate(m_values):
+        axes[row_idx, 0].set_ylabel(f"$m={m}$\n$p_y$", fontsize=14, rotation=0, labelpad=20)
 
     if im_common is not None:
         cbar = fig.colorbar(im_common, ax=axes, fraction=0.03, pad=0.02, aspect=30)
         cbar.ax.tick_params(labelsize=10)
 
-    fig.savefig(f"eigenmodes_T{theta:.6g}.png", dpi=300)
+    # fig.savefig(f"eigenmodes_T{theta:.6g}.png", dpi=300)
     fig.savefig(f"eigenmodes_T{theta:.6g}.svg")
     print(f"Saved: eigenmodes_T{theta:.6g}.png")
     print(f"Saved: eigenmodes_T{theta:.6g}.svg")
@@ -648,7 +881,7 @@ if __name__ == "__main__":
         # 0.0266437,
         # 0.0330383,
         # 0.0409676,
-        # 0.0508,
+        0.0508,
         # 0.0629922,
         # 0.0781105,
         # 0.0968574,
@@ -656,7 +889,7 @@ if __name__ == "__main__":
         # 0.148929,
         # 0.184672,
         # 0.228995,
-        0.283954,
+        # 0.283954,
         # 0.352104,
         # 0.436611,
         # 0.541399,
