@@ -228,16 +228,16 @@ if USE_NUMBA:
         m_est = 0.5 * float(switches)
         return switches, m_est
 
-def estimate_sign_switches_on_ring(v_full, active, px, py, P, dp_val):
+def estimate_sign_switches_on_ring(v_full, active, px, py, P, dp_val, theta_val):
     """
-    Returns (switches:int, m_est:float).
-    Uses your binned-angle sign-switch logic.
+    Estimate angular momentum m using FFT on angular profile (same as Iee_decay_rates_harmonics_plot.py):
+      - restrict to active indices near |p|≈1
+      - bin by polar angle and perform FFT to find dominant frequency
+      - refine using correlation with cos(m*phi) and sin(m*phi) templates
+    Returns: (switches:int, m_est:float)
+      with m_est from FFT analysis + correlation refinement
     """
-    if USE_NUMBA:
-        return estimate_sign_switches_on_ring_numba(
-            v_full, active, px, py, P, float(dp_val),
-            float(RING_WIDTH_FACTOR), int(MIN_RING_POINTS), int(N_ANGLE_BINS_MIN)
-        )
+    import math
     
     ring_w = RING_WIDTH_FACTOR * float(dp_val)
     idx = active[np.abs(P[active] - 1.0) <= ring_w]
@@ -248,9 +248,9 @@ def estimate_sign_switches_on_ring(v_full, active, px, py, P, dp_val):
         return 0, 0.0
 
     ang = np.arctan2(py[idx], px[idx])
-    ang = (ang + 2.0 * np.pi) % (2.0 * np.pi)
-    nbin = max(N_ANGLE_BINS_MIN, int((2.0 * np.pi / max(dp_val, 1e-12)) * 2))
-    bins = np.floor(ang / (2.0 * np.pi) * nbin).astype(np.int64)
+    ang = (ang + 2.0 * math.pi) % (2.0 * math.pi)
+    nbin = max(N_ANGLE_BINS_MIN, int((2.0 * math.pi / max(dp_val, 1e-12)) * 2))
+    bins = np.floor(ang / (2.0 * math.pi) * nbin).astype(np.int64)
 
     prof = np.zeros(nbin, dtype=np.float64)
     cnt  = np.zeros(nbin, dtype=np.int64)
@@ -262,34 +262,170 @@ def estimate_sign_switches_on_ring(v_full, active, px, py, P, dp_val):
         return 0, 0.0
     prof[has] /= cnt[has]
 
-    s = np.sign(prof)
-    thr = 1e-10 * (float(np.max(np.abs(prof[has]))) + 1e-300)
-    s[np.abs(prof) < thr] = 0.0
-
-    last = 0.0
-    for i in range(nbin):
-        if s[i] == 0.0:
-            s[i] = last
+    # Fill empty bins by interpolation
+    if not np.all(has):
+        valid_indices = np.where(has)[0]
+        if valid_indices.size > 0:
+            valid_values = prof[valid_indices]
+            all_indices = np.arange(nbin)
+            prof = np.interp(all_indices, valid_indices, valid_values)
         else:
-            last = s[i]
-    if s[0] == 0.0:
-        j = -1
-        for i in range(nbin):
-            if s[i] != 0.0:
-                j = i
-                break
-        if j >= 0:
-            s[:j] = s[j]
-    if np.all(s == 0.0):
-        return 0, 0.0
+            return 0, 0.0
 
+    # Save original profile for m=0 correlation check
+    prof_original = prof.copy()
+    
+    # Check for m=0 (constant/nearly constant profile) BEFORE removing DC
+    prof_std = np.std(prof)
+    prof_mean = np.mean(prof)
+    prof_abs_max = np.max(np.abs(prof - prof_mean))
+    
+    if abs(prof_mean) > 1e-10:
+        rel_std = prof_std / abs(prof_mean)
+    else:
+        rel_std = prof_std
+    
+    # If the profile is nearly constant, return m=0
+    if prof_abs_max < 1e-8 or rel_std < 0.01:
+        s = np.sign(prof - prof_mean)
+        switches = 0
+        for i in range(nbin):
+            a = s[i]
+            b = s[(i + 1) % nbin]
+            if a * b < 0.0:
+                switches += 1
+        return switches, 0.0
+
+    # Remove DC component (mean) for non-constant profiles
+    prof_centered = prof - prof_mean
+    
+    # Normalize
+    prof_max = np.max(np.abs(prof_centered))
+    if prof_max < 1e-10:
+        switches = 0
+        return switches, 0.0
+    prof = prof_centered / prof_max
+
+    # Perform FFT to find dominant angular frequency
+    fft_result = np.fft.fft(prof_original)
+    fft_power = np.abs(fft_result)
+    
+    # Check DC component (index 0) for m=0
+    dc_power = fft_power[0]
+    
+    max_freq = min(nbin // 2, 50)
+    if max_freq < 1:
+        return 0, 0.0
+    
+    # Find dominant frequency (excluding DC at index 0)
+    freq_range = fft_power[1:max_freq+1]
+    if len(freq_range) == 0:
+        switches = 0
+        return switches, 0.0
+    
+    dominant_idx = np.argmax(freq_range) + 1
+    dominant_power = fft_power[dominant_idx]
+    
+    # If DC component is dominant or comparable, likely m=0
+    if dc_power > 0.5 * dominant_power and dc_power > np.sum(fft_power[1:]) * 0.3:
+        switches = 0
+        return switches, 0.0
+    
+    # The frequency index k in FFT corresponds to k periods in 2π, so m = k
+    m_est = float(dominant_idx)
+    
+    # Refine: check nearby frequencies
+    if dominant_idx > 1:
+        prev_power = fft_power[dominant_idx - 1]
+        if prev_power > 0.7 * dominant_power and prev_power > dominant_power * 0.9:
+            m_est = float(dominant_idx - 1)
+    
+    if dominant_idx < max_freq:
+        next_power = fft_power[dominant_idx + 1]
+        if next_power > 1.1 * dominant_power:
+            m_est = float(dominant_idx + 1)
+    
+    # Refinement: use correlation with cos(m*phi) and sin(m*phi) templates
+    phi_bins = np.linspace(0, 2.0 * math.pi, nbin, endpoint=False)
+    m_fft_rounded = int(np.round(m_est))
+    m_candidates = list(range(max(0, m_fft_rounded - 3), min(max_freq + 1, m_fft_rounded + 4)))
+    if 0 not in m_candidates:
+        m_candidates.append(0)
+    m_candidates = list(set(m_candidates))
+    m_candidates.sort()
+    
+    best_m = int(np.round(m_est))
+    best_corr = -1.0
+    
+    for m_test in m_candidates:
+        if m_test == 0:
+            prof_orig_norm = prof_original.copy()
+            prof_orig_mean = np.mean(prof_orig_norm)
+            prof_orig_std = np.std(prof_orig_norm)
+            if prof_orig_std > 1e-10:
+                prof_orig_norm = (prof_orig_norm - prof_orig_mean) / prof_orig_std
+            else:
+                prof_orig_norm = prof_orig_norm - prof_orig_mean
+            
+            template = np.ones_like(prof_orig_norm)
+            template = template / (np.linalg.norm(template) + 1e-10)
+            corr = abs(np.dot(prof_orig_norm, template))
+        else:
+            template_cos = np.cos(m_test * phi_bins)
+            template_sin = np.sin(m_test * phi_bins)
+            template_cos = template_cos / (np.linalg.norm(template_cos) + 1e-10)
+            template_sin = template_sin / (np.linalg.norm(template_sin) + 1e-10)
+            corr_cos = abs(np.dot(prof, template_cos))
+            corr_sin = abs(np.dot(prof, template_sin))
+            corr = max(corr_cos, corr_sin)
+        
+        if corr > best_corr:
+            best_corr = corr
+            best_m = m_test
+    
+    # If correlation is low, expand search range
+    if best_corr < 0.5:
+        expanded_range = list(range(0, min(31, max_freq + 1)))
+        for m_test in expanded_range:
+            if m_test in m_candidates:
+                continue
+            if m_test == 0:
+                prof_orig_norm = prof_original.copy()
+                prof_orig_mean = np.mean(prof_orig_norm)
+                prof_orig_std = np.std(prof_orig_norm)
+                if prof_orig_std > 1e-10:
+                    prof_orig_norm = (prof_orig_norm - prof_orig_mean) / prof_orig_std
+                else:
+                    prof_orig_norm = prof_orig_norm - prof_orig_mean
+                template = np.ones_like(prof_orig_norm)
+                template = template / (np.linalg.norm(template) + 1e-10)
+                corr = abs(np.dot(prof_orig_norm, template))
+            else:
+                template_cos = np.cos(m_test * phi_bins)
+                template_sin = np.sin(m_test * phi_bins)
+                template_cos = template_cos / (np.linalg.norm(template_cos) + 1e-10)
+                template_sin = template_sin / (np.linalg.norm(template_sin) + 1e-10)
+                corr_cos = abs(np.dot(prof, template_cos))
+                corr_sin = abs(np.dot(prof, template_sin))
+                corr = max(corr_cos, corr_sin)
+            
+            if corr > best_corr:
+                best_corr = corr
+                best_m = m_test
+    
+    # Use the refined m if correlation is reasonable
+    if best_corr > 0.2:
+        m_est = float(best_m)
+    
+    # Compute sign switches for backward compatibility
+    s = np.sign(prof)
     switches = 0
     for i in range(nbin):
         a = s[i]
         b = s[(i + 1) % nbin]
         if a * b < 0.0:
             switches += 1
-    m_est = 0.5 * float(switches)
+
     return int(switches), float(m_est)
 
 
@@ -360,6 +496,38 @@ def load_matrix_with_size(path: str):
     return M, meta, size
 
 
+def build_centered_lattice(Nmax: int):
+    """Build centered lattice indices."""
+    half = Nmax // 2
+    ns = np.arange(-half, half, dtype=np.int32)
+    nx, ny = np.meshgrid(ns, ns, indexing="ij")
+    return nx.reshape(-1), ny.reshape(-1), half
+
+
+def reconstruct_full_arrays(meta):
+    """
+    Reconstruct full-lattice arrays from minimal meta.
+    Needed because we no longer store nx, ny, px, py, P, eps, f in meta.
+    """
+    import math
+    Nmax = int(meta["Nmax"])
+    dp   = float(meta["dp"])
+    Theta = float(meta["Theta"])
+    nx, ny, half = build_centered_lattice(Nmax)
+    px = dp * nx.astype(np.float64)
+    py = dp * ny.astype(np.float64)
+    P  = np.sqrt(px * px + py * py)
+    eps = P * P
+
+    invT = 1.0 / Theta
+    em = math.exp(-invT)
+    a  = 1.0 - em
+    x = np.clip((eps - 1.0) * invT, -700.0, 700.0)
+    f = a / (np.exp(x) + a)
+    w = f * (1.0 - f)
+    return nx, ny, half, px, py, P, eps, f, w
+
+
 def get_active_operator(M, meta):
     """
     Returns:
@@ -387,11 +555,23 @@ def get_active_operator(M, meta):
     return Ma, active
 
 
-def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms):
+def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms, theta_val: float):
     """
     Solve (-Ma) v = gamma * W v near gamma~0, classify by (i) inversion parity and (ii) m_est from sign-switches,
-    then return {m: gamma_m} for requested ms.
+    then return {m: (gamma_m, v_full_m)} for requested ms, where v_full_m is the eigenvector embedded in full lattice.
     """
+    # Reconstruct arrays if needed
+    if "nx" not in meta or "px" not in meta:
+        nx, ny, half, px, py, P, eps, f, w = reconstruct_full_arrays(meta)
+        meta["nx"] = nx
+        meta["ny"] = ny
+        meta["half"] = half
+        meta["px"] = px
+        meta["py"] = py
+        meta["P"] = P
+        meta["eps"] = eps
+        meta["f"] = f
+    
     Nstates = int(meta["nx"].size)
     nx = np.asarray(meta["nx"], dtype=np.int32)
     ny = np.asarray(meta["ny"], dtype=np.int32)
@@ -500,7 +680,7 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms):
         c_inv = w_corr(v_full, v_full_inv, w_full)
         
         switches, m_est = estimate_sign_switches_on_ring(
-            v_full=v_full, active=active, px=px, py=py, P=P, dp_val=dp_val
+            v_full=v_full, active=active, px=px, py=py, P=P, dp_val=dp_val, theta_val=theta_val
         )
         m_round = int(np.rint(m_est))
         
@@ -517,7 +697,7 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms):
             if c_inv > -INV_MIN_CORR:
                 return None
         
-        return (i, m_round, gamma, c_inv, m_est, switches)
+        return (i, m_round, gamma, c_inv, m_est, switches, v_full)
     
     # Parallel processing of eigenvectors using threading (numba releases GIL)
     n_vecs = vecs.shape[1]
@@ -535,19 +715,23 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms):
     for result in results:
         if result is None:
             continue
-        i, m_round, gamma, c_inv, m_est, switches = result
+        i, m_round, gamma, c_inv, m_est, switches, v_full = result
         cur = best[m_round]
         if (cur is None) or (gamma < cur["gamma"]):
-            best[m_round] = {"gamma": gamma, "c_inv": c_inv, "m_est": m_est, "switches": switches}
+            best[m_round] = {"gamma": gamma, "c_inv": c_inv, "m_est": m_est, "switches": switches, "v_full": v_full}
 
     out = {}
     for m in ms:
-        out[m] = np.nan if best[m] is None else float(best[m]["gamma"])
+        if best[m] is None:
+            out[m] = (np.nan, None)
+        else:
+            out[m] = (float(best[m]["gamma"]), best[m]["v_full"])
     return out
 
 
 def main():
     gammas = {m: [] for m in ms}
+    eigenvectors = {m: [] for m in ms}  # Store eigenvectors for plotting
     Ts_used = []     # actual loaded temperatures
     Ts_req_used = [] # requested temperatures (for reference)
 
@@ -597,7 +781,7 @@ def main():
         print(f"[process] Theta={theta_used:.6g}  |  {os.path.basename(path)}  |  shape={Ma.shape}")
         
         # Process once and reuse for all requested temperatures
-        sel = select_physical_eigs_per_m(Ma, meta, active, ms)
+        sel = select_physical_eigs_per_m(Ma, meta, active, ms, theta_val=theta_used)
         
         # Return results for all requested temperatures (they all map to same file)
         results = []
@@ -636,7 +820,10 @@ def main():
     for theta_used, Treq, sel in processed_results:
         if not any(np.isclose(theta_used, t, rtol=0, atol=0) for t in seen_temps):
             for m in ms:
-                gammas[m].append(sel[m])
+                gamma, v_full = sel[m]
+                gammas[m].append(gamma)
+                # Store eigenvector (None if gamma is NaN)
+                eigenvectors[m].append(v_full if not np.isnan(gamma) else None)
             Ts_used.append(theta_used)
             Ts_req_used.append(Treq)
             seen_temps.add(theta_used)
@@ -679,6 +866,179 @@ def main():
 
     np.savez(OUT_NPZ, **save_dict)
     print(f"Saved: {OUT_NPZ}")
+
+    # --- plot eigenfunction diagrams in table format (rows = m, columns = T) ---
+    plot_eigenfunction_table(Ts, eigenvectors, ms)
+
+
+def values_to_grid(values_flat: np.ndarray, nx: np.ndarray, ny: np.ndarray, half: int, Nmax: int):
+    """Convert flat array to 2D grid."""
+    grid = np.full((Nmax, Nmax), np.nan, dtype=np.float64)
+    grid[nx + half, ny + half] = values_flat
+    return grid
+
+
+def create_pcolormesh_coords(half: int, dp: float, Nmax: int):
+    """Create coordinate arrays for pcolormesh (needs edge coordinates, not centers)."""
+    p_edges = np.linspace(-half * dp - dp/2, (half - 1) * dp + dp/2, Nmax + 1)
+    X, Y = np.meshgrid(p_edges, p_edges, indexing='ij')
+    return X, Y
+
+
+def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_Ts=5):
+    """
+    Plot eigenfunction diagrams in a table: rows = m values, columns = selected temperatures.
+    
+    Args:
+        Ts: array of temperatures
+        eigenvectors: dict {m: [v_full_1, v_full_2, ...]} where each v_full is for corresponding T
+        ms: list of m values to plot
+        selected_T_indices: list of indices into Ts to plot (if None, select evenly spaced)
+        max_Ts: maximum number of temperatures to plot
+    """
+    from matplotlib.colors import TwoSlopeNorm
+    
+    # Select temperatures to plot
+    if selected_T_indices is None:
+        if len(Ts) <= max_Ts:
+            selected_T_indices = list(range(len(Ts)))
+        else:
+            # Select evenly spaced temperatures
+            selected_T_indices = [int(i * (len(Ts) - 1) / (max_Ts - 1)) for i in range(max_Ts)]
+    
+    selected_Ts = Ts[selected_T_indices]
+    print(f"\n[Plotting eigenfunctions] Selected {len(selected_Ts)} temperatures: {selected_Ts}")
+    
+    # Find valid m values (those with at least one valid eigenvector)
+    valid_ms = []
+    for m in ms:
+        if any(v is not None for v in eigenvectors[m]):
+            valid_ms.append(m)
+    
+    if len(valid_ms) == 0:
+        print("[Warning] No valid eigenvectors found for plotting.")
+        return
+    
+    # Load matrices for each selected temperature to get correct grid parameters
+    grid_params = {}  # T_idx -> (nx, ny, half, Nmax, dp)
+    for T_idx in selected_T_indices:
+        try:
+            theta_used, path = find_matrix_file(float(Ts[T_idx]))
+            with open(path, "rb") as fp:
+                M, meta = pickle.load(fp)
+            
+            # Reconstruct arrays if needed
+            if "nx" not in meta or "px" not in meta:
+                nx, ny, half, px, py, P, eps, f, w = reconstruct_full_arrays(meta)
+                meta["nx"] = nx
+                meta["ny"] = ny
+                meta["half"] = half
+            
+            nx = np.asarray(meta["nx"], dtype=np.int32)
+            ny = np.asarray(meta["ny"], dtype=np.int32)
+            Nmax = int(meta["Nmax"])
+            half = int(meta.get("half", Nmax // 2))
+            dp = float(meta["dp"])
+            
+            grid_params[T_idx] = (nx, ny, half, Nmax, dp)
+        except Exception as e:
+            print(f"[Error] Could not load matrix for T={Ts[T_idx]:.6g}: {e}")
+            return
+    
+    # Create table layout: rows = m values, columns = selected temperatures
+    nrows = len(valid_ms)
+    ncols = len(selected_T_indices)
+    
+    fig, axes = plt.subplots(nrows, ncols, 
+                             figsize=(4.5 * ncols, 4.5 * nrows), 
+                             constrained_layout=True)
+    
+    # Handle case where there's only one row or one column
+    if nrows == 1:
+        axes = axes.reshape(1, -1)
+    elif ncols == 1:
+        axes = axes.reshape(-1, 1)
+    else:
+        axes = axes.reshape(nrows, ncols)
+    
+    # Compute global min/max across all eigenmodes for common colorbar
+    global_vmax_abs = 0.0
+    for row_idx, m in enumerate(valid_ms):
+        for col_idx, T_idx in enumerate(selected_T_indices):
+            v_full = eigenvectors[m][T_idx]
+            if v_full is not None:
+                nx_T, ny_T, half_T, Nmax_T, dp_T = grid_params[T_idx]
+                grid = values_to_grid(v_full, nx_T, ny_T, half_T, Nmax_T)
+                grid_valid = grid[~np.isnan(grid)]
+                if grid_valid.size > 0:
+                    vmax_abs = float(np.max(np.abs(grid_valid)))
+                    global_vmax_abs = max(global_vmax_abs, vmax_abs)
+    
+    if global_vmax_abs > 0:
+        global_vmin = -global_vmax_abs
+        global_vmax = global_vmax_abs
+    else:
+        global_vmin, global_vmax = -0.1, 0.1
+    
+    global_norm = TwoSlopeNorm(vmin=global_vmin, vcenter=0, vmax=global_vmax)
+    
+    # Plotting scale factor
+    PLOT_SCALE_FACTOR = 1.0
+    
+    im_common = None
+    
+    # Fill table: rows = m values, columns = selected temperatures
+    for row_idx, m in enumerate(valid_ms):
+        for col_idx, T_idx in enumerate(selected_T_indices):
+            ax = axes[row_idx, col_idx]
+            v_full = eigenvectors[m][T_idx]
+            
+            if v_full is not None:
+                # Use grid parameters for this specific temperature
+                nx_T, ny_T, half_T, Nmax_T, dp_T = grid_params[T_idx]
+                grid = values_to_grid(v_full, nx_T, ny_T, half_T, Nmax_T)
+                
+                # Create coordinates for this grid
+                X, Y = create_pcolormesh_coords(half_T, dp_T, Nmax_T)
+                
+                # Compute plot limits for this grid
+                pmin = (-half_T) * dp_T
+                pmax = (half_T - 1) * dp_T
+                pcenter = (pmin + pmax) / 2.0
+                prange = (pmax - pmin) / 2.0
+                pmin_plot = pcenter - prange * PLOT_SCALE_FACTOR
+                pmax_plot = pcenter + prange * PLOT_SCALE_FACTOR
+                
+                # Use pcolormesh for smoother ring visualization
+                im = ax.pcolormesh(X, Y, grid.T, cmap="seismic", norm=global_norm, 
+                                  shading='flat', rasterized=True)
+                im_common = im
+                
+                ax.set_xlim(pmin_plot, pmax_plot)
+                ax.set_ylim(pmin_plot, pmax_plot)
+                
+                # Title: show m value on left column, T on top row
+                if col_idx == 0:
+                    ax.set_ylabel(f"$m={m}$", fontsize=14, rotation=0, labelpad=20)
+                if row_idx == 0:
+                    ax.set_title(f"$T={selected_Ts[col_idx]:.4g}$", fontsize=14)
+                ax.set_xlabel("$p_x$")
+                if col_idx > 0:
+                    ax.set_ylabel("$p_y$")
+            else:
+                # No eigenvector available - turn off axis
+                ax.axis("off")
+    
+    if im_common is not None:
+        cbar = fig.colorbar(im_common, ax=axes, fraction=0.03, pad=0.02, aspect=30)
+        cbar.ax.tick_params(labelsize=10)
+    
+    out_png = "eigenfunctions_table.png"
+    out_svg = "eigenfunctions_table.svg"
+    fig.savefig(out_png, dpi=300)
+    fig.savefig(out_svg)
+    print(f"Saved: {out_png}")
+    print(f"Saved: {out_svg}")
 
 
 if __name__ == "__main__":
