@@ -90,6 +90,51 @@ MAX_COLUMNS_PER_M = 5        # maximum number of modes to show per m value (to a
 
 # Where your generator saved matrices
 IN_DIR = "Matrixes_bruteforce"
+
+# --- NEW: if you use AUTO_DP_FROM_ANCHOR in generate.py, mirror its dp schedule here ---
+USE_DP_AWARE_FILE_PICK = True
+# Piecewise anchors matching generator
+THETA_ANCHOR_LOW = 0.02
+DP_ANCHOR_LOW    = 0.03
+THETA_ANCHOR_HIGH = 0.3
+DP_ANCHOR_HIGH    = 0.085        # matches generator (targets ~20MB at Theta=0.3)
+THETA_CROSSOVER   = 0.1
+DP_RING_MAX  = 0.03
+PRIORITIZE_SIZE_OVER_RING = True
+PIXEL_RATIO_LOW = THETA_ANCHOR_LOW / (DP_ANCHOR_LOW * DP_ANCHOR_LOW)
+PIXEL_RATIO_HIGH = THETA_ANCHOR_HIGH / (DP_ANCHOR_HIGH * DP_ANCHOR_HIGH)
+
+def desired_dp(theta: float) -> float:
+    """Compute desired dp for a given theta based on the piecewise anchor-based schedule."""
+    theta_val = float(theta)
+    if theta_val < THETA_CROSSOVER:
+        pixel_ratio = PIXEL_RATIO_LOW
+        dp_T = math.sqrt(theta_val / pixel_ratio)
+        if DP_RING_MAX is not None and not PRIORITIZE_SIZE_OVER_RING:
+            dp_T = min(dp_T, float(DP_RING_MAX))
+    else:
+        pixel_ratio = PIXEL_RATIO_HIGH
+        dp_T = math.sqrt(theta_val / pixel_ratio)
+    return float(dp_T)
+
+def _parse_name(fn: str):
+    """
+    Parse filename like: M_Iee_N{Nmax}_dp{dp}_T{Theta}.pkl
+    Returns (T, dp, Nmax) or (None, None, None) if parse fails.
+    """
+    try:
+        # ..._N{Nmax}_dp{dp}_T{T}.pkl
+        parts = fn.split("_")
+        Npart = [p for p in parts if p.startswith("N")][0]
+        dppart = [p for p in parts if p.startswith("dp")][0]
+        Tpart = fn.split("_T", 1)[1].rsplit(".pkl", 1)[0]
+        Nmax = int(Npart[1:])
+        dp = float(dppart[2:])
+        T = float(Tpart)
+        return T, dp, Nmax
+    except Exception:
+        return None, None, None
+
 # ----------------------------------------------
 
 
@@ -495,6 +540,7 @@ def plot_f1mf():
 def find_matrix_file(theta: float):
     """
     Find the matrix file whose encoded T is closest to 'theta'.
+    If USE_DP_AWARE_FILE_PICK is True, also considers dp matching the auto-grid schedule.
     This avoids strict string matching issues with np.geomspace.
     """
     if not os.path.isdir(IN_DIR):
@@ -506,34 +552,87 @@ def find_matrix_file(theta: float):
         raise FileNotFoundError(f"No .pkl matrix files found in {IN_DIR}")
 
     Ts = []
+    dps = []
+    Ns = []
     paths = []
     for fn in files:
-        # extract substring between "_T" and ".pkl"
-        try:
-            tpart = fn.split("_T", 1)[1].rsplit(".pkl", 1)[0]
-            Tval = float(tpart)
-        except Exception:
+        Tval, dpv, Nv = _parse_name(fn)
+        if Tval is None:
             continue
-        Ts.append(Tval)
+        Ts.append(float(Tval))
+        dps.append(float(dpv))
+        Ns.append(int(Nv))
         paths.append(os.path.join(IN_DIR, fn))
 
     if not Ts:
         raise FileNotFoundError(f"Could not parse any temperatures from filenames in {IN_DIR}")
 
     Ts = np.array(Ts, dtype=float)
-    idx = int(np.argmin(np.abs(Ts - theta)))
-    chosen_T = Ts[idx]
-    chosen_path = paths[idx]
+    dps = np.array(dps, dtype=float)
+    Ns = np.array(Ns, dtype=int)
+    
+    # Primary: closest T
+    dT = np.abs(Ts - float(theta))
+    best_T = np.min(dT)
+    cand = np.where(dT == best_T)[0]
+    
+    if cand.size == 1 or (not USE_DP_AWARE_FILE_PICK):
+        idx = int(cand[0])
+        chosen_T = float(Ts[idx])
+        chosen_path = paths[idx]
+    else:
+        # Tie-break: closest dp to desired schedule
+        dp_des = desired_dp(float(theta))
+        idx = int(cand[np.argmin(np.abs(dps[cand] - dp_des))])
+        chosen_T = float(Ts[idx])
+        chosen_path = paths[idx]
 
-    print(f"[load] requested Theta={theta:.6g}, using nearest Theta={chosen_T:.6g}")
+    print(f"[load] requested Theta={theta:.6g}, using nearest Theta={chosen_T:.6g}, dp={dps[idx]:.6g}, Nmax={Ns[idx]}")
     return chosen_path
+
+
+def reconstruct_full_arrays(meta):
+    """
+    Reconstruct full-lattice arrays from minimal meta.
+    Needed because we no longer store nx, ny, px, py, P, eps, f in meta.
+    """
+    Nmax = int(meta["Nmax"])
+    dp   = float(meta["dp"])
+    Theta = float(meta["Theta"])
+    nx, ny, half = build_centered_lattice(Nmax)
+    px = dp * nx.astype(np.float64)
+    py = dp * ny.astype(np.float64)
+    P  = np.sqrt(px * px + py * py)
+    eps = P * P
+
+    invT = 1.0 / Theta
+    em = math.exp(-invT)
+    a  = 1.0 - em
+    x = np.clip((eps - 1.0) * invT, -700.0, 700.0)
+    f = a / (np.exp(x) + a)
+    w = f * (1.0 - f)
+    return nx, ny, half, px, py, P, eps, f, w
 
 
 def load_matrix(theta: float):
     path = find_matrix_file(theta)
-    path=r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_N100_dp0.027_T0.0508.pkl"
+    path=r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_N200_dp0.10973453_T0.5.pkl"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_N100_dp0.05_T0.05.pkl"
     with open(path, "rb") as fp:
         M, meta = pickle.load(fp)
+    
+    # Reconstruct full arrays if they're not in meta (new format)
+    if "nx" not in meta or "px" not in meta:
+        nx, ny, half, px, py, P, eps, f, w = reconstruct_full_arrays(meta)
+        # Add to meta for compatibility
+        meta["nx"] = nx
+        meta["ny"] = ny
+        meta["half"] = half
+        meta["px"] = px
+        meta["py"] = py
+        meta["P"] = P
+        meta["eps"] = eps
+        meta["f"] = f
+    
     return M, meta, path
 
 def _as_csr(X):
@@ -584,12 +683,16 @@ def compute_and_plot_eigenmodes(theta=None):
         Maa = _as_csr(M[np.ix_(active, active)])
 
     # Build generalized weight matrix W = diag(f(1-f)) on the active subspace
-    f_full = meta.get("f", None)
-    if f_full is None:
-        raise KeyError("meta['f'] not found. Regenerate matrices with f stored in meta.")
-
-    w = f_full[active] * (1.0 - f_full[active])
-    w = np.asarray(w, dtype=np.float64)
+    # Use w_active if available (new format), otherwise compute from f_full
+    if "w_active" in meta:
+        w = np.asarray(meta["w_active"], dtype=np.float64)
+    else:
+        f_full = meta.get("f", None)
+        if f_full is None:
+            raise KeyError("meta['f'] or meta['w_active'] not found. Regenerate matrices.")
+        w = f_full[active] * (1.0 - f_full[active])
+        w = np.asarray(w, dtype=np.float64)
+    
     w = np.clip(w, 0.0, None)
 
     # Avoid exact zeros in the generalized mass matrix (ARPACK dislikes singular M)
@@ -687,7 +790,11 @@ def compute_and_plot_eigenmodes(theta=None):
             vecs[:, i] = v / math.sqrt(norm2)
 
     # Embed candidates back into full lattice and classify by C4 + inversion + sign-switch count
-    w_full = np.asarray(meta["f"], dtype=np.float64) * (1.0 - np.asarray(meta["f"], dtype=np.float64))
+    # Reconstruct w_full from f (f should be in meta after load_matrix reconstruction)
+    f_full = np.asarray(meta.get("f"), dtype=np.float64)
+    if f_full is None or f_full.size == 0:
+        raise KeyError("meta['f'] not found. This should have been reconstructed in load_matrix().")
+    w_full = f_full * (1.0 - f_full)
     candidates = []
     for i in range(vecs.shape[1]):
         v_active = vecs[:, i].copy()

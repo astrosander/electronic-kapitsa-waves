@@ -53,19 +53,40 @@ if USE_NUMBA:
 
 
 # --------------------------- USER PARAMETERS ---------------------------
-# Resolution: Nmax controls grid size (Nmax x Nmax = Nmax^2 points)
-# Higher Nmax = finer resolution but longer computation time (scales ~O(N_active^3))
-# IMPORTANT: Memory requirement is ~(Nactive^2 * 8 bytes). 
-#   - Nmax=100, dp=0.08  -> ~10k active, ~0.8 GB
-#   - Nmax=300, dp=0.027 -> ~20k active, ~3.2 GB (good balance)
-#   - Nmax=500, dp=0.016 -> ~35k active, ~9.8 GB (high quality, needs 16GB+ RAM)
-#   - Nmax=1000, dp=0.008 -> ~50k active, ~18.5 GB (too large for most systems!)
-# IMPORTANT: To improve ring resolution, BOTH Nmax and dp must be adjusted:
-#   - Nmax=100, dp=0.08  -> range ~[-4, +4], spacing 0.08
-#   - Nmax=300, dp=0.027 -> range ~[-4, +4], spacing 0.027 (3x finer resolution!)
-# If you only increase Nmax without decreasing dp, the momentum range expands and rings appear smaller.
-Nmax = 300#300          # lattice is Nmax x Nmax -> N = Nmax^2 (3x better resolution, manageable memory)
-dp   = 0.01#27#0.08#0.027        # Δp (reduced proportionally: 0.08/3 ≈ 0.027 to keep similar range)
+# Base grid (used only if AUTO_GRID=False)
+Nmax = 100          # lattice is Nmax x Nmax -> N = Nmax^2
+dp   = 0.08         # Δp
+
+# --- NEW: target constant "ring pixels" via Theta/dp^2 constant ---
+AUTO_DP_FROM_ANCHOR = True
+# Piecewise anchors for different temperature ranges
+# Low-T anchor (0.01 < Theta < 0.1): targets ~20MB
+THETA_ANCHOR_LOW = 0.02
+DP_ANCHOR_LOW    = 0.03
+# High-T anchor (0.1 < Theta < 1): targets ~20MB
+# Use Theta=0.3 as anchor since it's in the middle of the range
+# Current: Theta=0.3, dp=0.116 gives 10.6MB (too small)
+# Target: ~20MB requires ~sqrt(20/10.6) ≈ 1.37x more Nactive
+# So dp should be ~0.116/1.37 ≈ 0.085 to get ~20MB
+THETA_ANCHOR_HIGH = 0.3
+DP_ANCHOR_HIGH    = 0.085        # adjusted to target ~20MB at Theta=0.3
+THETA_CROSSOVER   = 0.1          # switch between anchors at this temperature
+
+DP_RING_MAX  = 0.03         # preferred cap for ring detail (only applies to low-T)
+DP_FLOOR     = 1e-4         # safety
+# If True: allow dp to exceed DP_RING_MAX to keep file size constant
+# If False: enforce DP_RING_MAX strictly (prioritize ring detail over size)
+PRIORITIZE_SIZE_OVER_RING = True
+
+# Compute pixel ratios for both regions
+PIXEL_RATIO_LOW = THETA_ANCHOR_LOW / (DP_ANCHOR_LOW * DP_ANCHOR_LOW)
+PIXEL_RATIO_HIGH = THETA_ANCHOR_HIGH / (DP_ANCHOR_HIGH * DP_ANCHOR_HIGH)
+
+# Optional: choose Nmax so the momentum box isn't absurdly tiny at low T
+# pmax ~= (Nmax/2)*dp. 2.5 is usually safe for low T; use 4.0 if you want the same as your old runs.
+PBOX_MIN = 2.5
+NMAX_MIN = 200
+NMAX_MAX = 1200
 
 # --- NEW: grid shift (take half-integers instead of integers) ---
 # Physical momenta are p = dp * (n + shift), where n is integer lattice index.
@@ -91,7 +112,7 @@ HBAR = 1.0         # ħ (set 1 for dimensionless)
 # Thetas = [0.001]#[0.0508]
 # Thetas = [0.001]
 # Thetas = np.geomspace(0.001, 0.01, 5)
-Thetas=[0.003]
+Thetas=[0.5]
 # print(Thetas)
 # Thetas = np.geomspace(0.0025, 1.28, 30).astype(float).tolist()
 
@@ -148,6 +169,45 @@ def build_centered_lattice(Nmax: int):
     return nx, ny, half
 
 
+def even_ge(n: int) -> int:
+    """Small helper: make n even and >= 2."""
+    n = max(int(n), 2)
+    return n if (n % 2 == 0) else (n + 1)
+
+
+def choose_dp(theta: float) -> float:
+    """
+    Choose dp to keep Theta/dp^2 constant (constant ring pixels / Nactive).
+    Uses piecewise anchors: low-T (0.01-0.1) and high-T (0.1-1) regions.
+    If PRIORITIZE_SIZE_OVER_RING is True, allows dp to exceed DP_RING_MAX to maintain size.
+    """
+    theta_val = float(theta)
+    
+    # Choose anchor based on temperature range
+    if theta_val < THETA_CROSSOVER:
+        # Low-T region: use low-T anchor
+        pixel_ratio = PIXEL_RATIO_LOW
+        dp_T = math.sqrt(theta_val / pixel_ratio)
+        # Apply ring cap only if prioritizing ring detail over size
+        if DP_RING_MAX is not None and not PRIORITIZE_SIZE_OVER_RING:
+            dp_T = min(dp_T, float(DP_RING_MAX))
+    else:
+        # High-T region: use high-T anchor
+        pixel_ratio = PIXEL_RATIO_HIGH
+        dp_T = math.sqrt(theta_val / pixel_ratio)
+        # No ring cap for high-T (dp is already large)
+    
+    return max(dp_T, float(DP_FLOOR))
+
+
+def choose_Nmax(dp_T: float) -> int:
+    """Choose Nmax to ensure pmax >= PBOX_MIN."""
+    n = math.ceil(2.0 * float(PBOX_MIN) / max(dp_T, 1e-30))
+    n = max(n, int(NMAX_MIN))
+    n = min(n, int(NMAX_MAX))
+    return even_ge(n)
+
+
 def make_index_map(nx: np.ndarray, ny: np.ndarray, Nmax: int, half: int) -> np.ndarray:
     idx_map = -np.ones((Nmax, Nmax), dtype=np.int32)
     for i in range(nx.size):
@@ -155,14 +215,26 @@ def make_index_map(nx: np.ndarray, ny: np.ndarray, Nmax: int, half: int) -> np.n
     return idx_map
 
 
-def precompute(nx, ny, dp: float, Theta: float, shift_x: float, shift_y: float):
-    # NOTE: indices nx,ny remain integers for exact momentum conservation via idx_map,
-    # but physical momenta are shifted.
+def precompute(nx, ny, dp: float, Theta: float, shift_x: float = 0.0, shift_y: float = 0.0):
+    """
+    Vectorized precompute for huge speedup when Nmax grows.
+    NOTE: indices nx,ny remain integers for exact momentum conservation via idx_map,
+    but physical momenta are shifted.
+    """
     px = dp * (nx.astype(np.float64) + shift_x)
     py = dp * (ny.astype(np.float64) + shift_y)
     P  = np.sqrt(px * px + py * py)
     eps = P * P  # constant shift cancels in Δε anyway
-    f = np.array([f_scalar(float(Pi), float(Theta)) for Pi in P], dtype=np.float64)
+    
+    # Vectorized f computation
+    invT = 1.0 / float(Theta)
+    em = math.exp(-invT)
+    a = 1.0 - em
+    x = (eps - 1.0) * invT
+    x = np.clip(x, -700.0, 700.0)
+    ex = np.exp(x)
+    f = a / (ex + a)
+    
     return px, py, P, eps, f
 
 
@@ -253,20 +325,21 @@ if USE_NUMBA:
                     Ma[a1, a2]  -= W
 
 
-def build_matrix_for_theta(Theta: float):
-    nx, ny, half = build_centered_lattice(Nmax)
-    idx_map = make_index_map(nx, ny, Nmax, half)
-    px, py, P, eps, f = precompute(nx, ny, dp, Theta, float(SHIFT_X), float(SHIFT_Y))
+def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
+    nx, ny, half = build_centered_lattice(Nmax_T)
+    idx_map = make_index_map(nx, ny, Nmax_T, half)
+    px, py, P, eps, f = precompute(nx, ny, dp_T, Theta, float(SHIFT_X), float(SHIFT_Y))
 
     # Temperature-following active shell
     active = active_indices(f, eps, Theta, ACTIVE_CUTOFF)
     Nstates = nx.size
     Nactive = int(active.size)
-    print(f"Theta={Theta:.6g}  Nstates={Nstates}  Nactive={Nactive}  USE_NUMBA={USE_NUMBA}  ACTIVE_ONLY={BUILD_ACTIVE_ONLY}")
+    print(f"Theta={Theta:.6g}  Nmax={Nmax_T}  dp={dp_T:.6g}  "
+          f"Nstates={Nstates}  Nactive={Nactive}  USE_NUMBA={USE_NUMBA}  ACTIVE_ONLY={BUILD_ACTIVE_ONLY}")
 
     # Resolution warning (this is *the* main reason your curves don't scale at very low T on a Cartesian grid)
-    if (dp * dp) > (0.5 * Theta):
-        print(f"WARNING: dp^2={dp*dp:.3e} is not << Theta={Theta:.3e}. "
+    if (dp_T * dp_T) > (0.5 * Theta):
+        print(f"WARNING: dp^2={dp_T*dp_T:.3e} is not << Theta={Theta:.3e}. "
               f"Low-T scaling will saturate/fail. Consider dp<=sqrt(Theta_min)/3.")
 
     # map global index -> active subspace index (or -1 if inactive)
@@ -289,10 +362,10 @@ def build_matrix_for_theta(Theta: float):
             assemble_rows_numba_active(
                 Ma, nx, ny, idx_map, half, eps, f,
                 active, pos,
-                float(dp), float(lam_eff), float(pref), float(dimless_scale)
+                float(dp_T), float(lam_eff), float(pref), float(dimless_scale)
             )
         else:
-            dp4 = dp ** 4
+            dp4 = dp_T ** 4
             for a1, i1 in enumerate(active):
                 n1x, n1y = int(nx[i1]), int(ny[i1])
                 e1, f1 = float(eps[i1]), float(f[i1])
@@ -340,11 +413,13 @@ def build_matrix_for_theta(Theta: float):
         else:
             raise RuntimeError("Full-matrix mode disabled. Set BUILD_ACTIVE_ONLY=True.")
 
+    # Store only minimal meta to keep .pkl sizes sane
+    w_full = f * (1.0 - f)
     meta = {
         "Theta": float(Theta),
-        "Nmax": int(Nmax),
+        "Nmax": int(Nmax_T),
         "half": int(half),
-        "dp": float(dp),
+        "dp": float(dp_T),
         "lambda": float(lam_eff),
         "V2": float(V2),
         "hbar": float(HBAR),
@@ -353,14 +428,13 @@ def build_matrix_for_theta(Theta: float):
         "active_only": bool(BUILD_ACTIVE_ONLY),
         "shift_x": float(SHIFT_X),
         "shift_y": float(SHIFT_Y),
-        "nx": nx, "ny": ny,
-        "px": px, "py": py,
-        "P": P, "eps": eps, "f": f,
-        "active": active,
+        # Store only what eigen solver needs (active-only arrays):
+        "active": active.astype(np.int32),
+        "w_active": w_full[active].astype(np.float64),
     }
 
     os.makedirs(OUT_DIR, exist_ok=True)
-    fname = os.path.join(OUT_DIR, f"M_Iee_N{Nmax}_dp{dp:g}_T{Theta:.10g}.pkl")
+    fname = os.path.join(OUT_DIR, f"M_Iee_N{Nmax_T}_dp{dp_T:.8g}_T{Theta:.10g}.pkl")
     with open(fname, "wb") as fp:
         pickle.dump((M_to_save, meta), fp, protocol=pickle.HIGHEST_PROTOCOL)
     print(f"Saved: {fname}")
@@ -369,8 +443,28 @@ def build_matrix_for_theta(Theta: float):
 def main():
     if not USE_NUMBA:
         print("WARNING: numba not found. This will be very slow. Install numba for practical runtimes.")
+    if AUTO_DP_FROM_ANCHOR:
+        print(f"[AUTO_GRID] Low-T anchor (Theta<{THETA_CROSSOVER}): Theta={THETA_ANCHOR_LOW}, dp={DP_ANCHOR_LOW}, PIXEL_RATIO={PIXEL_RATIO_LOW:.6f}")
+        print(f"[AUTO_GRID] High-T anchor (Theta>={THETA_CROSSOVER}): Theta={THETA_ANCHOR_HIGH}, dp={DP_ANCHOR_HIGH}, PIXEL_RATIO={PIXEL_RATIO_HIGH:.6f}")
+        print(f"[AUTO_GRID] PRIORITIZE_SIZE_OVER_RING={PRIORITIZE_SIZE_OVER_RING} (allows dp>{DP_RING_MAX} to keep size constant)")
     for T in Thetas:
-        build_matrix_for_theta(float(T))
+        Theta = float(T)
+        if AUTO_DP_FROM_ANCHOR:
+            dp_T = choose_dp(Theta)
+            Nmax_T = choose_Nmax(dp_T)
+            # Determine which anchor was used
+            if Theta < THETA_CROSSOVER:
+                pixel_ratio = PIXEL_RATIO_LOW
+                anchor_info = f"low-T anchor"
+            else:
+                pixel_ratio = PIXEL_RATIO_HIGH
+                anchor_info = f"high-T anchor"
+            print(f"[AUTO_GRID] Theta={Theta:.6g} -> dp={dp_T:.8g}, Nmax={Nmax_T} ({anchor_info}) "
+                  f"(Theta/dp^2={Theta/(dp_T*dp_T):.3f}, target={pixel_ratio:.3f})")
+        else:
+            dp_T = float(dp)
+            Nmax_T = int(Nmax)
+        build_matrix_for_theta(Theta, Nmax_T, dp_T)
 
 
 if __name__ == "__main__":
