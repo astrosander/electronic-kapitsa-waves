@@ -53,8 +53,26 @@ if USE_NUMBA:
 
 
 # --------------------------- USER PARAMETERS ---------------------------
-Nmax = 100          # lattice is Nmax x Nmax -> N = Nmax^2
-dp   = 0.08         # Δp
+# Resolution: Nmax controls grid size (Nmax x Nmax = Nmax^2 points)
+# Higher Nmax = finer resolution but longer computation time (scales ~O(N_active^3))
+# IMPORTANT: Memory requirement is ~(Nactive^2 * 8 bytes). 
+#   - Nmax=100, dp=0.08  -> ~10k active, ~0.8 GB
+#   - Nmax=300, dp=0.027 -> ~20k active, ~3.2 GB (good balance)
+#   - Nmax=500, dp=0.016 -> ~35k active, ~9.8 GB (high quality, needs 16GB+ RAM)
+#   - Nmax=1000, dp=0.008 -> ~50k active, ~18.5 GB (too large for most systems!)
+# IMPORTANT: To improve ring resolution, BOTH Nmax and dp must be adjusted:
+#   - Nmax=100, dp=0.08  -> range ~[-4, +4], spacing 0.08
+#   - Nmax=300, dp=0.027 -> range ~[-4, +4], spacing 0.027 (3x finer resolution!)
+# If you only increase Nmax without decreasing dp, the momentum range expands and rings appear smaller.
+Nmax = 300#300          # lattice is Nmax x Nmax -> N = Nmax^2 (3x better resolution, manageable memory)
+dp   = 0.01#27#0.08#0.027        # Δp (reduced proportionally: 0.08/3 ≈ 0.027 to keep similar range)
+
+# --- NEW: grid shift (take half-integers instead of integers) ---
+# Physical momenta are p = dp * (n + shift), where n is integer lattice index.
+# Use 0.5 for half-integer grid, 1/3 for third-integer grid, etc.
+# "top/left" in array sense often means negative shift; choose sign as you want.
+SHIFT_X = 0.0        # e.g. 0.5 or (1.0/3.0) or -0.5
+SHIFT_Y = 0.0        # e.g. 0.5 or (1.0/3.0) or -0.5
 
 # IMPORTANT:
 # For low-T scaling you must resolve the thermal shell: need dp^2 << Theta_min.
@@ -62,14 +80,20 @@ dp   = 0.08         # Δp
 # dp=0.08 => dp^2=6.4e-3 > Theta_min, which produces a T->0 "floor".
 
 # Energy delta broadening (Lorentzian) --- MUST scale with temperature to avoid T->0 floor
-LAMBDA_REL = 0.25    # sets lambda_eff = LAMBDA_REL * Theta
+LAMBDA_REL = 0.1    # sets lambda_eff = LAMBDA_REL * Theta
 LAMBDA_MIN = 1e-12
 
 V2   = 1.0         # |V|^2
 HBAR = 1.0         # ħ (set 1 for dimensionless)
 
 # temperatures (T/T_F). Adjust as you like:
-Thetas = np.geomspace(0.0025, 1.28, 30).astype(float).tolist()
+# TEST: Generate only for Theta = 0.0508
+# Thetas = [0.001]#[0.0508]
+# Thetas = [0.001]
+# Thetas = np.geomspace(0.001, 0.01, 5)
+Thetas=[0.003]
+# print(Thetas)
+# Thetas = np.geomspace(0.0025, 1.28, 30).astype(float).tolist()
 
 # active-shell cutoff: only include states where f(1-f) > cutoff
 ACTIVE_CUTOFF = 1e-8
@@ -131,9 +155,11 @@ def make_index_map(nx: np.ndarray, ny: np.ndarray, Nmax: int, half: int) -> np.n
     return idx_map
 
 
-def precompute(nx, ny, dp: float, Theta: float):
-    px = dp * nx.astype(np.float64)
-    py = dp * ny.astype(np.float64)
+def precompute(nx, ny, dp: float, Theta: float, shift_x: float, shift_y: float):
+    # NOTE: indices nx,ny remain integers for exact momentum conservation via idx_map,
+    # but physical momenta are shifted.
+    px = dp * (nx.astype(np.float64) + shift_x)
+    py = dp * (ny.astype(np.float64) + shift_y)
     P  = np.sqrt(px * px + py * py)
     eps = P * P  # constant shift cancels in Δε anyway
     f = np.array([f_scalar(float(Pi), float(Theta)) for Pi in P], dtype=np.float64)
@@ -230,7 +256,7 @@ if USE_NUMBA:
 def build_matrix_for_theta(Theta: float):
     nx, ny, half = build_centered_lattice(Nmax)
     idx_map = make_index_map(nx, ny, Nmax, half)
-    px, py, P, eps, f = precompute(nx, ny, dp, Theta)
+    px, py, P, eps, f = precompute(nx, ny, dp, Theta, float(SHIFT_X), float(SHIFT_Y))
 
     # Temperature-following active shell
     active = active_indices(f, eps, Theta, ACTIVE_CUTOFF)
@@ -325,6 +351,8 @@ def build_matrix_for_theta(Theta: float):
         "include_dimless_pref": bool(INCLUDE_DIMLESS_PREF),
         "active_cutoff": float(ACTIVE_CUTOFF),
         "active_only": bool(BUILD_ACTIVE_ONLY),
+        "shift_x": float(SHIFT_X),
+        "shift_y": float(SHIFT_Y),
         "nx": nx, "ny": ny,
         "px": px, "py": py,
         "P": P, "eps": eps, "f": f,
