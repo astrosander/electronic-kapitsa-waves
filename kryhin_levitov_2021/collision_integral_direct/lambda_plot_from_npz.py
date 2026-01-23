@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Plot generalized decay rates gamma_m(T) from saved NPZ data.
+Plot generalized decay rates gamma_m(T) from saved CSV data.
 
-This script loads the NPZ file created by lambda_plot.py and reproduces
+This script loads the CSV file created by lambda_plot.py and reproduces
 the plot exactly, allowing for complete reproducibility without recomputing
 the eigenvalues.
 """
 
 import numpy as np
+import csv
 from matplotlib import pyplot as plt
 import argparse
 import os
@@ -16,45 +17,83 @@ import os
 plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
-plt.rcParams['font.size'] = 20
-plt.rcParams['axes.labelsize'] = 20
-plt.rcParams['axes.titlesize'] = 20
-plt.rcParams['xtick.labelsize'] = 20
-plt.rcParams['ytick.labelsize'] = 20
-plt.rcParams['legend.fontsize'] = 20
-plt.rcParams['figure.titlesize'] = 20
+plt.rcParams['font.size'] = 16
+plt.rcParams['axes.labelsize'] = 16
+plt.rcParams['axes.titlesize'] = 16
+plt.rcParams['xtick.labelsize'] = 16
+plt.rcParams['ytick.labelsize'] = 16
+plt.rcParams['legend.fontsize'] = 16
+plt.rcParams['figure.titlesize'] = 16
 
 # Default input/output filenames
-DEFAULT_IN_NPZ = "Eigenvals_bruteforce_generalized.npz"
-DEFAULT_OUT_PNG = "Eigenvals_bruteforce_generalized_from_npz.png"
-DEFAULT_OUT_SVG = "Eigenvals_bruteforce_generalized_from_npz.svg"
+DEFAULT_IN_CSV = "Eigenvals_bruteforce_generalized.csv"
+DEFAULT_OUT_PNG = "Eigenvals_bruteforce_generalized_from_csv.png"
+DEFAULT_OUT_SVG = "Eigenvals_bruteforce_generalized_from_csv.svg"
 
 
-def load_data(npz_path: str):
+def load_data(csv_path: str):
     """
-    Load data from NPZ file.
-    Returns (T, modes, gammas_dict) where gammas_dict[m] = array of gamma_m values.
+    Load data from CSV file.
+    Returns (T, modes, gammas_dict, T_requested) where gammas_dict[m] = array of gamma_m values.
     """
-    if not os.path.isfile(npz_path):
-        raise FileNotFoundError(f"NPZ file not found: {npz_path}")
+    if not os.path.isfile(csv_path):
+        raise FileNotFoundError(f"CSV file not found: {csv_path}")
 
-    data = np.load(npz_path)
-    
-    T = data["T"]
-    modes = data["modes"]
-    
-    # Extract gamma_m for each mode
+    T = []
+    T_requested = []
     gammas = {}
-    for m in modes:
-        key = f"gamma_{m}"
-        if key in data:
-            gammas[int(m)] = data[key]
-        else:
-            print(f"Warning: {key} not found in NPZ file")
-            gammas[int(m)] = np.full_like(T, np.nan)
+    modes_set = set()
     
-    # Optional: also load T_requested if available
-    T_requested = data.get("T_requested", None)
+    with open(csv_path, 'r', newline='') as csvfile:
+        reader = csv.DictReader(csvfile)
+        
+        # Determine which modes are present from headers
+        fieldnames = reader.fieldnames
+        if fieldnames is None:
+            raise ValueError("CSV file has no headers")
+        
+        for field in fieldnames:
+            if field.startswith('gamma_'):
+                try:
+                    m = int(field.split('_')[1])
+                    modes_set.add(m)
+                    gammas[m] = []
+                except (ValueError, IndexError):
+                    pass
+        
+        # Read data rows
+        for row in reader:
+            # Read T
+            if 'T' in row and row['T'].strip():
+                T.append(float(row['T']))
+            else:
+                continue
+            
+            # Read T_requested if available
+            if 'T_requested' in row and row['T_requested'].strip():
+                T_requested.append(float(row['T_requested']))
+            else:
+                T_requested.append(T[-1])  # Use T as fallback
+            
+            # Read gammas for each mode
+            for m in modes_set:
+                gamma_key = f'gamma_{m}'
+                if gamma_key in row and row[gamma_key].strip():
+                    try:
+                        gammas[m].append(float(row[gamma_key]))
+                    except (ValueError, TypeError):
+                        gammas[m].append(np.nan)
+                else:
+                    gammas[m].append(np.nan)
+    
+    # Convert to numpy arrays
+    T = np.array(T, dtype=np.float64)
+    T_requested = np.array(T_requested, dtype=np.float64) if T_requested else None
+    modes = np.array(sorted(modes_set), dtype=np.int32)
+    
+    # Convert gammas to numpy arrays
+    for m in gammas:
+        gammas[m] = np.array(gammas[m], dtype=np.float64)
     
     return T, modes, gammas, T_requested
 
@@ -194,13 +233,13 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Plot decay rates gamma_m(T) from NPZ data file"
+        description="Plot decay rates gamma_m(T) from CSV data file"
     )
     parser.add_argument(
         "--input", "-i",
         type=str,
-        default=DEFAULT_IN_NPZ,
-        help=f"Input NPZ file (default: {DEFAULT_IN_NPZ})"
+        default=DEFAULT_IN_CSV,
+        help=f"Input CSV file (default: {DEFAULT_IN_CSV})"
     )
     parser.add_argument(
         "--output-png", "-o",
@@ -220,11 +259,11 @@ def main():
     # Auto-generate output names if not provided
     if args.output_png is None:
         base = os.path.splitext(args.input)[0]
-        args.output_png = f"{base}_from_npz.png"
+        args.output_png = f"{base}_from_csv.png"
     
     if args.output_svg is None:
         base = os.path.splitext(args.input)[0]
-        args.output_svg = f"{base}_from_npz.svg"
+        args.output_svg = f"{base}_from_csv.svg"
     
     print(f"Loading data from: {args.input}")
     T, modes, gammas, T_requested = load_data(args.input)

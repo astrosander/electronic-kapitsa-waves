@@ -17,6 +17,7 @@ Outputs:
 
 import os
 import pickle
+import csv
 import numpy as np
 from matplotlib import pyplot as plt
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -64,7 +65,12 @@ ms = list(range(9))  # m = 0..12
 
 OUT_PNG = "Eigenvals_bruteforce_generalized.png"
 OUT_SVG = "Eigenvals_bruteforce_generalized.svg"
-OUT_NPZ = "Eigenvals_bruteforce_generalized.npz"
+OUT_CSV = "Eigenvals_bruteforce_generalized.csv"
+OUT_EIGENVECTORS_NPZ = "Eigenvectors_bruteforce_generalized.npz"  # For storing eigenvectors
+
+# Batch processing to avoid memory issues
+BATCH_SIZE = 5  # Process this many temperatures at a time
+MAX_PARALLEL_FILES = 3  # Maximum number of files to process in parallel (reduced to save memory)
 
 # --- NEW: eigenmode selection knobs (same spirit as your diagnostics code) ---
 N_EIG_CANDIDATES = 120#120   # compute this many eigenpairs near sigma~0 (reduced to avoid memory issues)
@@ -729,109 +735,340 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms, the
     return out
 
 
+def save_csv_incremental(Ts_new, Ts_req_new, gammas_new, existing_Ts, existing_Ts_requested, existing_gammas, ms):
+    """
+    Save CSV incrementally by merging new results with existing ones.
+    This function is called after each batch to save progress.
+    """
+    # Combine all temperatures
+    all_Ts_combined = list(existing_Ts) + list(Ts_new)
+    all_Ts_req_combined = list(existing_Ts_requested if len(existing_Ts_requested) == len(existing_Ts) else existing_Ts) + list(Ts_req_new)
+    all_gammas_combined = {m: list(existing_gammas[m]) + list(gammas_new[m]) for m in ms}
+    
+    # Create sorted unique list
+    unique_Ts = sorted(set(float(T) for T in all_Ts_combined), key=lambda x: float(x))
+    T_to_index = {float(T): i for i, T in enumerate(unique_Ts)}
+    
+    # Build combined data
+    combined_gammas = {m: [np.nan] * len(unique_Ts) for m in ms}
+    combined_Ts_req = [None] * len(unique_Ts)
+    
+    # Fill existing data
+    for i, T_existing in enumerate(existing_Ts):
+        T_float = float(T_existing)
+        idx = T_to_index.get(T_float)
+        if idx is not None:
+            for m in ms:
+                if i < len(existing_gammas[m]):
+                    combined_gammas[m][idx] = existing_gammas[m][i]
+            if i < len(existing_Ts_requested):
+                combined_Ts_req[idx] = existing_Ts_requested[i]
+            else:
+                combined_Ts_req[idx] = T_existing
+    
+    # Fill new data
+    for i, T_new in enumerate(Ts_new):
+        T_float = float(T_new)
+        idx = T_to_index.get(T_float)
+        if idx is not None:
+            for m in ms:
+                if i < len(gammas_new[m]):
+                    combined_gammas[m][idx] = gammas_new[m][i]
+            if i < len(Ts_req_new):
+                combined_Ts_req[idx] = Ts_req_new[i]
+            else:
+                combined_Ts_req[idx] = T_new
+    
+    # Write CSV
+    with open(OUT_CSV, 'w', newline='') as csvfile:
+        fieldnames = ['T', 'T_requested'] + [f'gamma_{m}' for m in ms]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for i, T in enumerate(unique_Ts):
+            row = {
+                'T': f'{T:.10g}',
+                'T_requested': f'{combined_Ts_req[i]:.10g}' if combined_Ts_req[i] is not None else f'{T:.10g}'
+            }
+            for m in ms:
+                gm = combined_gammas[m][i]
+                if np.isfinite(gm):
+                    row[f'gamma_{m}'] = f'{gm:.10e}'
+                else:
+                    row[f'gamma_{m}'] = ''
+            writer.writerow(row)
+
+
 def main():
     gammas = {m: [] for m in ms}
     eigenvectors = {m: [] for m in ms}  # Store eigenvectors for plotting
     Ts_used = []     # actual loaded temperatures
     Ts_req_used = [] # requested temperatures (for reference)
 
-    print("=== Computing eigenvalues gamma_m(T) by eigenmode classification (m=0..12) ===")
+    # Load existing results if available
+    existing_Ts = []
+    existing_Ts_requested = []  # Also track T_requested for matching
+    existing_gammas = {m: [] for m in ms}
+    existing_eigenvectors = {m: [] for m in ms}
     
-    # Pre-load all files to get sizes and sort by matrix size (largest first)
-    print("[Pre-scan] Loading files to determine processing order...")
-    file_tasks = []
-    seen_paths = {}  # path -> (theta_used, M, meta, size, Treq_list)
-    
-    for Treq in Thetas_req:
+    if os.path.exists(OUT_CSV):
+        print(f"[Loading] Found existing results in {OUT_CSV}")
         try:
-            theta_used, path = find_matrix_file(float(Treq))
-            # Check if we've already loaded this file
-            if path not in seen_paths:
-                # Load once and get size
-                M, meta, size = load_matrix_with_size(path)
-                seen_paths[path] = (theta_used, M, meta, size, [Treq])
-            else:
-                # File already loaded, just add this Treq to the list
-                seen_paths[path][4].append(Treq)
+            with open(OUT_CSV, 'r', newline='') as csvfile:
+                reader = csv.DictReader(csvfile)
+                for row in reader:
+                    T_val = float(row.get('T', 0))
+                    T_req_val = float(row.get('T_requested', T_val))  # Use T as fallback if T_requested missing
+                    existing_Ts.append(T_val)
+                    existing_Ts_requested.append(T_req_val)
+                    # Load gammas for each mode (one value per temperature)
+                    for m in ms:
+                        gamma_key = f'gamma_{m}'
+                        if gamma_key in row and row[gamma_key].strip():
+                            try:
+                                gamma_val = float(row[gamma_key])
+                                existing_gammas[m].append(gamma_val)
+                            except (ValueError, TypeError):
+                                existing_gammas[m].append(np.nan)
+                        else:
+                            existing_gammas[m].append(np.nan)
+                # Note: eigenvectors are not saved in CSV (too large), so we'll recompute them for plotting
+            print(f"[Loading] Found {len(existing_Ts)} existing temperatures: {existing_Ts}")
         except Exception as e:
-            print(f"[Warning] Could not load Theta={Treq:.6g}: {e}")
+            print(f"[Warning] Could not load existing results: {e}")
+            import traceback
+            traceback.print_exc()
+            existing_Ts = []
+            existing_Ts_requested = []
+            existing_gammas = {m: [] for m in ms}
     
-    # Convert to list of tasks, one per unique file
-    for path, (theta_used, M, meta, size, Treq_list) in seen_paths.items():
-        # Use the first Treq as representative, but keep all for tracking
-        file_tasks.append((Treq_list[0], theta_used, path, M, meta, size, Treq_list))
+    # Scan all .pkl files in the folder to get all available temperatures
+    print(f"[Scanning] Looking for all .pkl files in {IN_DIR}...")
+    all_files = []
+    if os.path.isdir(IN_DIR):
+        files = [fn for fn in os.listdir(IN_DIR) if fn.endswith(".pkl") and "_T" in fn]
+        for fn in files:
+            try:
+                tpart = fn.split("_T", 1)[1].rsplit(".pkl", 1)[0]
+                Tval = float(tpart)
+                all_files.append((Tval, os.path.join(IN_DIR, fn)))
+            except Exception as e:
+                print(f"[Warning] Could not parse temperature from {fn}: {e}")
+                continue
     
-    # Sort by size (largest first), then by temperature for stability
-    file_tasks.sort(key=lambda x: (-x[5], x[0]))
+    if len(all_files) == 0:
+        print(f"[Error] No .pkl files found in {IN_DIR}")
+        return
     
-    valid_files = [t for t in file_tasks if t[5] > 0]
-    print(f"[Pre-scan] Processing {len(valid_files)} unique files (from {len(Thetas_req)} requests), "
-          f"size range: {min([t[5] for t in valid_files]) or 0} - "
-          f"{max([t[5] for t in valid_files]) or 0}")
-
-    # Process files in parallel (starting with largest matrices)
-    def process_single_file(task):
-        """Process a single file and return results for all requested temperatures."""
-        # Task structure: (Treq_first, theta_used, path, M, meta, size, Treq_list)
-        Treq_first, theta_used, path, M, meta, size, Treq_list = task
-        if M is None or meta is None:
-            return None
-            
-        Ma, active = get_active_operator(M, meta)
-        print(f"[process] Theta={theta_used:.6g}  |  {os.path.basename(path)}  |  shape={Ma.shape}")
+    # Sort by temperature
+    all_files.sort(key=lambda x: x[0])
+    all_Ts_from_files = [T for T, _ in all_files]
+    print(f"[Scanning] Found {len(all_files)} .pkl files with temperatures: {len(all_Ts_from_files)} unique")
+    
+    # Filter to only include temperatures not already computed
+    # Use relative tolerance for floating point comparison (more robust)
+    # Check against both T and T_requested columns
+    Thetas_to_process = []
+    for T_file, path in all_files:
+        T_file_float = float(T_file)
+        # Check if this temperature is already computed
+        is_computed = False
+        matched_T = None
+        matched_type = None
+        for i, T_existing in enumerate(existing_Ts):
+            T_existing_float = float(T_existing)
+            T_req_existing_float = float(existing_Ts_requested[i]) if i < len(existing_Ts_requested) else T_existing_float
+            # Check against both T and T_requested
+            # Use more lenient tolerance: 1% relative or 1e-3 absolute, whichever is larger
+            rel_tol = 0.01 * max(abs(T_file_float), abs(T_existing_float))
+            tol = max(1e-3, rel_tol)  # At least 0.001 absolute tolerance
+            if abs(T_file_float - T_existing_float) < tol:
+                is_computed = True
+                matched_T = T_existing_float
+                matched_type = "T"
+                break
+            # Also check against T_requested with same tolerance
+            rel_tol_req = 0.01 * max(abs(T_file_float), abs(T_req_existing_float))
+            tol_req = max(1e-3, rel_tol_req)
+            if abs(T_file_float - T_req_existing_float) < tol_req:
+                is_computed = True
+                matched_T = T_req_existing_float
+                matched_type = "T_requested"
+                break
         
-        # Process once and reuse for all requested temperatures
-        sel = select_physical_eigs_per_m(Ma, meta, active, ms, theta_val=theta_used)
-        
-        # Return results for all requested temperatures (they all map to same file)
-        results = []
-        for Treq in Treq_list:
-            results.append((theta_used, Treq, sel))
-        return results
+        if not is_computed:
+            Thetas_to_process.append((T_file, path))
+        else:
+            print(f"[Skip] Theta={T_file:.6g} already computed (matches {matched_type}={matched_T:.6g}), skipping...")
     
-    # Parallel processing of files using threading
-    # (numba releases GIL, so threading is efficient)
-    processed_results = []
-    if len(valid_files) > 1 and N_WORKERS > 1:
-        with ThreadPoolExecutor(max_workers=N_WORKERS) as executor:
-            futures = {executor.submit(process_single_file, task): task for task in file_tasks if task[5] > 0}
-            
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                    if result is not None:
-                        processed_results.extend(result)
-                except Exception as e:
-                    task = futures[future]
-                    print(f"[Error] Processing file {task[2]}: {e}")
+    # Summary of what will be processed
+    n_skipped = len(all_files) - len(Thetas_to_process)
+    if n_skipped > 0:
+        print(f"[Summary] Skipped {n_skipped} already-computed temperatures, {len(Thetas_to_process)} new temperatures to process")
+    
+    if len(Thetas_to_process) == 0:
+        print(f"[Info] All {len(all_files)} temperatures from folder are already computed in CSV. Skipping computation, using existing data for plotting...")
+        # Use existing data (no new computation needed)
+        Ts_used = []
+        Ts_req_used = []
+        gammas = {m: [] for m in ms}
+        eigenvectors = {m: [] for m in ms}  # Will be empty for existing data (eigenvectors not saved in CSV)
     else:
-        # Sequential processing
-        for task in file_tasks:
-            if task[5] > 0:
-                result = process_single_file(task)
+        print(f"=== Computing eigenvalues gamma_m(T) for {len(Thetas_to_process)} new temperatures ===")
+        print(f"[Batch processing] Processing in batches of {BATCH_SIZE} files to avoid memory issues...")
+        
+        # Process files in batches to avoid memory issues
+        # First, collect file info without loading matrices
+        file_info = []  # (T_file, path, size)
+        for T_file, path in Thetas_to_process:
+            try:
+                # Just get file size without loading matrix
+                file_size = os.path.getsize(path)
+                # Estimate matrix size from file (rough estimate)
+                # For now, we'll load it in batches, but try to avoid loading all at once
+                file_info.append((T_file, path, file_size))
+            except Exception as e:
+                print(f"[Warning] Could not get info for file {path}: {e}")
+        
+        # Sort by file size (largest first) to process big files first
+        file_info.sort(key=lambda x: -x[2])
+        
+        # Process in batches
+        Ts_used = []
+        Ts_req_used = []
+        gammas = {m: [] for m in ms}
+        
+        # Load existing eigenvectors from NPZ if available
+        existing_eigenvectors_npz = {}
+        if os.path.exists(OUT_EIGENVECTORS_NPZ):
+            try:
+                print(f"[Loading] Found existing eigenvectors in {OUT_EIGENVECTORS_NPZ}")
+                data = np.load(OUT_EIGENVECTORS_NPZ, allow_pickle=True)
+                for m in ms:
+                    key = f'eigenvectors_m{m}'
+                    if key in data:
+                        existing_eigenvectors_npz[m] = data[key].item()  # .item() to convert numpy array to dict
+                print(f"[Loading] Loaded eigenvectors for {len(existing_eigenvectors_npz.get(ms[0], {}))} temperatures")
+            except Exception as e:
+                print(f"[Warning] Could not load existing eigenvectors: {e}")
+        
+        def process_single_file_batch(T_file, path):
+            """Process a single file and return results."""
+            try:
+                # Load file
+                with open(path, "rb") as fp:
+                    M, meta = pickle.load(fp)
+                
+                Ma, active = get_active_operator(M, meta)
+                print(f"[process] Theta={T_file:.6g}  |  {os.path.basename(path)}  |  shape={Ma.shape}")
+                
+                # Process
+                sel = select_physical_eigs_per_m(Ma, meta, active, ms, theta_val=float(T_file))
+                
+                # Extract results
+                result_gammas = {}
+                result_eigenvectors = {}
+                for m in ms:
+                    gamma, v_full = sel[m]
+                    result_gammas[m] = gamma
+                    result_eigenvectors[m] = v_full if not np.isnan(gamma) else None
+                
+                # Clean up memory
+                del M, meta, Ma, active, sel
+                
+                return (float(T_file), float(T_file), result_gammas, result_eigenvectors)
+            except Exception as e:
+                print(f"[Error] Processing file {path}: {e}")
+                import traceback
+                traceback.print_exc()
+                return None
+        
+        # Process in batches
+        num_batches = (len(file_info) + BATCH_SIZE - 1) // BATCH_SIZE
+        for batch_idx in range(num_batches):
+            start_idx = batch_idx * BATCH_SIZE
+            end_idx = min(start_idx + BATCH_SIZE, len(file_info))
+            batch_files = file_info[start_idx:end_idx]
+            
+            print(f"\n[Batch {batch_idx + 1}/{num_batches}] Processing {len(batch_files)} files...")
+            
+            # Process batch (sequential to avoid memory issues)
+            batch_results = []
+            for T_file, path, _ in batch_files:
+                result = process_single_file_batch(T_file, path)
                 if result is not None:
-                    processed_results.extend(result)
-    
-    # Sort results by temperature to maintain order
-    processed_results.sort(key=lambda x: x[0])
-    
-    # Collect results, avoiding duplicates
-    seen_temps = set()
-    for theta_used, Treq, sel in processed_results:
-        if not any(np.isclose(theta_used, t, rtol=0, atol=0) for t in seen_temps):
+                    batch_results.append(result)
+            
+            # Collect batch results
+            for theta_used, T_file, result_gammas, result_eigenvectors in batch_results:
+                Ts_used.append(theta_used)
+                Ts_req_used.append(T_file)
+                for m in ms:
+                    gammas[m].append(result_gammas[m])
+            
+            # Save eigenvectors to NPZ incrementally
+            print(f"[Saving] Saving eigenvectors for batch {batch_idx + 1} to {OUT_EIGENVECTORS_NPZ}...")
+            batch_eigenvectors_dict = {}
             for m in ms:
-                gamma, v_full = sel[m]
-                gammas[m].append(gamma)
-                # Store eigenvector (None if gamma is NaN)
-                eigenvectors[m].append(v_full if not np.isnan(gamma) else None)
-            Ts_used.append(theta_used)
-            Ts_req_used.append(Treq)
-            seen_temps.add(theta_used)
-
-    Ts = np.array(Ts_used, dtype=np.float64)
+                if m not in batch_eigenvectors_dict:
+                    batch_eigenvectors_dict[m] = {}
+                for i, (theta_used, _, _, result_eigenvectors) in enumerate(batch_results):
+                    batch_eigenvectors_dict[m][theta_used] = result_eigenvectors[m]
+            
+            # Merge with existing and save
+            if os.path.exists(OUT_EIGENVECTORS_NPZ):
+                try:
+                    existing_data = np.load(OUT_EIGENVECTORS_NPZ, allow_pickle=True)
+                    for m in ms:
+                        key = f'eigenvectors_m{m}'
+                        if key in existing_data:
+                            existing_dict = existing_data[key].item()
+                            existing_dict.update(batch_eigenvectors_dict[m])
+                            batch_eigenvectors_dict[m] = existing_dict
+                except:
+                    pass
+            
+            # Save updated eigenvectors
+            save_dict = {f'eigenvectors_m{m}': batch_eigenvectors_dict[m] for m in ms}
+            np.savez_compressed(OUT_EIGENVECTORS_NPZ, **save_dict)
+            
+            # Save CSV incrementally
+            print(f"[Saving] Updating CSV with batch {batch_idx + 1} results...")
+            save_csv_incremental(Ts_used, Ts_req_used, gammas, existing_Ts, existing_Ts_requested, existing_gammas, ms)
+            
+            # Clean up memory
+            del batch_results, batch_eigenvectors_dict
+            import gc
+            gc.collect()
+            
+            print(f"[Batch {batch_idx + 1}/{num_batches}] Completed. Memory cleaned.")
+    
+    # Load final data from CSV (which was saved incrementally)
+    print(f"\n[Loading] Loading final data from {OUT_CSV} for plotting...")
+    Ts = []
+    gammas = {m: [] for m in ms}
+    
+    if os.path.exists(OUT_CSV):
+        with open(OUT_CSV, 'r', newline='') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                T_val = float(row.get('T', 0))
+                Ts.append(T_val)
+                for m in ms:
+                    gamma_key = f'gamma_{m}'
+                    if gamma_key in row and row[gamma_key].strip():
+                        try:
+                            gamma_val = float(row[gamma_key])
+                            gammas[m].append(gamma_val)
+                        except (ValueError, TypeError):
+                            gammas[m].append(np.nan)
+                    else:
+                        gammas[m].append(np.nan)
+    
+    Ts = np.array(Ts, dtype=np.float64)
+    print(f"[Loading] Loaded {len(Ts)} temperatures from CSV")
     print("Ts=", Ts)
     if Ts.size == 0:
-        print("Error: no matrices loaded.")
+        print("Error: no data loaded from CSV.")
         return
 
     # --- plot raw gamma_m(T) ---
@@ -853,22 +1090,49 @@ def main():
     print(f"Saved: {OUT_SVG}")
     print(f"Saved: {OUT_PNG}")
 
-    # --- save data to NPZ for reproducibility ---
-    save_dict = {
-        "T": Ts,
-        "T_requested": np.array(Ts_req_used, dtype=np.float64),
-        "modes": np.array(ms, dtype=np.int32),
-    }
-    # Save gamma_m for each mode m
-    for m in ms:
-        gm = np.array(gammas[m], dtype=np.float64)
-        save_dict[f"gamma_{m}"] = gm
+    print(f"[Info] CSV already saved incrementally (contains {len(Ts)} temperatures total)")
 
-    np.savez(OUT_NPZ, **save_dict)
-    print(f"Saved: {OUT_NPZ}")
-
-    # --- plot eigenfunction diagrams in table format (rows = m, columns = T) ---
-    plot_eigenfunction_table(Ts, eigenvectors, ms)
+    # --- Load eigenvectors from NPZ for eigenfunction plotting (in batches to avoid memory issues) ---
+    print(f"\n[Loading] Loading eigenvectors from {OUT_EIGENVECTORS_NPZ} for plotting...")
+    
+    if not os.path.exists(OUT_EIGENVECTORS_NPZ):
+        print(f"[Warning] {OUT_EIGENVECTORS_NPZ} not found. Skipping eigenfunction plotting.")
+    else:
+        # Load eigenvectors from NPZ (they're stored as dict: T -> v_full)
+        eigenvectors_npz = {}
+        try:
+            data = np.load(OUT_EIGENVECTORS_NPZ, allow_pickle=True)
+            for m in ms:
+                key = f'eigenvectors_m{m}'
+                if key in data:
+                    eigenvectors_npz[m] = data[key].item()
+            print(f"[Loading] Loaded eigenvectors for {len(eigenvectors_npz.get(ms[0], {}))} temperatures")
+        except Exception as e:
+            print(f"[Warning] Could not load eigenvectors from NPZ: {e}")
+            eigenvectors_npz = {}
+        
+        # Convert to list format for plotting (matching Ts order)
+        eigenvectors = {m: [] for m in ms}
+        for T in Ts:
+            T_float = float(T)
+            for m in ms:
+                # Find matching eigenvector in NPZ dict
+                v_full = None
+                if m in eigenvectors_npz:
+                    # Try exact match first
+                    if T_float in eigenvectors_npz[m]:
+                        v_full = eigenvectors_npz[m][T_float]
+                    else:
+                        # Try tolerance-based match
+                        for T_npz, v in eigenvectors_npz[m].items():
+                            if abs(T_float - float(T_npz)) < max(1e-3, 0.01 * max(abs(T_float), abs(float(T_npz)))):
+                                v_full = v
+                                break
+                eigenvectors[m].append(v_full)
+        
+        # --- plot eigenfunction diagrams in table format (rows = m, columns = T) ---
+        # Process in batches to avoid memory issues
+        plot_eigenfunction_table_batched(Ts, eigenvectors, ms)
 
 
 def values_to_grid(values_flat: np.ndarray, nx: np.ndarray, ny: np.ndarray, half: int, Nmax: int):
@@ -885,7 +1149,25 @@ def create_pcolormesh_coords(half: int, dp: float, Nmax: int):
     return X, Y
 
 
-def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_Ts=5):
+def plot_eigenfunction_table_batched(Ts, eigenvectors, ms, max_temps_plot=20):
+    """
+    Plot eigenfunction table, limiting number of temperatures to avoid memory issues.
+    If there are more temperatures than max_temps_plot, select evenly spaced ones.
+    """
+    print(f"\n[Plotting eigenfunctions] Processing {len(Ts)} temperatures...")
+    
+    # Limit number of temperatures to plot to avoid memory issues
+    if len(Ts) > max_temps_plot:
+        print(f"[Plotting] Limiting to {max_temps_plot} temperatures (evenly spaced) to avoid memory issues...")
+        selected_indices = [int(i * (len(Ts) - 1) / (max_temps_plot - 1)) for i in range(max_temps_plot)]
+    else:
+        selected_indices = list(range(len(Ts)))
+    
+    # Use the existing function
+    plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=selected_indices, max_Ts=None)
+
+
+def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_Ts=None):
     """
     Plot eigenfunction diagrams in a table: rows = m values, columns = selected temperatures.
     
@@ -893,21 +1175,22 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
         Ts: array of temperatures
         eigenvectors: dict {m: [v_full_1, v_full_2, ...]} where each v_full is for corresponding T
         ms: list of m values to plot
-        selected_T_indices: list of indices into Ts to plot (if None, select evenly spaced)
-        max_Ts: maximum number of temperatures to plot
+        selected_T_indices: list of indices into Ts to plot (if None, use all temperatures)
+        max_Ts: maximum number of temperatures to plot (if None, use all; ignored if selected_T_indices is provided)
     """
     from matplotlib.colors import TwoSlopeNorm
     
-    # Select temperatures to plot
+    # Select temperatures to plot - use ALL by default
     if selected_T_indices is None:
-        if len(Ts) <= max_Ts:
+        if max_Ts is None or len(Ts) <= max_Ts:
+            # Use all temperatures
             selected_T_indices = list(range(len(Ts)))
         else:
-            # Select evenly spaced temperatures
+            # Select evenly spaced temperatures if max_Ts is specified and we have more
             selected_T_indices = [int(i * (len(Ts) - 1) / (max_Ts - 1)) for i in range(max_Ts)]
     
     selected_Ts = Ts[selected_T_indices]
-    print(f"\n[Plotting eigenfunctions] Selected {len(selected_Ts)} temperatures: {selected_Ts}")
+    print(f"\n[Plotting eigenfunctions] Using {len(selected_Ts)} temperatures: {selected_Ts}")
     
     # Find valid m values (those with at least one valid eigenvector)
     valid_ms = []
@@ -920,30 +1203,91 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
         return
     
     # Load matrices for each selected temperature to get correct grid parameters
-    grid_params = {}  # T_idx -> (nx, ny, half, Nmax, dp)
+    # Try to match eigenvectors to the correct file by checking grid size
+    grid_params = {}  # T_idx -> (nx, ny, half, Nmax, dp, path)
     for T_idx in selected_T_indices:
-        try:
-            theta_used, path = find_matrix_file(float(Ts[T_idx]))
-            with open(path, "rb") as fp:
-                M, meta = pickle.load(fp)
-            
-            # Reconstruct arrays if needed
-            if "nx" not in meta or "px" not in meta:
-                nx, ny, half, px, py, P, eps, f, w = reconstruct_full_arrays(meta)
-                meta["nx"] = nx
-                meta["ny"] = ny
-                meta["half"] = half
-            
-            nx = np.asarray(meta["nx"], dtype=np.int32)
-            ny = np.asarray(meta["ny"], dtype=np.int32)
-            Nmax = int(meta["Nmax"])
-            half = int(meta.get("half", Nmax // 2))
-            dp = float(meta["dp"])
-            
-            grid_params[T_idx] = (nx, ny, half, Nmax, dp)
-        except Exception as e:
-            print(f"[Error] Could not load matrix for T={Ts[T_idx]:.6g}: {e}")
-            return
+        T_val = float(Ts[T_idx])
+        
+        # Get eigenvector size for this temperature (check first valid m)
+        eigenvector_size = None
+        for m in valid_ms:
+            v_full = eigenvectors[m][T_idx]
+            if v_full is not None:
+                eigenvector_size = len(v_full) if hasattr(v_full, '__len__') else 0
+                break
+        
+        # Find all files with this temperature
+        matching_files = []
+        if os.path.isdir(IN_DIR):
+            files = [fn for fn in os.listdir(IN_DIR) if fn.endswith(".pkl") and "_T" in fn]
+            for fn in files:
+                try:
+                    tpart = fn.split("_T", 1)[1].rsplit(".pkl", 1)[0]
+                    T_file = float(tpart)
+                    if abs(T_file - T_val) < max(1e-3, 0.01 * max(abs(T_file), abs(T_val))):
+                        matching_files.append((T_file, os.path.join(IN_DIR, fn)))
+                except:
+                    continue
+        
+        # Try to find file with matching grid size
+        found_match = False
+        for T_file, path in matching_files:
+            try:
+                with open(path, "rb") as fp:
+                    M, meta = pickle.load(fp)
+                
+                Nmax = int(meta["Nmax"])
+                expected_size = Nmax * Nmax
+                
+                # If we have eigenvector size, check if it matches
+                if eigenvector_size is not None and expected_size != eigenvector_size:
+                    continue  # Try next file
+                
+                # Reconstruct arrays if needed
+                if "nx" not in meta or "px" not in meta:
+                    nx, ny, half, px, py, P, eps, f, w = reconstruct_full_arrays(meta)
+                    meta["nx"] = nx
+                    meta["ny"] = ny
+                    meta["half"] = half
+                
+                nx = np.asarray(meta["nx"], dtype=np.int32)
+                ny = np.asarray(meta["ny"], dtype=np.int32)
+                half = int(meta.get("half", Nmax // 2))
+                dp = float(meta["dp"])
+                
+                grid_params[T_idx] = (nx, ny, half, Nmax, dp)
+                found_match = True
+                break
+            except Exception as e:
+                continue
+        
+        if not found_match:
+            # Fallback: use first matching file
+            if matching_files:
+                try:
+                    T_file, path = matching_files[0]
+                    with open(path, "rb") as fp:
+                        M, meta = pickle.load(fp)
+                    
+                    if "nx" not in meta or "px" not in meta:
+                        nx, ny, half, px, py, P, eps, f, w = reconstruct_full_arrays(meta)
+                        meta["nx"] = nx
+                        meta["ny"] = ny
+                        meta["half"] = half
+                    
+                    nx = np.asarray(meta["nx"], dtype=np.int32)
+                    ny = np.asarray(meta["ny"], dtype=np.int32)
+                    Nmax = int(meta["Nmax"])
+                    half = int(meta.get("half", Nmax // 2))
+                    dp = float(meta["dp"])
+                    
+                    grid_params[T_idx] = (nx, ny, half, Nmax, dp)
+                except Exception as e:
+                    print(f"[Error] Could not load matrix for T={T_val:.6g}: {e}")
+                    return
+            else:
+                print(f"[Error] No matrix file found for T={T_val:.6g}")
+                return
     
     # Create table layout: rows = m values, columns = selected temperatures
     nrows = len(valid_ms)
@@ -968,11 +1312,17 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
             v_full = eigenvectors[m][T_idx]
             if v_full is not None:
                 nx_T, ny_T, half_T, Nmax_T, dp_T = grid_params[T_idx]
-                grid = values_to_grid(v_full, nx_T, ny_T, half_T, Nmax_T)
-                grid_valid = grid[~np.isnan(grid)]
-                if grid_valid.size > 0:
-                    vmax_abs = float(np.max(np.abs(grid_valid)))
-                    global_vmax_abs = max(global_vmax_abs, vmax_abs)
+                
+                # Verify eigenvector size matches expected grid size
+                expected_size = Nmax_T * Nmax_T
+                actual_size = len(v_full) if hasattr(v_full, '__len__') else 0
+                
+                if actual_size == expected_size:
+                    grid = values_to_grid(v_full, nx_T, ny_T, half_T, Nmax_T)
+                    grid_valid = grid[~np.isnan(grid)]
+                    if grid_valid.size > 0:
+                        vmax_abs = float(np.max(np.abs(grid_valid)))
+                        global_vmax_abs = max(global_vmax_abs, vmax_abs)
     
     if global_vmax_abs > 0:
         global_vmin = -global_vmax_abs
@@ -996,6 +1346,17 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
             if v_full is not None:
                 # Use grid parameters for this specific temperature
                 nx_T, ny_T, half_T, Nmax_T, dp_T = grid_params[T_idx]
+                
+                # Verify eigenvector size matches expected grid size
+                expected_size = Nmax_T * Nmax_T
+                actual_size = len(v_full) if hasattr(v_full, '__len__') else 0
+                
+                if actual_size != expected_size:
+                    print(f"[Warning] Eigenvector size mismatch for T={Ts[T_idx]:.6g}, m={m}: "
+                          f"expected {expected_size}, got {actual_size}. Skipping plot.")
+                    ax.axis("off")
+                    continue
+                
                 grid = values_to_grid(v_full, nx_T, ny_T, half_T, Nmax_T)
                 
                 # Create coordinates for this grid
