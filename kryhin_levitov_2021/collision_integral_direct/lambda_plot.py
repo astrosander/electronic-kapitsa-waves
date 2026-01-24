@@ -683,8 +683,9 @@ def compute_fft_harmonic_spectrum(u_min, theta, P_act, w_safe, dp_val, Theta, ma
     
     # Bin into uniform angular grid for FFT
     n_bins = max(64, min(256, len(u_sorted)))
-    phi_bins = np.linspace(0, 2.0 * np.pi, n_bins, endpoint=False)
-    bin_idx = np.digitize(theta_sorted, phi_bins) % n_bins
+    # Fix binning: use floor instead of digitize to avoid shift
+    bin_idx = np.floor((theta_sorted % (2.0 * np.pi)) / (2.0 * np.pi) * n_bins).astype(np.int64)
+    bin_idx = np.clip(bin_idx, 0, n_bins - 1)
     
     # Weighted average in each bin
     u_prof = np.zeros(n_bins, dtype=np.float64)
@@ -713,6 +714,324 @@ def compute_fft_harmonic_spectrum(u_min, theta, P_act, w_safe, dp_val, Theta, ma
             spectrum[m] = power_m
     
     return spectrum
+
+
+def harmonic_spectrum_on_fs(u, theta, P_act, w_safe, dp_val, Theta,
+                           max_harmonic=31, radial_parity="even"):
+    """
+    Robust angular harmonic spectrum near the Fermi surface.
+    
+    Args:
+        u: eigenfunction vector
+        theta: angular coordinates
+        P_act: momentum magnitude
+        w_safe: weights
+        dp_val: momentum grid spacing
+        Theta: temperature
+        max_harmonic: maximum harmonic to compute
+        radial_parity: "even" (use u as-is) or "odd" (multiply by sign(P-1) so inner/outer add)
+    
+    Returns:
+        dict mapping harmonic m to power
+    """
+    two_pi = 2.0 * np.pi
+
+    # Smooth radial window around P=1
+    dr = P_act - 1.0
+    sigma = max(1.5 * dp_val, 0.5 * Theta, 1e-6)
+    wr = np.exp(-(dr / sigma) ** 2)
+
+    if radial_parity == "odd":
+        u_eff = u * np.sign(dr + 1e-300)   # avoid exact zeros
+    else:
+        u_eff = u
+
+    weights = w_safe * wr
+
+    # Choose FFT grid (power of 2 for efficiency)
+    n_bins = int(2 ** np.ceil(np.log2(max(128, min(1024, len(u_eff))))))
+    phi = np.mod(theta, two_pi)
+    bins = (phi / two_pi * n_bins).astype(np.int64)
+    bins = np.clip(bins, 0, n_bins - 1)
+
+    u_prof = np.zeros(n_bins, dtype=np.float64)
+    w_prof = np.zeros(n_bins, dtype=np.float64)
+
+    # Use np.add.at for safe accumulation
+    np.add.at(u_prof, bins, weights * u_eff)
+    np.add.at(w_prof, bins, weights)
+
+    mask = w_prof > 1e-30
+    if np.count_nonzero(mask) < 8:
+        return {}
+
+    u_prof[mask] /= w_prof[mask]
+
+    # Fill empty bins by interpolation (prevents FFT garbage)
+    if not np.all(mask):
+        idx = np.where(mask)[0]
+        if len(idx) >= 2:
+            u_prof = np.interp(np.arange(n_bins), idx, u_prof[idx])
+        else:
+            return {}
+
+    # Remove DC
+    u_prof -= np.mean(u_prof)
+
+    # rFFT power spectrum
+    U = np.fft.rfft(u_prof)
+    power = np.abs(U) ** 2
+
+    spectrum = {}
+    mmax = min(max_harmonic, len(power) - 1)
+    for m in range(1, mmax + 1):
+        spectrum[m] = float(power[m])
+    return spectrum
+
+
+def harmonic_powers_direct(u, theta, P_act, w_safe, dp_val, Theta, mmax=31, radial_parity="odd"):
+    """
+    Robust harmonic content without FFT/binning.
+    radial_parity="odd" applies sign(P-1) to undo inner/outer mirroring.
+    """
+    dr = P_act - 1.0
+    sigma = max(1.5 * dp_val, 0.5 * Theta, 1e-6)
+    wr = np.exp(-(dr / sigma) ** 2)          # radial window near FS
+    w = w_safe * wr
+
+    if radial_parity == "odd":
+        u_eff = u * np.sign(dr + 1e-300)
+    else:
+        u_eff = u
+
+    # Remove weighted mean (kills DC leakage)
+    wsum = np.sum(w)
+    if wsum < 1e-30:
+        return {}
+    u_eff = u_eff - (np.sum(w * u_eff) / wsum)
+
+    powers = {}
+    for m in range(1, mmax + 1):
+        c = np.cos(m * theta)
+        s = np.sin(m * theta)
+        a = float(np.dot(w * u_eff, c))
+        b = float(np.dot(w * u_eff, s))
+        powers[m] = a * a + b * b
+    return powers
+
+
+def m_harmonic_powers_direct(u, theta, P_act, w_safe, dp_val, Theta, mmax=31, apply_sign=False):
+    """
+    Direct weighted Fourier powers (no binning, no FFT).
+    If apply_sign=True, multiply u by sign(P-1) (energy-odd compensation).
+    """
+    dr = P_act - 1.0
+    # Smooth radial window centered at FS
+    sigma = max(2.0 * dp_val, 0.75 * Theta, 1e-6)
+    wr = np.exp(-(dr / sigma) ** 2)
+    w = w_safe * wr
+
+    if apply_sign:
+        u_eff = u * np.sign(dr + 1e-300)
+    else:
+        u_eff = u
+
+    wsum = float(np.sum(w))
+    if wsum < 1e-30:
+        return {}
+
+    # Remove weighted mean to reduce DC leakage
+    u_eff = u_eff - float(np.sum(w * u_eff)) / wsum
+
+    powers = {}
+    for m in range(1, mmax + 1):
+        c = np.cos(m * theta)
+        s = np.sin(m * theta)
+        a = float(np.dot(w * u_eff, c))
+        b = float(np.dot(w * u_eff, s))
+        powers[m] = a * a + b * b
+    return powers
+
+
+def pick_best_parity_for_m1(u, theta, P_act, w_safe, dp_val, Theta, mmax=31):
+    """
+    Returns (apply_sign, purity1, powers) where apply_sign chooses the better parity:
+      apply_sign=False -> energy-even
+      apply_sign=True  -> energy-odd (inside/outside mirrored)
+    purity1 = P1 / sum_{odd} Pm
+    """
+    pw_even = m_harmonic_powers_direct(u, theta, P_act, w_safe, dp_val, Theta, mmax=mmax, apply_sign=False)
+    pw_odd  = m_harmonic_powers_direct(u, theta, P_act, w_safe, dp_val, Theta, mmax=mmax, apply_sign=True)
+
+    def purity(pw):
+        odd_total = sum(pw.get(k, 0.0) for k in range(1, mmax + 1, 2)) + 1e-30
+        return pw.get(1, 0.0) / odd_total
+
+    pur_even = purity(pw_even)
+    pur_odd  = purity(pw_odd)
+
+    if pur_odd > pur_even:
+        return True, pur_odd, pw_odd
+    else:
+        return False, pur_even, pw_even
+
+
+def project_component_on_ring(v_full, grid_meta, T, m, phase_fix=False):
+    """
+    Return a FULL-LATTICE vector that contains only the m-th angular harmonic
+    on the Fermi ring (smooth radial window). This is for CLEAN plotting / robust m-ID.
+
+    phase_fix=True removes the arbitrary rotation by forcing the complex coefficient real+.
+    For m=1 this makes the node line fixed (horizontal, like cos(theta)).
+    """
+    import math
+    
+    Nmax = int(grid_meta["Nmax"])
+    dp = float(grid_meta["dp"])
+    Theta = float(T)  # T is already Theta
+    shift_x = float(grid_meta.get("shift_x", 0.0))
+    shift_y = float(grid_meta.get("shift_y", 0.0))
+    
+    # Reconstruct arrays
+    nx, ny, half = build_centered_lattice(Nmax)
+    px = dp * (nx.astype(np.float64) + shift_x)
+    py = dp * (ny.astype(np.float64) + shift_y)
+    P = np.sqrt(px * px + py * py)
+    
+    # Compute weights
+    eps = P * P
+    invT = 1.0 / Theta
+    em = math.exp(-invT)
+    a = 1.0 - em
+    x = np.clip((eps - 1.0) * invT, -700.0, 700.0)
+    f = a / (np.exp(x) + a)
+    w_full = np.clip(f * (1.0 - f), 0.0, None)
+    
+    # Get active indices (where weight is significant)
+    active = np.where(w_full > 1e-30)[0]
+    if len(active) == 0:
+        return np.zeros_like(v_full, dtype=np.float64)
+    
+    idx = active
+    theta = np.arctan2(py[idx], px[idx])
+    P_act = P[idx]
+    
+    # Smooth radial window around P=1
+    dr = P_act - 1.0
+    sigma = max(2.0 * dp, 0.75 * Theta, 1e-6)
+    wr = np.exp(-(dr / sigma) ** 2)
+    
+    w = w_full[idx] * wr
+    u = v_full[idx].astype(np.float64, copy=False)
+    
+    wsum = float(np.sum(w))
+    out = np.zeros_like(v_full, dtype=np.float64)
+    if wsum < 1e-30:
+        return out
+    
+    # Remove weighted mean (so m=0 doesn't leak into m=1 etc.)
+    u = u - float(np.sum(w * u)) / wsum
+    
+    if m == 0:
+        a0 = float(np.sum(w * u)) / wsum
+        out[idx] = a0
+        return out
+    
+    # Complex Fourier coefficient for harmonic m (rotation-invariant magnitude)
+    c = np.sum(w * u * np.exp(-1j * m * theta)) / wsum
+    
+    if phase_fix:
+        # Kill the arbitrary rotation (phase): enforce coefficient real positive
+        c = abs(c)
+    
+    # Reconstruct only the m-harmonic
+    out[idx] = np.real(c * np.exp(1j * m * theta))
+    return out
+
+
+def gamma_m1_k1_adaptive(A, w_safe, inv_orth, theta, z, P_act, dp_val, Theta):
+    """
+    Adaptive k=1-only solver that tries both energy-even and energy-odd and picks the best.
+    Forces dipole (k=1) structure while allowing parity to adapt with temperature.
+    """
+    eps = 1e-12
+
+    # Smooth window (stabilizes low-T and avoids off-shell junk)
+    dr = P_act - 1.0
+    sigma = max(2.0 * dp_val, 0.75 * Theta, 1e-6)
+    wr = np.exp(-(dr / sigma) ** 2)
+
+    c1 = np.cos(theta)
+    s1 = np.sin(theta)
+    sgn = np.sign(dr + 1e-300)
+
+    # Radial bases (include both even-ish and odd-ish pieces)
+    radial = [
+        np.ones_like(z),
+        z,
+        z * np.log(np.abs(z) + eps),
+        z * z,
+    ]
+
+    def solve(apply_sign):
+        cols = []
+        for r in radial:
+            rr = wr * r
+            if apply_sign:
+                rr = rr * sgn
+            cols.append(rr * c1)
+            cols.append(rr * s1)
+        return projected_gamma(A, w_safe, inv_orth, cols)
+
+    gamma_even, u_even = solve(apply_sign=False)
+    gamma_odd,  u_odd  = solve(apply_sign=True)
+
+    # Choose the one that is most m=1-like (purity test)
+    best = None
+    for gamma, u, apply_sign in [(gamma_even, u_even, False), (gamma_odd, u_odd, True)]:
+        if u is None or not np.isfinite(gamma):
+            continue
+        apply_sign2, pur1, _ = pick_best_parity_for_m1(u, theta, P_act, w_safe, dp_val, Theta, mmax=31)
+        # we want m=1 to be strong; allow either internal parity, so use pur1 directly
+        score = pur1
+        if best is None or score > best[0]:
+            best = (score, gamma, u, apply_sign)
+
+    if best is None:
+        return np.nan, None
+
+    _, gamma_min, u_min, _ = best
+    return gamma_min, u_min
+
+
+def gamma_m1_targeted(A, w_safe, inv_orth, theta, z, gcol=None, gant=None):
+    """
+    Target the dipole-like odd mode:
+      - angular k=1 only (cos(theta), sin(theta))
+      - energy-odd radial basis (z changes sign across FS)
+      - optionally include collinear logs to capture structure
+    """
+    eps = 1e-12
+
+    # IMPORTANT: do NOT include "1" radial factor, it is momentum-like on the FS and causes numerical pathology.
+    radial = [
+        z,
+        z * np.log(np.abs(z) + eps),
+        z**3,
+    ]
+    if gcol is not None:
+        radial.append(z * (gcol - np.mean(gcol)))
+    if gant is not None:
+        radial.append(z * (gant - np.mean(gant)))
+
+    cols = []
+    c1 = np.cos(theta)
+    s1 = np.sin(theta)
+    for r in radial:
+        cols.append(r * c1)
+        cols.append(r * s1)
+
+    return projected_gamma(A, w_safe, inv_orth, cols)
 
 
 def gamma_odd_sector(A, w_safe, inv_orth, theta, z, Kodd=25, return_basis=False):
@@ -812,62 +1131,33 @@ def gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False):
             continue
 
         if m == 1:
-            # Build several low Ritz candidates in the odd subspace
-            pairs = odd_sector_candidates(A, w_safe, inv_orth, theta, z, Kodd=25, n_pairs=16)
-
-            best = None
-            best_score = -1.0
-
-            for gamma_cand, u_cand in pairs:
-                # Must be (approximately) orthogonal to momentum
-                wu = w_safe * u_cand
-                norm_u = np.sqrt(np.dot(wu, u_cand)) + 1e-30
-                wp_x = w_safe * px_act
-                wp_y = w_safe * py_act
-                norm_px = np.sqrt(np.dot(wp_x, px_act)) + 1e-30
-                norm_py = np.sqrt(np.dot(wp_y, py_act)) + 1e-30
-                corr_px = abs(np.dot(wu, px_act)) / (norm_u * norm_px)
-                corr_py = abs(np.dot(wu, py_act)) / (norm_u * norm_py)
-                if corr_px > 1e-3 or corr_py > 1e-3:
-                    continue
-
-                spectrum = compute_fft_harmonic_spectrum(
-                    u_cand, theta, P_act, w_safe, dp_val, Theta, max_harmonic=15
-                )
-                if not spectrum:
-                    continue
-
-                odd_power = sum(v for k, v in spectrum.items() if (k % 2) == 1) + 1e-30
-                w1 = spectrum.get(1, 0.0)
-                w3 = spectrum.get(3, 0.0)
-
-                # "Identification score": prefer eigenvectors whose odd harmonic content is mostly m=1
-                score = w1 / odd_power
-
-                # Optional: discourage solutions that are basically m=3
-                if w3 > 2.0 * w1:
-                    score *= 0.5
-
-                if (score > best_score + 1e-6) or (abs(score - best_score) < 1e-6 and best is not None and gamma_cand < best[0]):
-                    best = (gamma_cand, u_cand, corr_px, corr_py, spectrum)
-                    best_score = score
-
-            if best is None:
-                # Fallback to old behavior if selection failed
-                gamma_min, u_min = gamma_odd_sector(A, w_safe, inv_orth, theta, z, Kodd=25)
-                spectrum = compute_fft_harmonic_spectrum(u_min, theta, P_act, w_safe, dp_val, Theta, max_harmonic=15) if u_min is not None else {}
-                corr_px, corr_py = 0.0, 0.0
+            # Adaptive k=1-only solver: tries both energy-even and energy-odd, picks the best
+            gamma_min, u_min = gamma_m1_k1_adaptive(A, w_safe, inv_orth, theta, z, P_act, dp_val, Theta)
+            
+            # Diagnostics: use parity-adaptive harmonic measurement
+            if u_min is not None:
+                apply_sign, pur1, pw = pick_best_parity_for_m1(u_min, theta, P_act, w_safe, dp_val, Theta, mmax=31)
+                
+                # Report top odd harmonics
+                odd = [(k, pw.get(k, 0.0)) for k in range(1, 16, 2)]
+                odd.sort(key=lambda x: -x[1])
+                tot = sum(pw.values()) + 1e-30
+                top5 = ", ".join([f"m={k}:{v/tot:.3f}" for k, v in odd[:5]])
+                print(f"    [m=1] parity={'odd' if apply_sign else 'even'}  purity1={pur1:.3f} (gamma={gamma_min:.6e})")
+                print(f"    [m=1] direct harmonic spectrum (top 5 odd): {top5}")
+                
+                # Optional: gauge-fix orientation to prevent random sign flips
+                a1 = float(np.dot(w_safe * u_min, np.cos(theta)))
+                b1 = float(np.dot(w_safe * u_min, np.sin(theta)))
+                # Pick a convention: make the larger component positive
+                if abs(a1) >= abs(b1):
+                    if a1 < 0:
+                        u_min *= -1
+                else:
+                    if b1 < 0:
+                        u_min *= -1
             else:
-                gamma_min, u_min, corr_px, corr_py, spectrum = best
-
-            # Diagnostics
-            print(f"    [m=1] Selected odd candidate: gamma={gamma_min:.6e}, score={best_score:.3f}")
-            if spectrum:
-                odd_harmonics = [(k, spectrum.get(k, 0.0)) for k in range(1, 16, 2)]
-                odd_harmonics.sort(key=lambda x: -x[1])
-                total_power = sum(spectrum.values()) + 1e-30
-                top5_str = ", ".join([f"m={k}:{v/total_power:.3f}" for k, v in odd_harmonics[:5]])
-                print(f"    [m=1] FFT odd harmonic spectrum (top 5): {top5_str}")
+                print(f"    [m=1] No eigenvector (gamma={gamma_min:.6e})")
             
             # Store eigenvector in full space
             if u_min is not None:
@@ -1797,7 +2087,15 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
                 shift_y = float(gm.get("shift_y", 0.0))
                 if len(v_full) != Nmax_T * Nmax_T:
                     continue
-                grid = np.asarray(v_full, dtype=np.float64).reshape((Nmax_T, Nmax_T))
+                # Project onto the m-th harmonic on the ring for clean plotting
+                T_val = Ts[T_idx]
+                v_plot = v_full
+                if m == 0:
+                    v_plot = project_component_on_ring(v_full, gm, T_val, m=0, phase_fix=False)
+                elif m == 1:
+                    v_plot = project_component_on_ring(v_full, gm, T_val, m=1, phase_fix=True)
+                # For m >= 2, we could also project, but keeping raw for now
+                grid = np.asarray(v_plot, dtype=np.float64).reshape((Nmax_T, Nmax_T))
                 sx, sy, extent, ring_mask = _plot_geom(
                     Nmax_T, dp_T, shift_x, shift_y,
                     pwin=PLOT_PWIN, ring_only=PLOT_RING_ONLY, ring_w=PLOT_RING_W
@@ -1856,7 +2154,15 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
                     ax.axis("off")
                     continue
 
-                grid = np.asarray(v_full, dtype=np.float64).reshape((Nmax_T, Nmax_T))
+                # Project onto the m-th harmonic on the ring for clean plotting
+                T_val = Ts[T_idx]
+                v_plot = v_full
+                if m == 0:
+                    v_plot = project_component_on_ring(v_full, gm, T_val, m=0, phase_fix=False)
+                elif m == 1:
+                    v_plot = project_component_on_ring(v_full, gm, T_val, m=1, phase_fix=True)
+                # For m >= 2, we could also project, but keeping raw for now
+                grid = np.asarray(v_plot, dtype=np.float64).reshape((Nmax_T, Nmax_T))
                 sx, sy, extent, ring_mask = _plot_geom(
                     Nmax_T, dp_T, shift_x, shift_y,
                     pwin=PLOT_PWIN, ring_only=PLOT_RING_ONLY, ring_w=PLOT_RING_W
@@ -1916,7 +2222,15 @@ def plot_single_eigenfunction(v_full, grid_meta, T, m,
     if len(v_full) != Nmax * Nmax:
         return
 
-    grid = np.asarray(v_full, dtype=np.float64).reshape((Nmax, Nmax))
+    # Project onto the m-th harmonic on the ring for clean plotting
+    v_plot = v_full
+    if m == 0:
+        v_plot = project_component_on_ring(v_full, grid_meta, T, m=0, phase_fix=False)
+    elif m == 1:
+        v_plot = project_component_on_ring(v_full, grid_meta, T, m=1, phase_fix=True)
+    # For m >= 2, we could also project, but keeping raw for now
+    
+    grid = np.asarray(v_plot, dtype=np.float64).reshape((Nmax, Nmax))
     slx, sly, extent, ring_mask = _plot_geom(
         Nmax, dp, sx, sy,
         pwin=float(pwin),
