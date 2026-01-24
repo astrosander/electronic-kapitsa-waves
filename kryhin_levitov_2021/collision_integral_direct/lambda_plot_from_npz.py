@@ -217,7 +217,7 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
         ax.set_ylim([gamma_over_T2_valid.min(), gamma_over_T2_valid.max()])
 
     # ax.set_xlim([T_valid.min(), T_valid.max()])
-    ax.set_ylim(1e-3, 1e2)
+    ax.set_ylim(1e-3, 4e0)
 
     ax.set_xlabel(r"Temperature, $T/T_F$")
     ax.set_ylabel(r"Decay rate (eigenvalue), $\gamma_m / T^2$")

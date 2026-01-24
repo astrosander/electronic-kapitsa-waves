@@ -524,12 +524,18 @@ def enforce_w_self_adjoint(A, W, enforce=True):
     return A, d
 
 
-def projected_gamma(A, w_safe, inv_orth, cand_cols):
+def projected_gamma(A, w_safe, inv_orth, cand_cols, return_basis=False):
     """
     Compute gamma from a set of candidate columns by:
     1. Removing invariants
     2. W-orthonormalizing (so U^T W U = I)
     3. Solving standard symmetric eigenproblem C = U^T A U
+    
+    Returns:
+        gamma_min: minimum eigenvalue
+        u_min: full-space eigenfunction (active space)
+        U: basis matrix (if return_basis=True)
+        alpha: eigenvector coefficients in basis (if return_basis=True)
     """
     # Remove invariants
     cols = []
@@ -542,6 +548,8 @@ def projected_gamma(A, w_safe, inv_orth, cand_cols):
     # W-orthonormalize => U^T W U = I
     U_list = _w_orthonormalize(cols, w_safe)
     if len(U_list) == 0:
+        if return_basis:
+            return np.nan, None, None, None
         return np.nan, None
 
     U = np.column_stack(U_list)  # n x r
@@ -551,23 +559,94 @@ def projected_gamma(A, w_safe, inv_orth, cand_cols):
     # Defensive symmetrization (should be symmetric if A is correct)
     C = 0.5 * (C + C.T)
 
-    evals = np.linalg.eigvalsh(C)
+    evals, evecs = np.linalg.eigh(C)
     evals = evals[np.isfinite(evals)]
-    evals = evals[evals >= -1e-12]
-    if evals.size == 0:
+    valid_mask = np.isfinite(evals) & (evals >= -1e-12)
+    if not np.any(valid_mask):
+        if return_basis:
+            return np.nan, None, None, None
         return np.nan, None
+    
+    evals = evals[valid_mask]
+    evecs = evecs[:, valid_mask]
     
     gamma_min = float(np.min(np.maximum(evals, 0.0)))
     
     # Recover the minimizing eigenvector for diagnostics
     j = np.argmin(evals)
-    vec_small = np.linalg.eigh(C)[1][:, j]  # eigenvector in small space
-    u_min = U @ vec_small  # full-space eigenfunction
+    alpha = evecs[:, j]  # eigenvector coefficients in basis
+    u_min = U @ alpha  # full-space eigenfunction (active space)
     
+    # Normalize in W-norm
+    wu = w_safe * u_min
+    norm_w = np.sqrt(np.dot(u_min, wu))
+    if norm_w > 1e-30:
+        u_min = u_min / norm_w
+        alpha = alpha / norm_w
+    
+    if return_basis:
+        return gamma_min, u_min, U, alpha
     return gamma_min, u_min
 
 
-def gamma_odd_sector(A, w_safe, inv_orth, theta, z, Kodd=25):
+def compute_fft_harmonic_spectrum(u_min, theta, P_act, w_safe, dp_val, Theta, max_harmonic=15):
+    """
+    Compute FFT harmonic spectrum of u_min on the Fermi ring.
+    Returns dictionary with harmonic weights for m=1,3,5,...,max_harmonic.
+    """
+    # Build angular profile on the ring
+    ring_mask = np.abs(P_act - 1.0) <= max(3.0 * dp_val, 2.0 * Theta)
+    if np.count_nonzero(ring_mask) < 16:
+        ring_mask = np.ones(len(u_min), dtype=bool)
+    
+    if np.count_nonzero(ring_mask) < 16:
+        return {}
+    
+    theta_ring = theta[ring_mask]
+    u_ring = u_min[ring_mask]
+    w_ring = w_safe[ring_mask]
+    
+    # Sort by angle for FFT
+    sort_idx = np.argsort(theta_ring)
+    theta_sorted = theta_ring[sort_idx]
+    u_sorted = u_ring[sort_idx]
+    w_sorted = w_ring[sort_idx]
+    
+    # Bin into uniform angular grid for FFT
+    n_bins = max(64, min(256, len(u_sorted)))
+    phi_bins = np.linspace(0, 2.0 * np.pi, n_bins, endpoint=False)
+    bin_idx = np.digitize(theta_sorted, phi_bins) % n_bins
+    
+    # Weighted average in each bin
+    u_prof = np.zeros(n_bins, dtype=np.float64)
+    w_prof = np.zeros(n_bins, dtype=np.float64)
+    for i, b in enumerate(bin_idx):
+        u_prof[b] += w_sorted[i] * u_sorted[i]
+        w_prof[b] += w_sorted[i]
+    
+    # Normalize
+    mask_prof = w_prof > 1e-30
+    if np.count_nonzero(mask_prof) < 8:
+        return {}
+    
+    u_prof[mask_prof] /= w_prof[mask_prof]
+    u_prof[~mask_prof] = 0.0
+    
+    # FFT to get harmonic content
+    u_fft = np.fft.fft(u_prof)
+    power = np.abs(u_fft) ** 2
+    
+    # Extract harmonic weights: for each m, sum power at +m and -m
+    spectrum = {}
+    for m in range(1, min(max_harmonic + 1, n_bins // 2 + 1)):
+        if m < n_bins:
+            power_m = power[m] + power[n_bins - m] if m > 0 else power[0]
+            spectrum[m] = power_m
+    
+    return spectrum
+
+
+def gamma_odd_sector(A, w_safe, inv_orth, theta, z, Kodd=25, return_basis=False):
     """
     Compute the minimum eigenvalue in the odd-parity sector (KL's "m=1" slow odd mode).
     Uses a multi-odd-harmonic Galerkin subspace: k=1,3,5,...,Kodd with radial basis.
@@ -589,8 +668,12 @@ def gamma_odd_sector(A, w_safe, inv_orth, theta, z, Kodd=25):
             cols.append(r * ck)
             cols.append(r * sk)
 
-    gamma, u_min = projected_gamma(A, w_safe, inv_orth, cols)
-    return gamma, u_min
+    if return_basis:
+        gamma, u_min, U, alpha = projected_gamma(A, w_safe, inv_orth, cols, return_basis=True)
+        return gamma, u_min, U, alpha
+    else:
+        gamma, u_min = projected_gamma(A, w_safe, inv_orth, cols, return_basis=False)
+        return gamma, u_min
 
 
 def gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False):
@@ -650,9 +733,13 @@ def gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False):
     z = de / Escale
 
     out = {}
+    eigenvectors_out = {}
+    Nstates = int(nx.size)  # Total number of states in full lattice
+    
     for m in ms:
         if m == 0:
             out[m] = 0.0
+            eigenvectors_out[m] = None
             continue
 
         if m == 1:
@@ -660,17 +747,67 @@ def gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False):
             # Use multi-odd-harmonic Galerkin subspace (k=1,3,5,...,Kodd)
             gamma_min, u_min = gamma_odd_sector(A, w_safe, inv_orth, theta, z, Kodd=25)
             
-            # Diagnostic: report odd-sector computation
+            # Diagnostic: report odd-sector computation and check for momentum leakage
             # Note: FFT purity at k=1 is not meaningful for KL's odd mode (it mixes many odd harmonics)
             if u_min is not None:
                 wu = w_safe * u_min
                 norm_u = np.sqrt(np.dot(wu, u_min))
+                
                 if norm_u > 1e-30:
-                    print(f"    [m={m}] Odd-sector minimum: gamma={gamma_min:.6e} (multi-harmonic basis k=1,3,5,...,25, norm={norm_u:.3e})")
+                    # Check momentum leakage: weighted correlations with p_x and p_y
+                    wp_x = w_safe * px_act
+                    wp_y = w_safe * py_act
+                    norm_px = np.sqrt(np.dot(wp_x, px_act))
+                    norm_py = np.sqrt(np.dot(wp_y, py_act))
+                    
+                    if norm_px > 1e-30 and norm_py > 1e-30:
+                        corr_px = abs(np.dot(wu, px_act)) / (norm_u * norm_px)
+                        corr_py = abs(np.dot(wu, py_act)) / (norm_u * norm_py)
+                        
+                        # Compute Rayleigh quotients for momentum itself
+                        Ap_x = A.dot(px_act)
+                        Ap_y = A.dot(py_act)
+                        gamma_px = float(np.dot(px_act, Ap_x)) / (np.dot(wp_x, px_act) + 1e-30)
+                        gamma_py = float(np.dot(py_act, Ap_y)) / (np.dot(wp_y, py_act) + 1e-30)
+                        gamma_p = max(0.0, min(gamma_px, gamma_py))
+                        
+                        # Check if γ₁ is suspiciously close to momentum decay rate
+                        momentum_leakage_warning = ""
+                        if corr_px > 1e-3 or corr_py > 1e-3:
+                            momentum_leakage_warning = f" ⚠️ HIGH MOMENTUM LEAKAGE (corr_px={corr_px:.3e}, corr_py={corr_py:.3e})"
+                        elif gamma_p > 0 and gamma_min > 0 and abs(np.log10(gamma_min) - np.log10(gamma_p)) < 1.0:
+                            momentum_leakage_warning = f" ⚠️ γ₁≈γ_momentum (γ_p={gamma_p:.6e}, ratio={gamma_min/gamma_p:.3f})"
+                        
+                        print(f"    [m={m}] Odd-sector minimum: gamma={gamma_min:.6e} (norm={norm_u:.3e})")
+                        print(f"    [m={m}] Momentum leakage: corr_px={corr_px:.3e}, corr_py={corr_py:.3e}, γ_momentum={gamma_p:.6e}{momentum_leakage_warning}")
+                        
+                        # Compute FFT harmonic spectrum to see which odd harmonic dominates
+                        spectrum = compute_fft_harmonic_spectrum(u_min, theta, P_act, w_safe, dp_val, Theta, max_harmonic=15)
+                        if spectrum:
+                            # Get top 5 odd harmonics by weight
+                            odd_harmonics = [(k, spectrum.get(k, 0.0)) for k in range(1, 16, 2)]
+                            odd_harmonics.sort(key=lambda x: -x[1])
+                            total_power = sum(spectrum.values())
+                            
+                            if total_power > 1e-30:
+                                top5_str = ", ".join([f"m={k}:{v/total_power:.3f}" for k, v in odd_harmonics[:5]])
+                                print(f"    [m={m}] FFT odd harmonic spectrum (top 5): {top5_str}")
+                            else:
+                                print(f"    [m={m}] FFT harmonic spectrum: total power too small")
+                    else:
+                        print(f"    [m={m}] Odd-sector minimum: gamma={gamma_min:.6e} (norm={norm_u:.3e}, momentum norms too small)")
                 else:
                     print(f"    [m={m}] Odd-sector minimum: gamma={gamma_min:.6e} (eigenvector norm too small)")
             else:
                 print(f"    [m={m}] Odd-sector minimum: gamma={gamma_min:.6e} (no eigenvector)")
+            
+            # Store eigenvector in full space
+            if u_min is not None:
+                v_full = np.zeros(Nstates, dtype=np.float64)
+                v_full[active] = u_min
+                eigenvectors_out[m] = v_full
+            else:
+                eigenvectors_out[m] = None
             
             out[m] = gamma_min
             continue
@@ -738,11 +875,13 @@ def gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False):
                     u_fft = np.fft.fft(u_prof)
                     power = np.abs(u_fft) ** 2
                     
-                    # Compute purity: power at harmonic m relative to total power (excluding DC)
+                    # Compute purity: power at harmonic m (sum of +m and -m) relative to total power (excluding DC)
                     k_max = min(n_bins // 2, 20)  # Check up to harmonic 20
-                    if k_max >= m:
-                        power_m = power[m] if m > 0 else power[0]
-                        power_total = np.sum(power[1:k_max+1])  # Exclude DC (k=0)
+                    if k_max >= m and m > 0:
+                        # For harmonic m, sum power at +m and -m (for real signals, these are equal)
+                        power_m = power[m] + power[n_bins - m] if m < n_bins else power[m]
+                        # Total power: sum over all harmonics (excluding DC)
+                        power_total = np.sum(power[1:k_max+1]) + np.sum(power[n_bins-k_max:n_bins]) if k_max < n_bins // 2 else np.sum(power[1:])
                         
                         if power_total > 1e-30:
                             purity = power_m / power_total
@@ -754,6 +893,14 @@ def gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False):
                                 print(f"    [m={m}] FFT harmonic purity: {purity:.3f} (gamma={gamma_min:.6e})")
                         else:
                             print(f"    [m={m}] Could not compute FFT purity (no power), gamma={gamma_min:.6e}")
+                    elif m == 0:
+                        # DC component
+                        power_total = np.sum(power[1:])
+                        if power_total > 1e-30:
+                            purity = power[0] / (power[0] + power_total)
+                            print(f"    [m={m}] FFT DC purity: {purity:.3f} (gamma={gamma_min:.6e})")
+                        else:
+                            print(f"    [m={m}] Could not compute FFT purity (no power), gamma={gamma_min:.6e}")
                     else:
                         print(f"    [m={m}] Could not compute FFT purity (m={m} > k_max={k_max}), gamma={gamma_min:.6e}")
                 else:
@@ -763,9 +910,17 @@ def gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False):
         else:
             print(f"    [m={m}] No valid eigenvector, gamma={gamma_min:.6e}")
         
+        # Store eigenvector in full space
+        if u_min is not None:
+            v_full = np.zeros(Nstates, dtype=np.float64)
+            v_full[active] = u_min
+            eigenvectors_out[m] = v_full
+        else:
+            eigenvectors_out[m] = None
+        
         out[m] = gamma_min
 
-    return out
+    return out, eigenvectors_out
 
 
 def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms, theta_val: float, progress_callback=None):
@@ -1255,8 +1410,7 @@ def main():
                 eig_sub_start = time.time()
                 
                 if USE_HARMONIC_PROJECTION:
-                    result_gammas = gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False)
-                    result_eigenvectors = {m: None for m in ms}
+                    result_gammas, result_eigenvectors = gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False)
                 else:
                     def eig_progress(msg):
                         print(msg, flush=True)
