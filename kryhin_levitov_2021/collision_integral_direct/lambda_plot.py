@@ -2073,50 +2073,7 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
     if grid_meta_list is None:
         grid_meta_list = [None] * len(Ts)
     
-    global_vmax_abs = 0.0
-    for row_idx, m in enumerate(valid_ms):
-        for col_idx, T_idx in enumerate(selected_T_indices):
-            v_full = eigenvectors[m][T_idx]
-            if v_full is not None:
-                gm = grid_meta_list[T_idx]
-                if gm is None:
-                    continue
-                Nmax_T = int(gm["Nmax"])
-                dp_T = float(gm["dp"])
-                shift_x = float(gm.get("shift_x", 0.0))
-                shift_y = float(gm.get("shift_y", 0.0))
-                if len(v_full) != Nmax_T * Nmax_T:
-                    continue
-                # Project onto the m-th harmonic on the ring for clean plotting
-                T_val = Ts[T_idx]
-                v_plot = v_full
-                if m == 0:
-                    v_plot = project_component_on_ring(v_full, gm, T_val, m=0, phase_fix=False)
-                elif m == 1:
-                    v_plot = project_component_on_ring(v_full, gm, T_val, m=1, phase_fix=True)
-                # For m >= 2, we could also project, but keeping raw for now
-                grid = np.asarray(v_plot, dtype=np.float64).reshape((Nmax_T, Nmax_T))
-                sx, sy, extent, ring_mask = _plot_geom(
-                    Nmax_T, dp_T, shift_x, shift_y,
-                    pwin=PLOT_PWIN, ring_only=PLOT_RING_ONLY, ring_w=PLOT_RING_W
-                )
-                g = grid[sx, sy]
-                if ring_mask is not None:
-                    g = np.ma.array(g, mask=ring_mask)
-                    if g.count() == 0:
-                        continue
-                    vmax_abs = float(np.max(np.abs(g.compressed())))
-                else:
-                    vmax_abs = float(np.max(np.abs(g)))
-                global_vmax_abs = max(global_vmax_abs, vmax_abs)
-    
-    if global_vmax_abs > 0:
-        global_vmin = -global_vmax_abs
-        global_vmax = global_vmax_abs
-    else:
-        global_vmin, global_vmax = -0.1, 0.1
-    
-    global_norm = TwoSlopeNorm(vmin=global_vmin, vcenter=0, vmax=global_vmax)
+    # No global normalization - each panel will be normalized individually
     
     nrows = len(valid_ms)
     ncols = len(selected_T_indices)
@@ -2131,8 +2088,6 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
         axes = axes.reshape(-1, 1)
     else:
         axes = axes.reshape(nrows, ncols)
-    
-    im_common = None
     
     for row_idx, m in enumerate(valid_ms):
         for col_idx, T_idx in enumerate(selected_T_indices):
@@ -2170,16 +2125,25 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
                 g = grid[sx, sy]
                 if ring_mask is not None:
                     g = np.ma.array(g, mask=ring_mask)
+                    if g.count() == 0:
+                        ax.axis("off")
+                        continue
+                    vmax_abs = float(np.max(np.abs(g.compressed())))
+                else:
+                    vmax_abs = float(np.max(np.abs(g)))
+                
+                # Individual normalization for this panel
+                vmax_abs = max(vmax_abs, 1e-14)
+                panel_norm = TwoSlopeNorm(vmin=-vmax_abs, vcenter=0, vmax=vmax_abs)
 
                 im = ax.imshow(
                     g.T,
                     extent=extent,
                     origin="lower",
                     cmap="seismic",
-                    norm=global_norm,
+                    norm=panel_norm,
                     aspect="equal",
                 )
-                im_common = im
 
                 ax.add_patch(Circle((0.0, 0.0), 1.0, fill=False, linewidth=0.6, alpha=0.6, color='black'))
 
@@ -2195,10 +2159,6 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
                     ax.set_ylabel("$p_y$")
             else:
                 ax.axis("off")
-    
-    if im_common is not None:
-        cbar = fig.colorbar(im_common, ax=axes, fraction=0.03, pad=0.02, aspect=30)
-        cbar.ax.tick_params(labelsize=10)
     
     out_png = "eigenfunctions_table.png"
     out_svg = "eigenfunctions_table.svg"
@@ -2265,7 +2225,6 @@ def plot_single_eigenfunction(v_full, grid_meta, T, m,
     ax.set_xlabel(r"$p_x$")
     ax.set_ylabel(r"$p_y$")
     ax.set_title(fr"$T={T:.4g},\ m={m}$")
-    fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
     fig.tight_layout()
 
     fn = os.path.join(outdir, f"eig_T{T:.6g}_m{m}.png")
