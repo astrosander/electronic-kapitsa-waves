@@ -929,13 +929,14 @@ def project_component_on_ring(v_full, grid_meta, T, m, phase_fix=False):
     if wsum < 1e-30:
         return out
     
-    # Remove weighted mean (so m=0 doesn't leak into m=1 etc.)
-    u = u - float(np.sum(w * u)) / wsum
-    
     if m == 0:
+        # For m=0, we want the DC component (weighted mean) - don't remove it first!
         a0 = float(np.sum(w * u)) / wsum
         out[idx] = a0
         return out
+    
+    # Remove weighted mean (so m=0 doesn't leak into m=1 etc.)
+    u = u - float(np.sum(w * u)) / wsum
     
     # Complex Fourier coefficient for harmonic m (rotation-invariant magnitude)
     c = np.sum(w * u * np.exp(-1j * m * theta)) / wsum
@@ -1076,6 +1077,10 @@ def gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False):
 
     # Energy coordinate for radial basis (compute once)
     Theta = float(meta.get("Theta", 0.0))
+    
+    # Store original active-space arrays for m=0 (before ring filtering)
+    w_safe_original = w_safe.copy()
+    active_original = active.copy()
 
     if ring_only:
         dp_val = float(meta["dp"])
@@ -1126,8 +1131,21 @@ def gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False):
     
     for m in ms:
         if m == 0:
-            out[m] = 0.0
-            eigenvectors_out[m] = None
+            # Density-like mode in W-metric: constant is the right invariant here
+            # This is the conserved density mode (gamma = 0)
+            # Use original active space (before ring filtering) for m=0
+            u0 = np.ones_like(w_safe_original, dtype=np.float64)
+            # Normalize in W-norm
+            n0 = np.sqrt(np.dot(u0, w_safe_original * u0))
+            if n0 > 1e-30:
+                u0 /= n0
+            
+            # Store eigenvector in full space
+            v_full = np.zeros(Nstates, dtype=np.float64)
+            v_full[active_original] = u0
+            out[m] = 0.0  # Density is conserved -> gamma = 0
+            eigenvectors_out[m] = v_full
+            print(f"    [m=0] density mode: gamma=0.0 (conserved)")
             continue
 
         if m == 1:
@@ -1178,93 +1196,27 @@ def gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False):
         # Compute gamma using stable projection method
         gamma_min, u_min = projected_gamma(A, w_safe, inv_orth, cand)
         
-        # Sanity check: print norms of first two candidate columns AFTER projection
-        # (projected_gamma already does the projection, so we need to check manually)
-        if len(cand) >= 2:
-            # Manually project first two to check norms
-            v0 = cand[0].astype(np.float64, copy=True)
-            v1 = cand[1].astype(np.float64, copy=True)
-            for q in inv_orth:
-                v0 -= _w_inner(q, v0, w_safe) * q
-                v1 -= _w_inner(q, v1, w_safe) * q
-            norm0 = np.sqrt(_w_inner(v0, v0, w_safe))
-            norm1 = np.sqrt(_w_inner(v1, v1, w_safe))
-            print(f"    [m={m}] Basis norms after projection: [{norm0:.6e}, {norm1:.6e}]")
-        
-        # Diagnostic: check angular harmonic purity using FFT-based harmonic content
+        # Verify m-harmonic content using direct Fourier projection (same as plotting)
         if u_min is not None:
-            # Build angular profile on the ring: bin u_min by angle
-            # Use ring points (weighted by w_safe to focus on Fermi surface)
-            ring_mask = np.abs(P_act - 1.0) <= max(3.0 * dp_val, 2.0 * Theta)
-            if np.count_nonzero(ring_mask) < 16:
-                # If ring is too sparse, use all points
-                ring_mask = np.ones(len(u_min), dtype=bool)
+            # Use direct harmonic powers (no FFT/binning) - same method as plotting
+            pw_even = m_harmonic_powers_direct(u_min, theta, P_act, w_safe, dp_val, Theta, mmax=min(15, m+8), apply_sign=False)
             
-            if np.count_nonzero(ring_mask) >= 16:
-                theta_ring = theta[ring_mask]
-                u_ring = u_min[ring_mask]
-                w_ring = w_safe[ring_mask]
-                
-                # Sort by angle for FFT
-                sort_idx = np.argsort(theta_ring)
-                theta_sorted = theta_ring[sort_idx]
-                u_sorted = u_ring[sort_idx]
-                w_sorted = w_ring[sort_idx]
-                
-                # Bin into uniform angular grid for FFT
-                n_bins = max(64, min(256, len(u_sorted)))
-                phi_bins = np.linspace(0, 2.0 * np.pi, n_bins, endpoint=False)
-                bin_idx = np.digitize(theta_sorted, phi_bins) % n_bins
-                
-                # Weighted average in each bin
-                u_prof = np.zeros(n_bins, dtype=np.float64)
-                w_prof = np.zeros(n_bins, dtype=np.float64)
-                for i, b in enumerate(bin_idx):
-                    u_prof[b] += w_sorted[i] * u_sorted[i]
-                    w_prof[b] += w_sorted[i]
-                
-                # Normalize
-                mask_prof = w_prof > 1e-30
-                if np.count_nonzero(mask_prof) >= 8:
-                    u_prof[mask_prof] /= w_prof[mask_prof]
-                    u_prof[~mask_prof] = 0.0
-                    
-                    # FFT to get harmonic content
-                    u_fft = np.fft.fft(u_prof)
-                    power = np.abs(u_fft) ** 2
-                    
-                    # Compute purity: power at harmonic m (sum of +m and -m) relative to total power (excluding DC)
-                    k_max = min(n_bins // 2, 20)  # Check up to harmonic 20
-                    if k_max >= m and m > 0:
-                        # For harmonic m, sum power at +m and -m (for real signals, these are equal)
-                        power_m = power[m] + power[n_bins - m] if m < n_bins else power[m]
-                        # Total power: sum over all harmonics (excluding DC)
-                        power_total = np.sum(power[1:k_max+1]) + np.sum(power[n_bins-k_max:n_bins]) if k_max < n_bins // 2 else np.sum(power[1:])
-                        
-                        if power_total > 1e-30:
-                            purity = power_m / power_total
-                            
-                            if purity < 0.2:
-                                print(f"    [m={m}] WARNING: Low FFT purity {purity:.3f} (gamma={gamma_min:.6e}) - "
-                                      f"subspace minimum may not be the intended m={m} harmonic")
-                            else:
-                                print(f"    [m={m}] FFT harmonic purity: {purity:.3f} (gamma={gamma_min:.6e})")
-                        else:
-                            print(f"    [m={m}] Could not compute FFT purity (no power), gamma={gamma_min:.6e}")
-                    elif m == 0:
-                        # DC component
-                        power_total = np.sum(power[1:])
-                        if power_total > 1e-30:
-                            purity = power[0] / (power[0] + power_total)
-                            print(f"    [m={m}] FFT DC purity: {purity:.3f} (gamma={gamma_min:.6e})")
-                        else:
-                            print(f"    [m={m}] Could not compute FFT purity (no power), gamma={gamma_min:.6e}")
-                    else:
-                        print(f"    [m={m}] Could not compute FFT purity (m={m} > k_max={k_max}), gamma={gamma_min:.6e}")
-                else:
-                    print(f"    [m={m}] Could not compute FFT purity (insufficient ring points), gamma={gamma_min:.6e}")
-            else:
-                print(f"    [m={m}] Could not compute FFT purity (ring too sparse), gamma={gamma_min:.6e}")
+            # Compute power in the target m
+            total_power = sum(pw_even.values()) + 1e-30
+            power_m = pw_even.get(m, 0.0)
+            purity_m = power_m / total_power
+            
+            # Find dominant harmonic
+            sorted_harmonics = sorted(pw_even.items(), key=lambda x: -x[1])
+            top3 = ", ".join([f"m={k}:{v/total_power:.3f}" for k, v in sorted_harmonics[:3]])
+            
+            print(f"    [m={m}] purity={purity_m:.3f} (gamma={gamma_min:.6e})")
+            print(f"    [m={m}] direct harmonic spectrum (top 3): {top3}")
+            
+            # Warning if purity is low
+            if purity_m < 0.5:
+                print(f"    [m={m}] WARNING: Low purity {purity_m:.3f}, dominant harmonic is m={sorted_harmonics[0][0]}")
+        
         else:
             print(f"    [m={m}] No valid eigenvector, gamma={gamma_min:.6e}")
         
@@ -1352,14 +1304,13 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms, the
     if SEPARATE_M01:
         if 0 in ms:
             v0 = sqrtw / (np.linalg.norm(sqrtw) + 1e-30)
-            Av0 = A.dot(v0)
-            gamma0 = float(np.dot(v0, Av0)) / (np.dot(v0, w_safe * v0) + 1e-30)
-            gamma0 = max(0.0, gamma0)
+            # Density should be conserved -> set exactly 0 to avoid numerical junk
+            gamma0 = 0.0
             v0_full = np.zeros(Nstates, dtype=np.float64)
             v0_full[active] = v0
             m01_results[0] = (gamma0, v0_full)
             if progress_callback:
-                progress_callback(f"    m=0 (density): gamma={gamma0:.6e} (via Rayleigh quotient)")
+                progress_callback(f"    m=0 (density): gamma={gamma0:.6e} (forced conserved)")
         
         if 1 in ms:
             v1x = sqrtw * px_act
