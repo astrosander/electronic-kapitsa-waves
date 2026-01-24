@@ -171,9 +171,9 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
                 gamma_over_T2_valid.extend(gm_over_T2)
                 
                 color, alpha = get_color_and_alpha(m_int, max_m)
-                linestyle = '--' if m_int <= 1 else '-'
+                linestyle = '-' if m_int <= 1 else '-'
                 # Use slightly thicker lines for better visibility on white background
-                linewidth = 2.0 if m_int <= 1 else 2.0
+                linewidth =1.8 if m_int <= 1 else 2.0
                 ax.loglog(T_plot, gm_over_T2, label=fr"$m={m_int}$", 
                          linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
 
@@ -217,7 +217,7 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
         ax.set_ylim([gamma_over_T2_valid.min(), gamma_over_T2_valid.max()])
 
     # ax.set_xlim([T_valid.min(), T_valid.max()])
-    ax.set_ylim(1e-3, 4e0)
+    ax.set_ylim(1e-5, 1e2)
 
     ax.set_xlabel(r"Temperature, $T/T_F$")
     ax.set_ylabel(r"Decay rate (eigenvalue), $\gamma_m / T^2$")
