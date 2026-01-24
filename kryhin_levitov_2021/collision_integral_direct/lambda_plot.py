@@ -86,6 +86,11 @@ RING_WIDTH_FACTOR = 2.5
 MIN_RING_POINTS   = 200
 N_ANGLE_BINS_MIN  = 256
 
+# --- NEW: plotting knobs for ring clarity + speed ---
+PLOT_PWIN = 1.6              # zoom window in px/py around 0 (ring fills panel)
+PLOT_RING_ONLY = True        # mask everything except |p|-1 within a small band
+PLOT_RING_W = None           # if None, uses RING_WIDTH_FACTOR*dp
+
 
 def _as_csr(X):
     if isspmatrix_csr(X):
@@ -99,9 +104,23 @@ def make_index_map(nx: np.ndarray, ny: np.ndarray, Nmax: int, half: int) -> np.n
     return idx_map
 
 
-def build_inv_map(nx: np.ndarray, ny: np.ndarray, idx_map: np.ndarray, Nmax: int, half: int) -> np.ndarray:
-    inv_ix = (-nx + half) % Nmax
-    inv_iy = (-ny + half) % Nmax
+def build_inv_map(nx: np.ndarray, ny: np.ndarray, idx_map: np.ndarray, Nmax: int, half: int,
+                  shift_x: float = 0.0, shift_y: float = 0.0) -> np.ndarray:
+    """
+    Build inversion map for p -> -p.
+    For p = dp*(n+shift), inversion requires:
+      n_inv + shift = -(n + shift)  =>  n_inv = -n - 2*shift
+    This is only an exact integer map when 2*shift is (near) an integer (e.g. 0.0 or 0.5).
+    """
+    sx2 = int(np.rint(2.0 * float(shift_x)))
+    sy2 = int(np.rint(2.0 * float(shift_y)))
+    if abs(2.0 * float(shift_x) - sx2) > 1e-12:
+        sx2 = 0
+    if abs(2.0 * float(shift_y) - sy2) > 1e-12:
+        sy2 = 0
+    
+    inv_ix = (-nx - sx2 + half) % Nmax
+    inv_iy = (-ny - sy2 + half) % Nmax
     inv = idx_map[inv_ix, inv_iy].astype(np.int32)
     return inv
 
@@ -519,9 +538,11 @@ def reconstruct_full_arrays(meta):
     Nmax = int(meta["Nmax"])
     dp   = float(meta["dp"])
     Theta = float(meta["Theta"])
+    shift_x = float(meta.get("shift_x", 0.0))
+    shift_y = float(meta.get("shift_y", 0.0))
     nx, ny, half = build_centered_lattice(Nmax)
-    px = dp * nx.astype(np.float64)
-    py = dp * ny.astype(np.float64)
+    px = dp * (nx.astype(np.float64) + shift_x)
+    py = dp * (ny.astype(np.float64) + shift_y)
     P  = np.sqrt(px * px + py * py)
     eps = P * P
 
@@ -585,7 +606,9 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms, the
     half = int(meta.get("half", Nmax // 2))
 
     idx_map = make_index_map(nx, ny, Nmax, half)
-    inv_map = build_inv_map(nx, ny, idx_map, Nmax, half)
+    shift_x = float(meta.get("shift_x", 0.0))
+    shift_y = float(meta.get("shift_y", 0.0))
+    inv_map = build_inv_map(nx, ny, idx_map, Nmax, half, shift_x=shift_x, shift_y=shift_y)
 
     # full arrays for classification
     f_full = np.asarray(meta["f"], dtype=np.float64)
@@ -972,10 +995,18 @@ def main():
                     result_gammas[m] = gamma
                     result_eigenvectors[m] = v_full if not np.isnan(gamma) else None
                 
+                # Extract grid metadata before cleaning up
+                grid_meta = {
+                    "Nmax": int(meta["Nmax"]),
+                    "dp": float(meta["dp"]),
+                    "shift_x": float(meta.get("shift_x", 0.0)),
+                    "shift_y": float(meta.get("shift_y", 0.0)),
+                }
+                
                 # Clean up memory
                 del M, meta, Ma, active, sel
                 
-                return (float(T_file), float(T_file), result_gammas, result_eigenvectors)
+                return (float(T_file), float(T_file), result_gammas, result_eigenvectors, grid_meta)
             except Exception as e:
                 print(f"[Error] Processing file {path}: {e}")
                 import traceback
@@ -999,7 +1030,7 @@ def main():
                     batch_results.append(result)
             
             # Collect batch results
-            for theta_used, T_file, result_gammas, result_eigenvectors in batch_results:
+            for theta_used, T_file, result_gammas, result_eigenvectors, grid_meta in batch_results:
                 Ts_used.append(theta_used)
                 Ts_req_used.append(T_file)
                 for m in ms:
@@ -1008,11 +1039,13 @@ def main():
             # Save eigenvectors to NPZ incrementally
             print(f"[Saving] Saving eigenvectors for batch {batch_idx + 1} to {OUT_EIGENVECTORS_NPZ}...")
             batch_eigenvectors_dict = {}
+            batch_grid_meta = {}
             for m in ms:
                 if m not in batch_eigenvectors_dict:
                     batch_eigenvectors_dict[m] = {}
-                for i, (theta_used, _, _, result_eigenvectors) in enumerate(batch_results):
+                for i, (theta_used, _, _, result_eigenvectors, grid_meta) in enumerate(batch_results):
                     batch_eigenvectors_dict[m][theta_used] = result_eigenvectors[m]
+                    batch_grid_meta[theta_used] = grid_meta
             
             # Merge with existing and save
             if os.path.exists(OUT_EIGENVECTORS_NPZ):
@@ -1024,11 +1057,16 @@ def main():
                             existing_dict = existing_data[key].item()
                             existing_dict.update(batch_eigenvectors_dict[m])
                             batch_eigenvectors_dict[m] = existing_dict
+                    if "grid_meta" in existing_data:
+                        gm = existing_data["grid_meta"].item()
+                        gm.update(batch_grid_meta)
+                        batch_grid_meta = gm
                 except:
                     pass
             
             # Save updated eigenvectors
             save_dict = {f'eigenvectors_m{m}': batch_eigenvectors_dict[m] for m in ms}
+            save_dict["grid_meta"] = batch_grid_meta
             np.savez_compressed(OUT_EIGENVECTORS_NPZ, **save_dict)
             
             # Save CSV incrementally
@@ -1100,12 +1138,15 @@ def main():
     else:
         # Load eigenvectors from NPZ (they're stored as dict: T -> v_full)
         eigenvectors_npz = {}
+        grid_meta_npz = {}
         try:
             data = np.load(OUT_EIGENVECTORS_NPZ, allow_pickle=True)
             for m in ms:
                 key = f'eigenvectors_m{m}'
                 if key in data:
                     eigenvectors_npz[m] = data[key].item()
+            if "grid_meta" in data:
+                grid_meta_npz = data["grid_meta"].item()
             print(f"[Loading] Loaded eigenvectors for {len(eigenvectors_npz.get(ms[0], {}))} temperatures")
         except Exception as e:
             print(f"[Warning] Could not load eigenvectors from NPZ: {e}")
@@ -1130,9 +1171,24 @@ def main():
                                 break
                 eigenvectors[m].append(v_full)
         
+        # Build a per-T grid meta list aligned with Ts (tolerant match)
+        grid_meta_list = []
+        for T in Ts:
+            T_float = float(T)
+            gm = None
+            if grid_meta_npz:
+                if T_float in grid_meta_npz:
+                    gm = grid_meta_npz[T_float]
+                else:
+                    for T_npz, g in grid_meta_npz.items():
+                        if abs(T_float - float(T_npz)) < max(1e-3, 0.01 * max(abs(T_float), abs(float(T_npz)))):
+                            gm = g
+                            break
+            grid_meta_list.append(gm)
+        
         # --- plot eigenfunction diagrams in table format (rows = m, columns = T) ---
         # Process in batches to avoid memory issues
-        plot_eigenfunction_table_batched(Ts, eigenvectors, ms)
+        plot_eigenfunction_table_batched(Ts, eigenvectors, ms, grid_meta_list=grid_meta_list)
 
 
 def values_to_grid(values_flat: np.ndarray, nx: np.ndarray, ny: np.ndarray, half: int, Nmax: int):
@@ -1149,7 +1205,47 @@ def create_pcolormesh_coords(half: int, dp: float, Nmax: int):
     return X, Y
 
 
-def plot_eigenfunction_table_batched(Ts, eigenvectors, ms, max_temps_plot=20):
+_plot_geom_cache = {}
+
+def _plot_geom(Nmax: int, dp: float, shift_x: float, shift_y: float,
+               pwin: float, ring_only: bool, ring_w: float):
+    """
+    Precompute slice indices + extent (+ optional ring mask) for fast repeated plotting at fixed grid.
+    """
+    key = (int(Nmax), float(dp), float(shift_x), float(shift_y), float(pwin), bool(ring_only),
+           None if ring_w is None else float(ring_w))
+    if key in _plot_geom_cache:
+        return _plot_geom_cache[key]
+
+    half = Nmax // 2
+    # center coordinates: px(i) = dp*((i-half)+shift_x)
+    # choose i-range so px in [-pwin, +pwin]
+    i0 = int(np.floor(half - shift_x - (pwin / dp)))
+    i1 = int(np.ceil (half - shift_x + (pwin / dp))) + 1
+    j0 = int(np.floor(half - shift_y - (pwin / dp)))
+    j1 = int(np.ceil (half - shift_y + (pwin / dp))) + 1
+    i0 = max(0, min(Nmax, i0))
+    i1 = max(0, min(Nmax, i1))
+    j0 = max(0, min(Nmax, j0))
+    j1 = max(0, min(Nmax, j1))
+
+    xs = dp * ((np.arange(i0, i1) - half) + shift_x)
+    ys = dp * ((np.arange(j0, j1) - half) + shift_y)
+    extent = [xs[0] - dp/2, xs[-1] + dp/2, ys[0] - dp/2, ys[-1] + dp/2]
+
+    ring_mask = None
+    if ring_only:
+        rw = float(ring_w) if ring_w is not None else (RING_WIDTH_FACTOR * dp)
+        Xc, Yc = np.meshgrid(xs, ys, indexing="ij")
+        P = np.sqrt(Xc*Xc + Yc*Yc)
+        ring_mask = (np.abs(P - 1.0) > rw)
+
+    out = (slice(i0, i1), slice(j0, j1), extent, ring_mask)
+    _plot_geom_cache[key] = out
+    return out
+
+
+def plot_eigenfunction_table_batched(Ts, eigenvectors, ms, max_temps_plot=20, grid_meta_list=None):
     """
     Plot eigenfunction table, limiting number of temperatures to avoid memory issues.
     If there are more temperatures than max_temps_plot, select evenly spaced ones.
@@ -1164,10 +1260,11 @@ def plot_eigenfunction_table_batched(Ts, eigenvectors, ms, max_temps_plot=20):
         selected_indices = list(range(len(Ts)))
     
     # Use the existing function
-    plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=selected_indices, max_Ts=None)
+    plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=selected_indices, max_Ts=None,
+                             grid_meta_list=grid_meta_list)
 
 
-def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_Ts=None):
+def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_Ts=None, grid_meta_list=None):
     """
     Plot eigenfunction diagrams in a table: rows = m values, columns = selected temperatures.
     
@@ -1177,8 +1274,10 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
         ms: list of m values to plot
         selected_T_indices: list of indices into Ts to plot (if None, use all temperatures)
         max_Ts: maximum number of temperatures to plot (if None, use all; ignored if selected_T_indices is provided)
+        grid_meta_list: list of grid metadata dicts (one per T in Ts), or None to use slow fallback
     """
     from matplotlib.colors import TwoSlopeNorm
+    from matplotlib.patches import Circle
     
     # Select temperatures to plot - use ALL by default
     if selected_T_indices is None:
@@ -1202,92 +1301,48 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
         print("[Warning] No valid eigenvectors found for plotting.")
         return
     
-    # Load matrices for each selected temperature to get correct grid parameters
-    # Try to match eigenvectors to the correct file by checking grid size
-    grid_params = {}  # T_idx -> (nx, ny, half, Nmax, dp, path)
-    for T_idx in selected_T_indices:
-        T_val = float(Ts[T_idx])
-        
-        # Get eigenvector size for this temperature (check first valid m)
-        eigenvector_size = None
-        for m in valid_ms:
+    # Use grid_meta from NPZ if available (fast, no disk scans).
+    # Fallback: if grid_meta missing, we can still try old slow behavior, but fast path is preferred.
+    if grid_meta_list is None:
+        grid_meta_list = [None] * len(Ts)
+    
+    # Compute global min/max across all eigenmodes for a common colorbar (in the ZOOMED window only)
+    global_vmax_abs = 0.0
+    for row_idx, m in enumerate(valid_ms):
+        for col_idx, T_idx in enumerate(selected_T_indices):
             v_full = eigenvectors[m][T_idx]
             if v_full is not None:
-                eigenvector_size = len(v_full) if hasattr(v_full, '__len__') else 0
-                break
-        
-        # Find all files with this temperature
-        matching_files = []
-        if os.path.isdir(IN_DIR):
-            files = [fn for fn in os.listdir(IN_DIR) if fn.endswith(".pkl") and "_T" in fn]
-            for fn in files:
-                try:
-                    tpart = fn.split("_T", 1)[1].rsplit(".pkl", 1)[0]
-                    T_file = float(tpart)
-                    if abs(T_file - T_val) < max(1e-3, 0.01 * max(abs(T_file), abs(T_val))):
-                        matching_files.append((T_file, os.path.join(IN_DIR, fn)))
-                except:
+                gm = grid_meta_list[T_idx]
+                if gm is None:
                     continue
-        
-        # Try to find file with matching grid size
-        found_match = False
-        for T_file, path in matching_files:
-            try:
-                with open(path, "rb") as fp:
-                    M, meta = pickle.load(fp)
-                
-                Nmax = int(meta["Nmax"])
-                expected_size = Nmax * Nmax
-                
-                # If we have eigenvector size, check if it matches
-                if eigenvector_size is not None and expected_size != eigenvector_size:
-                    continue  # Try next file
-                
-                # Reconstruct arrays if needed
-                if "nx" not in meta or "px" not in meta:
-                    nx, ny, half, px, py, P, eps, f, w = reconstruct_full_arrays(meta)
-                    meta["nx"] = nx
-                    meta["ny"] = ny
-                    meta["half"] = half
-                
-                nx = np.asarray(meta["nx"], dtype=np.int32)
-                ny = np.asarray(meta["ny"], dtype=np.int32)
-                half = int(meta.get("half", Nmax // 2))
-                dp = float(meta["dp"])
-                
-                grid_params[T_idx] = (nx, ny, half, Nmax, dp)
-                found_match = True
-                break
-            except Exception as e:
-                continue
-        
-        if not found_match:
-            # Fallback: use first matching file
-            if matching_files:
-                try:
-                    T_file, path = matching_files[0]
-                    with open(path, "rb") as fp:
-                        M, meta = pickle.load(fp)
-                    
-                    if "nx" not in meta or "px" not in meta:
-                        nx, ny, half, px, py, P, eps, f, w = reconstruct_full_arrays(meta)
-                        meta["nx"] = nx
-                        meta["ny"] = ny
-                        meta["half"] = half
-                    
-                    nx = np.asarray(meta["nx"], dtype=np.int32)
-                    ny = np.asarray(meta["ny"], dtype=np.int32)
-                    Nmax = int(meta["Nmax"])
-                    half = int(meta.get("half", Nmax // 2))
-                    dp = float(meta["dp"])
-                    
-                    grid_params[T_idx] = (nx, ny, half, Nmax, dp)
-                except Exception as e:
-                    print(f"[Error] Could not load matrix for T={T_val:.6g}: {e}")
-                    return
-            else:
-                print(f"[Error] No matrix file found for T={T_val:.6g}")
-                return
+                Nmax_T = int(gm["Nmax"])
+                dp_T = float(gm["dp"])
+                shift_x = float(gm.get("shift_x", 0.0))
+                shift_y = float(gm.get("shift_y", 0.0))
+                if len(v_full) != Nmax_T * Nmax_T:
+                    continue
+                grid = np.asarray(v_full, dtype=np.float64).reshape((Nmax_T, Nmax_T))
+                sx, sy, extent, ring_mask = _plot_geom(
+                    Nmax_T, dp_T, shift_x, shift_y,
+                    pwin=PLOT_PWIN, ring_only=PLOT_RING_ONLY, ring_w=PLOT_RING_W
+                )
+                g = grid[sx, sy]
+                if ring_mask is not None:
+                    g = np.ma.array(g, mask=ring_mask)
+                    if g.count() == 0:
+                        continue
+                    vmax_abs = float(np.max(np.abs(g.compressed())))
+                else:
+                    vmax_abs = float(np.max(np.abs(g)))
+                global_vmax_abs = max(global_vmax_abs, vmax_abs)
+    
+    if global_vmax_abs > 0:
+        global_vmin = -global_vmax_abs
+        global_vmax = global_vmax_abs
+    else:
+        global_vmin, global_vmax = -0.1, 0.1
+    
+    global_norm = TwoSlopeNorm(vmin=global_vmin, vcenter=0, vmax=global_vmax)
     
     # Create table layout: rows = m values, columns = selected temperatures
     nrows = len(valid_ms)
@@ -1305,36 +1360,6 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
     else:
         axes = axes.reshape(nrows, ncols)
     
-    # Compute global min/max across all eigenmodes for common colorbar
-    global_vmax_abs = 0.0
-    for row_idx, m in enumerate(valid_ms):
-        for col_idx, T_idx in enumerate(selected_T_indices):
-            v_full = eigenvectors[m][T_idx]
-            if v_full is not None:
-                nx_T, ny_T, half_T, Nmax_T, dp_T = grid_params[T_idx]
-                
-                # Verify eigenvector size matches expected grid size
-                expected_size = Nmax_T * Nmax_T
-                actual_size = len(v_full) if hasattr(v_full, '__len__') else 0
-                
-                if actual_size == expected_size:
-                    grid = values_to_grid(v_full, nx_T, ny_T, half_T, Nmax_T)
-                    grid_valid = grid[~np.isnan(grid)]
-                    if grid_valid.size > 0:
-                        vmax_abs = float(np.max(np.abs(grid_valid)))
-                        global_vmax_abs = max(global_vmax_abs, vmax_abs)
-    
-    if global_vmax_abs > 0:
-        global_vmin = -global_vmax_abs
-        global_vmax = global_vmax_abs
-    else:
-        global_vmin, global_vmax = -0.1, 0.1
-    
-    global_norm = TwoSlopeNorm(vmin=global_vmin, vcenter=0, vmax=global_vmax)
-    
-    # Plotting scale factor
-    PLOT_SCALE_FACTOR = 1.0
-    
     im_common = None
     
     # Fill table: rows = m values, columns = selected temperatures
@@ -1344,40 +1369,46 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
             v_full = eigenvectors[m][T_idx]
             
             if v_full is not None:
-                # Use grid parameters for this specific temperature
-                nx_T, ny_T, half_T, Nmax_T, dp_T = grid_params[T_idx]
-                
-                # Verify eigenvector size matches expected grid size
-                expected_size = Nmax_T * Nmax_T
-                actual_size = len(v_full) if hasattr(v_full, '__len__') else 0
-                
-                if actual_size != expected_size:
-                    print(f"[Warning] Eigenvector size mismatch for T={Ts[T_idx]:.6g}, m={m}: "
-                          f"expected {expected_size}, got {actual_size}. Skipping plot.")
+                gm = grid_meta_list[T_idx]
+                if gm is None:
                     ax.axis("off")
                     continue
-                
-                grid = values_to_grid(v_full, nx_T, ny_T, half_T, Nmax_T)
-                
-                # Create coordinates for this grid
-                X, Y = create_pcolormesh_coords(half_T, dp_T, Nmax_T)
-                
-                # Compute plot limits for this grid
-                pmin = (-half_T) * dp_T
-                pmax = (half_T - 1) * dp_T
-                pcenter = (pmin + pmax) / 2.0
-                prange = (pmax - pmin) / 2.0
-                pmin_plot = pcenter - prange * PLOT_SCALE_FACTOR
-                pmax_plot = pcenter + prange * PLOT_SCALE_FACTOR
-                
-                # Use pcolormesh for smoother ring visualization
-                im = ax.pcolormesh(X, Y, grid.T, cmap="seismic", norm=global_norm, 
-                                  shading='flat', rasterized=True)
+                Nmax_T = int(gm["Nmax"])
+                dp_T = float(gm["dp"])
+                shift_x = float(gm.get("shift_x", 0.0))
+                shift_y = float(gm.get("shift_y", 0.0))
+                if len(v_full) != Nmax_T * Nmax_T:
+                    print(f"[Warning] Eigenvector size mismatch for T={Ts[T_idx]:.6g}, m={m}: "
+                          f"expected {Nmax_T*Nmax_T}, got {len(v_full)}. Skipping plot.")
+                    ax.axis("off")
+                    continue
+
+                grid = np.asarray(v_full, dtype=np.float64).reshape((Nmax_T, Nmax_T))
+                sx, sy, extent, ring_mask = _plot_geom(
+                    Nmax_T, dp_T, shift_x, shift_y,
+                    pwin=PLOT_PWIN, ring_only=PLOT_RING_ONLY, ring_w=PLOT_RING_W
+                )
+                g = grid[sx, sy]  # (x,y) indexing
+                if ring_mask is not None:
+                    g = np.ma.array(g, mask=ring_mask)
+
+                # imshow expects [y,x] layout, so transpose
+                im = ax.imshow(
+                    g.T,
+                    extent=extent,
+                    origin="lower",
+                    cmap="seismic",
+                    norm=global_norm,
+                    aspect="equal",
+                )
                 im_common = im
-                
-                ax.set_xlim(pmin_plot, pmax_plot)
-                ax.set_ylim(pmin_plot, pmax_plot)
-                
+
+                # Overlay the Fermi circle for reference (ring pops visually)
+                ax.add_patch(Circle((0.0, 0.0), 1.0, fill=False, linewidth=0.6, alpha=0.6, color='black'))
+
+                ax.set_xlim(-PLOT_PWIN, PLOT_PWIN)
+                ax.set_ylim(-PLOT_PWIN, PLOT_PWIN)
+
                 # Title: show m value on left column, T on top row
                 if col_idx == 0:
                     ax.set_ylabel(f"$m={m}$", fontsize=14, rotation=0, labelpad=20)

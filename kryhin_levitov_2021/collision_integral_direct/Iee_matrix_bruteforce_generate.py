@@ -380,7 +380,7 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
                         n2px = n1x + n2x - n1px
                         n2py = n1y + n2y - n1py
                         ix, iy = n2px + half, n2py + half
-                        if ix < 0 or ix >= Nmax or iy < 0 or iy >= Nmax:
+                        if ix < 0 or ix >= Nmax_T or iy < 0 or iy >= Nmax_T:
                             continue
                         i2p = int(idx_map[ix, iy])
                         if i2p < 0:
