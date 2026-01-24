@@ -73,6 +73,8 @@ BATCH_SIZE = 5  # Process this many temperatures at a time
 MAX_PARALLEL_FILES = 3  # Maximum number of files to process in parallel (reduced to save memory)
 
 # --- NEW: eigenmode selection knobs (same spirit as your diagnostics code) ---
+USE_HARMONIC_PROJECTION = True   # Use fast harmonic projection instead of expensive eigsh (recommended)
+MAX_M_FOR_PROJECTION = 12        # Safety limit for harmonic projection
 N_EIG_CANDIDATES = 120#120   # compute this many eigenpairs near sigma~0 (reduced to avoid memory issues)
 SIGMA = 1e-8             # shift-invert target (near slow modes, increased to help convergence without reg)
 ZERO_TOL = 1e-10         # used only if you decide to drop conserved; we keep them by default
@@ -582,6 +584,134 @@ def get_active_operator(M, meta):
     return Ma, active
 
 
+def _w_inner(a, b, w):
+    """Weighted inner product: <a, b>_w = sum(a * w * b)"""
+    return float(np.dot(a, w * b))
+
+
+def _w_orthonormalize(vecs, w):
+    """Weighted Gram-Schmidt. Returns list of orthonormal vectors in <.,.>_w."""
+    out = []
+    for v in vecs:
+        v = v.astype(np.float64, copy=True)
+        for q in out:
+            v -= _w_inner(q, v, w) * q
+        n2 = _w_inner(v, v, w)
+        if n2 > 1e-30:
+            out.append(v / np.sqrt(n2))
+    return out
+
+
+def gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False):
+    """
+    Compute gamma_m using tiny projected generalized eigenproblems in harmonic subspaces.
+    This avoids the expensive eigsh call by projecting onto cos(m*theta) and sin(m*theta) basis.
+    
+    Args:
+        Ma: active-only collision operator (csr)
+        meta: metadata dictionary
+        active: active indices array
+        ms: list of angular harmonic numbers to compute
+        ring_only: if True, restrict to near-Fermi-surface points
+    
+    Returns:
+        dict: {m: gamma} for each m in ms
+    """
+    # Reconstruct geometry + weights
+    nx, ny, half, px, py, P, eps, f, w_full = reconstruct_full_arrays(meta)
+    w_act = np.clip(w_full[active], 0.0, None)
+    w_safe = np.where(w_act > 0, w_act, 1e-30)
+
+    A = _as_csr(-Ma)  # positive semidefinite
+    px_act = px[active]
+    py_act = py[active]
+    P_act = P[active]
+
+    # Optional: restrict to near-FS points to make projection even more "ring-like"
+    if ring_only:
+        dp_val = float(meta["dp"])
+        Theta = float(meta.get("Theta", 0.0))
+        rw = max(RING_WIDTH_FACTOR * dp_val, 2.0 * Theta)
+        mask = np.abs(P_act - 1.0) <= rw
+        # Keep at least something
+        if np.count_nonzero(mask) > 32:
+            idx = np.where(mask)[0]
+            # Restrict everything - use proper scipy sparse indexing
+            A = A[idx, :][:, idx]  # submatrix (row slice then column slice)
+            w_safe = w_safe[idx]
+            px_act = px_act[idx]
+            py_act = py_act[idx]
+            P_act = P_act[idx]
+
+    theta = np.arctan2(py_act, px_act)
+
+    # Build invariant vectors (on this restricted set)
+    inv_vecs = [
+        np.ones_like(theta),          # density
+        px_act.copy(),                # momentum x
+        py_act.copy(),                # momentum y
+    ]
+    inv_orth = _w_orthonormalize(inv_vecs, w_safe)
+
+    out = {}
+    for m in ms:
+        if m == 0:
+            # Density is invariant; after orth against invariants it becomes ~0
+            out[m] = 0.0
+            continue
+
+        uc = np.cos(m * theta)
+        us = np.sin(m * theta)
+
+        # W-orthogonalize against invariants
+        for q in inv_orth:
+            uc -= _w_inner(q, uc, w_safe) * q
+            us -= _w_inner(q, us, w_safe) * q
+
+        # Normalize
+        nc2 = _w_inner(uc, uc, w_safe)
+        ns2 = _w_inner(us, us, w_safe)
+
+        basis = []
+        if nc2 > 1e-30:
+            basis.append(uc / np.sqrt(nc2))
+        if ns2 > 1e-30:
+            basis.append(us / np.sqrt(ns2))
+
+        if len(basis) == 0:
+            out[m] = np.nan
+            continue
+        if len(basis) == 1:
+            u = basis[0]
+            Au = A.dot(u)
+            num = float(np.dot(u, Au))
+            den = _w_inner(u, u, w_safe)
+            out[m] = max(0.0, num / max(den, 1e-30))
+            continue
+
+        U = np.column_stack(basis)  # n x 2
+
+        # Form 2x2 projected matrices
+        AU = A.dot(U)               # n x 2
+        C = U.T @ AU                # 2 x 2
+        S = (U.T * w_safe) @ U      # 2 x 2  (U.T diag(w) U)
+
+        # Generalized eigenvalues of (C,S)
+        try:
+            evals = np.linalg.eigvals(np.linalg.solve(S, C))
+            evals = np.real(evals)
+            evals = evals[np.isfinite(evals)]
+            evals = evals[evals >= -1e-12]
+            if evals.size == 0:
+                out[m] = np.nan
+            else:
+                out[m] = float(np.min(np.maximum(evals, 0.0)))
+        except np.linalg.LinAlgError:
+            out[m] = np.nan
+
+    return out
+
+
 def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms, theta_val: float, progress_callback=None):
     """
     Solve (-Ma) v = gamma * W v near gamma~0, classify by (i) inversion parity and (ii) m_est from sign-switches,
@@ -1031,6 +1161,10 @@ def main():
         eigenvectors = {m: [] for m in ms}  # Will be empty for existing data (eigenvectors not saved in CSV)
     else:
         print(f"=== Computing eigenvalues gamma_m(T) for {len(Thetas_to_process)} new temperatures ===")
+        if USE_HARMONIC_PROJECTION:
+            print(f"[Method] Using fast harmonic projection (bypasses expensive eigsh)")
+        else:
+            print(f"[Method] Using eigsh solver (slower but provides eigenvectors)")
         print(f"[Batch processing] Processing in batches of {BATCH_SIZE} files to avoid memory issues...")
         
         # Process files in batches to avoid memory issues
@@ -1093,26 +1227,36 @@ def main():
                 print(f" ✓ shape={Ma.shape} ({active_time:.2f}s)", flush=True)
                 
                 # Process eigenvalues
-                print(f"  [3/4] Computing eigenvalues...", flush=True)
+                if USE_HARMONIC_PROJECTION:
+                    print(f"  [3/4] Computing eigenvalues (harmonic projection method)...", flush=True)
+                else:
+                    print(f"  [3/4] Computing eigenvalues (eigsh method)...", flush=True)
                 eig_sub_start = time.time()
                 
-                def eig_progress(msg):
-                    """Progress callback for eigenvalue computation."""
-                    print(msg, flush=True)
+                if USE_HARMONIC_PROJECTION:
+                    # Fast harmonic projection method (recommended)
+                    result_gammas = gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False)
+                    result_eigenvectors = {m: None for m in ms}  # Skip heavy eigenvectors
+                else:
+                    # Original eigsh method (slower but provides eigenvectors)
+                    def eig_progress(msg):
+                        """Progress callback for eigenvalue computation."""
+                        print(msg, flush=True)
+                    
+                    sel = select_physical_eigs_per_m(Ma, meta, active, ms, theta_val=float(T_file), progress_callback=eig_progress)
+                    result_gammas = {}
+                    result_eigenvectors = {}
+                    for m in ms:
+                        gamma, v_full = sel[m]
+                        result_gammas[m] = gamma
+                        result_eigenvectors[m] = v_full if not np.isnan(gamma) else None
                 
-                sel = select_physical_eigs_per_m(Ma, meta, active, ms, theta_val=float(T_file), progress_callback=eig_progress)
                 eig_time = time.time() - start_time
                 eig_sub_time = time.time() - eig_sub_start
                 print(f"  [3/4] ✓ Complete! ({eig_sub_time:.2f}s)", flush=True)
                 
-                # Extract results
+                # Extract results (already done above, but keep for consistency)
                 print(f"  [4/4] Extracting results...", end='', flush=True)
-                result_gammas = {}
-                result_eigenvectors = {}
-                for m in ms:
-                    gamma, v_full = sel[m]
-                    result_gammas[m] = gamma
-                    result_eigenvectors[m] = v_full if not np.isnan(gamma) else None
                 
                 # Extract grid metadata before cleaning up
                 grid_meta = {
@@ -1123,7 +1267,8 @@ def main():
                 }
                 
                 # Clean up memory
-                del M, meta, Ma, active, sel
+                del M, meta, Ma, active
+                # Note: sel is only defined in the else branch, so it will be garbage collected automatically
                 
                 total_time = time.time() - start_time
                 print(f" ✓ Complete! Total time: {total_time:.2f}s", flush=True)
