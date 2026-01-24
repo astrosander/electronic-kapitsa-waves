@@ -25,7 +25,7 @@ except ImportError:
 
 N_WORKERS = int(os.environ.get('N_WORKERS', multiprocessing.cpu_count() or 4))
 print(f"[Parallel] Using {N_WORKERS} workers for temperature processing")
-plt.rcParams['text.usetex'] = True
+# plt.rcParams['text.usetex'] = True
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
 plt.rcParams['font.size'] = 20
@@ -524,157 +524,6 @@ def enforce_w_self_adjoint(A, W, enforce=True):
     return A, d
 
 
-def harmonic_ring_weights(u, theta, w_safe, P_act, dp_val, Theta, m_list, ring_w=None):
-    """
-    Compute ring-weighted harmonic weights for u against cos(mθ), sin(mθ).
-    Returns dict m -> weight (not necessarily normalized).
-    """
-    if ring_w is None:
-        # keep it dp-controlled at low T; allow a bit thicker when Theta is larger
-        ring_w = max(3.0 * dp_val, 12.0 * dp_val, 2.0 * Theta)
-
-    mask = np.abs(P_act - 1.0) <= ring_w
-    if np.count_nonzero(mask) < 32:
-        mask = np.ones_like(u, dtype=bool)
-
-    th = theta[mask]
-    uu = u[mask]
-    ww = w_safe[mask]
-
-    out = {}
-    for m in m_list:
-        c = np.cos(m * th)
-        s = np.sin(m * th)
-
-        # W-normalize templates (on the ring mask)
-        nc = np.sqrt(np.dot(c, ww * c)) + 1e-30
-        ns = np.sqrt(np.dot(s, ww * s)) + 1e-30
-        c /= nc
-        s /= ns
-
-        ac = float(np.dot(uu, ww * c))
-        ase = float(np.dot(uu, ww * s))
-        out[m] = ac * ac + ase * ase
-    return out
-
-
-def projected_subspace_eigs(A, w_safe, inv_orth, cand_cols):
-    """
-    Build U from cand_cols with invariants removed and W-orthonormalization, then solve C = U^T A U.
-    Returns (evals_sorted, u_list_sorted, U) with u normalized in W-norm.
-    """
-    # Remove invariants
-    cols = []
-    for u in cand_cols:
-        u = u.astype(np.float64, copy=True)
-        for q in inv_orth:
-            u -= _w_inner(q, u, w_safe) * q
-        cols.append(u)
-
-    # W-orthonormalize => U^T W U = I
-    U_list = _w_orthonormalize(cols, w_safe)
-    if len(U_list) == 0:
-        return np.array([]), [], None
-
-    U = np.column_stack(U_list)         # n x r
-    C = U.T @ (A.dot(U))                # r x r
-    C = 0.5 * (C + C.T)                 # defensive symmetrize
-
-    evals, evecs = np.linalg.eigh(C)
-    order = np.argsort(evals)
-    evals = np.real(evals[order])
-    evecs = np.real(evecs[:, order])
-
-    u_list = []
-    for j in range(evecs.shape[1]):
-        alpha = evecs[:, j]
-        u = U @ alpha
-
-        # W-normalize
-        wu = w_safe * u
-        nrm = np.sqrt(np.dot(u, wu)) + 1e-30
-        u_list.append(u / nrm)
-
-    # clamp tiny negatives
-    evals = np.maximum(evals, 0.0)
-    return evals, u_list, U
-
-
-def odd_subspace_gammas(A, w_safe, inv_orth, theta, z, P_act, dp_val, Theta,
-                        odd_ms_out, Kodd=25, purity_min=0.20, return_all=False):
-    """
-    Build a single odd-harmonic subspace (1,3,5,...,Kodd) with radial basis,
-    solve all subspace eigenpairs, then classify each eigenmode by dominant odd harmonic
-    and return best gamma for each m in odd_ms_out.
-
-    odd_ms_out: e.g. [1,3,5,7]
-    """
-    # Radial basis (keep yours; you can tweak later)
-    eps = 1e-3
-    radial = [
-        np.ones_like(z),
-        z,
-        z * np.log(np.abs(z) + eps),
-        z * z,
-    ]
-
-    # Candidate columns spanning the odd subspace
-    cols = []
-    for k in range(1, Kodd + 1, 2):
-        ck = np.cos(k * theta)
-        sk = np.sin(k * theta)
-        for r in radial:
-            cols.append(r * ck)
-            cols.append(r * sk)
-
-    evals, u_list, _U = projected_subspace_eigs(A, w_safe, inv_orth, cols)
-    if evals.size == 0:
-        out_g = {m: np.nan for m in odd_ms_out}
-        out_u = {m: None for m in odd_ms_out}
-        return (out_g, out_u, []) if return_all else (out_g, out_u)
-
-    # classify eigenmodes by ring harmonic content
-    odd_ms_for_class = sorted(set([m for m in odd_ms_out if m % 2 == 1 and m > 0]))
-    found_g = {m: np.nan for m in odd_ms_for_class}
-    found_u = {m: None for m in odd_ms_for_class}
-    all_modes = []
-
-    for gamma, u in zip(evals, u_list):
-        weights = harmonic_ring_weights(
-            u=u, theta=theta, w_safe=w_safe, P_act=P_act, dp_val=dp_val, Theta=Theta,
-            m_list=[m for m in range(1, Kodd + 1, 2)]
-        )
-        odd_total = float(sum(weights.values()))
-        if odd_total <= 1e-40:
-            continue
-
-        # dominant odd harmonic in the computed window
-        m_star = max(weights.keys(), key=lambda m: weights[m])
-        purity = float(weights[m_star] / odd_total)
-
-        all_modes.append((float(gamma), int(m_star), float(purity)))
-
-        if purity < purity_min:
-            continue
-        if m_star not in found_g:
-            continue
-
-        if (not np.isfinite(found_g[m_star])) or (gamma < found_g[m_star]):
-            found_g[m_star] = float(gamma)
-            found_u[m_star] = u
-
-        # optional early exit: if we filled all requested odd m's
-        if all(np.isfinite(found_g[m]) for m in odd_ms_for_class):
-            # don't break too aggressively if you want "best-of-best"; but usually fine:
-            pass
-
-    # Ensure we return keys exactly matching odd_ms_out
-    out_g = {m: found_g.get(m, np.nan) for m in odd_ms_out}
-    out_u = {m: found_u.get(m, None) for m in odd_ms_out}
-
-    return (out_g, out_u, all_modes) if return_all else (out_g, out_u)
-
-
 def projected_gamma(A, w_safe, inv_orth, cand_cols, return_basis=False):
     """
     Compute gamma from a set of candidate columns by:
@@ -738,6 +587,75 @@ def projected_gamma(A, w_safe, inv_orth, cand_cols, return_basis=False):
     if return_basis:
         return gamma_min, u_min, U, alpha
     return gamma_min, u_min
+
+
+def projected_ritz_pairs(A, w_safe, inv_orth, cand_cols, n_pairs=12):
+    """
+    Like projected_gamma, but returns several lowest Ritz pairs (gamma, u_min).
+    Returns list of (gamma, u) tuples.
+    """
+    # Remove invariants
+    cols = []
+    for u in cand_cols:
+        u = u.astype(np.float64, copy=True)
+        for q in inv_orth:
+            u -= _w_inner(q, u, w_safe) * q
+        cols.append(u)
+
+    # W-orthonormalize
+    U_list = _w_orthonormalize(cols, w_safe)
+    if len(U_list) == 0:
+        return []
+
+    U = np.column_stack(U_list)          # n x r
+    C = U.T @ (A.dot(U))                 # r x r
+    C = 0.5 * (C + C.T)
+
+    evals, evecs = np.linalg.eigh(C)
+    order = np.argsort(evals)
+    evals = evals[order]
+    evecs = evecs[:, order]
+
+    out = []
+    for j in range(min(n_pairs, len(evals))):
+        lam = float(evals[j])
+        if not np.isfinite(lam):
+            continue
+        gamma = max(0.0, lam)
+
+        alpha = evecs[:, j]
+        u = U @ alpha
+
+        # Normalize in W-norm
+        wu = w_safe * u
+        nrm = np.sqrt(np.dot(u, wu))
+        if nrm > 1e-30:
+            u = u / nrm
+        out.append((gamma, u))
+    return out
+
+
+def odd_sector_candidates(A, w_safe, inv_orth, theta, z, Kodd=25, n_pairs=12):
+    """
+    Build odd-sector basis and return several lowest Ritz pairs.
+    """
+    eps = 1e-3
+    radial = [
+        np.ones_like(z),
+        z,
+        z * np.log(np.abs(z) + eps),
+        z * z,
+    ]
+
+    cols = []
+    for k in range(1, Kodd + 1, 2):
+        ck = np.cos(k * theta)
+        sk = np.sin(k * theta)
+        for r in radial:
+            cols.append(r * ck)
+            cols.append(r * sk)
+
+    return projected_ritz_pairs(A, w_safe, inv_orth, cols, n_pairs=n_pairs)
 
 
 def compute_fft_harmonic_spectrum(u_min, theta, P_act, w_safe, dp_val, Theta, max_harmonic=15):
@@ -886,51 +804,81 @@ def gammas_by_harmonic_projection(Ma, meta, active, ms, ring_only=False):
     out = {}
     eigenvectors_out = {}
     Nstates = int(nx.size)  # Total number of states in full lattice
-
-    # Fill m=0 directly
-    if 0 in ms:
-        out[0] = 0.0
-        eigenvectors_out[0] = None
-
-    # --- NEW: solve all odd m's in one shot ---
-    odd_ms_out = [m for m in ms if (m % 2 == 1 and m > 0)]
-    if len(odd_ms_out) > 0:
-        odd_g, odd_u, odd_modes = odd_subspace_gammas(
-            A=A, w_safe=w_safe, inv_orth=inv_orth,
-            theta=theta, z=z, P_act=P_act, dp_val=dp_val, Theta=Theta,
-            odd_ms_out=odd_ms_out, Kodd=25, purity_min=0.20, return_all=True
-        )
-
-        # Diagnostics: print the first few odd modes
-        odd_modes_sorted = sorted(odd_modes, key=lambda t: t[0])[:10]
-        if len(odd_modes_sorted) > 0:
-            msg = ", ".join([f"(γ={g:.3e}, m*={mstar}, pur={pur:.2f})" for g, mstar, pur in odd_modes_sorted])
-            print(f"    [odd-subspace] lowest modes: {msg}")
-
-        for m in odd_ms_out:
-            gm = odd_g.get(m, np.nan)
-            um = odd_u.get(m, None)
-
-            if np.isfinite(gm):
-                print(f"    [odd-subspace] m={m}: gamma={gm:.6e}")
-            else:
-                print(f"    [odd-subspace] m={m}: not found (NaN)")
-
-            out[m] = gm
-            if um is not None:
-                v_full = np.zeros(Nstates, dtype=np.float64)
-                v_full[active] = um
-                eigenvectors_out[m] = v_full
-            else:
-                eigenvectors_out[m] = None
     
     for m in ms:
         if m == 0:
-            continue
-        if (m % 2 == 1) and (m > 0):
-            # already filled by odd-subspace solve
+            out[m] = 0.0
+            eigenvectors_out[m] = None
             continue
 
+        if m == 1:
+            # Build several low Ritz candidates in the odd subspace
+            pairs = odd_sector_candidates(A, w_safe, inv_orth, theta, z, Kodd=25, n_pairs=16)
+
+            best = None
+            best_score = -1.0
+
+            for gamma_cand, u_cand in pairs:
+                # Must be (approximately) orthogonal to momentum
+                wu = w_safe * u_cand
+                norm_u = np.sqrt(np.dot(wu, u_cand)) + 1e-30
+                wp_x = w_safe * px_act
+                wp_y = w_safe * py_act
+                norm_px = np.sqrt(np.dot(wp_x, px_act)) + 1e-30
+                norm_py = np.sqrt(np.dot(wp_y, py_act)) + 1e-30
+                corr_px = abs(np.dot(wu, px_act)) / (norm_u * norm_px)
+                corr_py = abs(np.dot(wu, py_act)) / (norm_u * norm_py)
+                if corr_px > 1e-3 or corr_py > 1e-3:
+                    continue
+
+                spectrum = compute_fft_harmonic_spectrum(
+                    u_cand, theta, P_act, w_safe, dp_val, Theta, max_harmonic=15
+                )
+                if not spectrum:
+                    continue
+
+                odd_power = sum(v for k, v in spectrum.items() if (k % 2) == 1) + 1e-30
+                w1 = spectrum.get(1, 0.0)
+                w3 = spectrum.get(3, 0.0)
+
+                # "Identification score": prefer eigenvectors whose odd harmonic content is mostly m=1
+                score = w1 / odd_power
+
+                # Optional: discourage solutions that are basically m=3
+                if w3 > 2.0 * w1:
+                    score *= 0.5
+
+                if (score > best_score + 1e-6) or (abs(score - best_score) < 1e-6 and best is not None and gamma_cand < best[0]):
+                    best = (gamma_cand, u_cand, corr_px, corr_py, spectrum)
+                    best_score = score
+
+            if best is None:
+                # Fallback to old behavior if selection failed
+                gamma_min, u_min = gamma_odd_sector(A, w_safe, inv_orth, theta, z, Kodd=25)
+                spectrum = compute_fft_harmonic_spectrum(u_min, theta, P_act, w_safe, dp_val, Theta, max_harmonic=15) if u_min is not None else {}
+                corr_px, corr_py = 0.0, 0.0
+            else:
+                gamma_min, u_min, corr_px, corr_py, spectrum = best
+
+            # Diagnostics
+            print(f"    [m=1] Selected odd candidate: gamma={gamma_min:.6e}, score={best_score:.3f}")
+            if spectrum:
+                odd_harmonics = [(k, spectrum.get(k, 0.0)) for k in range(1, 16, 2)]
+                odd_harmonics.sort(key=lambda x: -x[1])
+                total_power = sum(spectrum.values()) + 1e-30
+                top5_str = ", ".join([f"m={k}:{v/total_power:.3f}" for k, v in odd_harmonics[:5]])
+                print(f"    [m=1] FFT odd harmonic spectrum (top 5): {top5_str}")
+            
+            # Store eigenvector in full space
+            if u_min is not None:
+                v_full = np.zeros(Nstates, dtype=np.float64)
+                v_full[active] = u_min
+                eigenvectors_out[m] = v_full
+            else:
+                eigenvectors_out[m] = None
+
+            out[m] = gamma_min
+            continue
 
         # For m >= 2: use simple angular basis (can enrich with radial later if needed)
         c = np.cos(m * theta)
@@ -1835,6 +1783,43 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
     if grid_meta_list is None:
         grid_meta_list = [None] * len(Ts)
     
+    global_vmax_abs = 0.0
+    for row_idx, m in enumerate(valid_ms):
+        for col_idx, T_idx in enumerate(selected_T_indices):
+            v_full = eigenvectors[m][T_idx]
+            if v_full is not None:
+                gm = grid_meta_list[T_idx]
+                if gm is None:
+                    continue
+                Nmax_T = int(gm["Nmax"])
+                dp_T = float(gm["dp"])
+                shift_x = float(gm.get("shift_x", 0.0))
+                shift_y = float(gm.get("shift_y", 0.0))
+                if len(v_full) != Nmax_T * Nmax_T:
+                    continue
+                grid = np.asarray(v_full, dtype=np.float64).reshape((Nmax_T, Nmax_T))
+                sx, sy, extent, ring_mask = _plot_geom(
+                    Nmax_T, dp_T, shift_x, shift_y,
+                    pwin=PLOT_PWIN, ring_only=PLOT_RING_ONLY, ring_w=PLOT_RING_W
+                )
+                g = grid[sx, sy]
+                if ring_mask is not None:
+                    g = np.ma.array(g, mask=ring_mask)
+                    if g.count() == 0:
+                        continue
+                    vmax_abs = float(np.max(np.abs(g.compressed())))
+                else:
+                    vmax_abs = float(np.max(np.abs(g)))
+                global_vmax_abs = max(global_vmax_abs, vmax_abs)
+    
+    if global_vmax_abs > 0:
+        global_vmin = -global_vmax_abs
+        global_vmax = global_vmax_abs
+    else:
+        global_vmin, global_vmax = -0.1, 0.1
+    
+    global_norm = TwoSlopeNorm(vmin=global_vmin, vcenter=0, vmax=global_vmax)
+    
     nrows = len(valid_ms)
     ncols = len(selected_T_indices)
     
@@ -1848,6 +1833,8 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
         axes = axes.reshape(-1, 1)
     else:
         axes = axes.reshape(nrows, ncols)
+    
+    im_common = None
     
     for row_idx, m in enumerate(valid_ms):
         for col_idx, T_idx in enumerate(selected_T_indices):
@@ -1877,30 +1864,16 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
                 g = grid[sx, sy]
                 if ring_mask is not None:
                     g = np.ma.array(g, mask=ring_mask)
-                    if g.count() == 0:
-                        ax.axis("off")
-                        continue
-                    vmax_abs = float(np.max(np.abs(g.compressed())))
-                else:
-                    vmax_abs = float(np.max(np.abs(g)))
-                
-                # Individual normalization for this panel
-                if vmax_abs > 0:
-                    vmin = -vmax_abs
-                    vmax = vmax_abs
-                else:
-                    vmin, vmax = -0.1, 0.1
-                
-                panel_norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
 
                 im = ax.imshow(
                     g.T,
                     extent=extent,
                     origin="lower",
                     cmap="seismic",
-                    norm=panel_norm,
+                    norm=global_norm,
                     aspect="equal",
                 )
+                im_common = im
 
                 ax.add_patch(Circle((0.0, 0.0), 1.0, fill=False, linewidth=0.6, alpha=0.6, color='black'))
 
@@ -1916,6 +1889,10 @@ def plot_eigenfunction_table(Ts, eigenvectors, ms, selected_T_indices=None, max_
                     ax.set_ylabel("$p_y$")
             else:
                 ax.axis("off")
+    
+    if im_common is not None:
+        cbar = fig.colorbar(im_common, ax=axes, fraction=0.03, pad=0.02, aspect=30)
+        cbar.ax.tick_params(labelsize=10)
     
     out_png = "eigenfunctions_table.png"
     out_svg = "eigenfunctions_table.svg"
