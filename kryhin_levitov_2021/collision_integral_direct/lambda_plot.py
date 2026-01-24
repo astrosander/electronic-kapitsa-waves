@@ -582,13 +582,21 @@ def get_active_operator(M, meta):
     return Ma, active
 
 
-def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms, theta_val: float):
+def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms, theta_val: float, progress_callback=None):
     """
     Solve (-Ma) v = gamma * W v near gamma~0, classify by (i) inversion parity and (ii) m_est from sign-switches,
     then return {m: (gamma_m, v_full_m)} for requested ms, where v_full_m is the eigenvector embedded in full lattice.
+    
+    Args:
+        progress_callback: Optional function(message) to call for progress updates
     """
+    import time
+    eig_start_time = time.time()
+    
     # Reconstruct arrays if needed
     if "nx" not in meta or "px" not in meta:
+        if progress_callback:
+            progress_callback("    Setting up arrays...")
         nx, ny, half, px, py, P, eps, f, w = reconstruct_full_arrays(meta)
         meta["nx"] = nx
         meta["ny"] = ny
@@ -648,6 +656,32 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms, the
     n = A.shape[0]
     Bop = LinearOperator((n, n), matvec=_matvec_B, dtype=np.float64)
 
+    # ---- Deflate conserved / near-conserved subspace to prevent mode swapping ----
+    sqrtw = np.sqrt(w_safe)
+    px_act = px[active]
+    py_act = py[active]
+    # Core conserved set (density + momentum components)
+    Qcols = [
+        sqrtw,                 # density
+        sqrtw * px_act,        # Px
+        sqrtw * py_act,        # Py
+    ]
+    Q = np.column_stack(Qcols).astype(np.float64)
+    # Orthonormalize (QR)
+    Q, _ = np.linalg.qr(Q)
+
+    def _proj(x):
+        # project x to orthogonal complement of span(Q)
+        return x - Q @ (Q.T @ x)
+
+    def _matvec_Bproj(x):
+        x = _proj(x)
+        y = d * x
+        z = A.dot(y)
+        out = d * z
+        return _proj(out)
+
+    # Calculate k_calc and ncv_est first (needed for progress estimation)
     k_calc = min(n - 2, int(N_EIG_CANDIDATES))
     if k_calc <= 0:
         return {m: np.nan for m in ms}
@@ -657,6 +691,50 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms, the
     # Reduce k_calc if we only need a few modes (ms is small)
     k_needed = max(len(ms) * 2, 20)  # Need at least 2x modes for safety, but minimum 20
     k_calc = min(k_calc, max(k_needed, n - 2))
+    ncv_est = min(max(2 * k_calc + 1, 20), n)  # Optimal subspace size for ARPACK
+    
+    # Wrap LinearOperator to track progress
+    matvec_count = [0]  # Use list to allow modification in nested function
+    eigsh_start = [time.time()]  # Use list to allow modification in nested function
+    last_progress_time = [time.time()]
+    
+    def _matvec_Bproj_with_progress(x):
+        """Wrapper that counts matrix-vector products and shows progress."""
+        matvec_count[0] += 1
+        current_time = time.time()
+        
+        # Show progress every 0.5 seconds or every 50 matvec operations
+        if progress_callback and (current_time - last_progress_time[0] > 3 or matvec_count[0] % 500 == 0):
+            # Estimate progress: ARPACK typically needs O(k * ncv) iterations
+            # Each iteration does several matvecs (roughly ncv matvecs per iteration)
+            estimated_iterations = max(k_calc * ncv_est, 100)  # Rough estimate
+            estimated_matvecs = estimated_iterations * ncv_est
+            progress_pct = min(100, (matvec_count[0] / estimated_matvecs) * 100) if estimated_matvecs > 0 else 0
+            elapsed = current_time - eigsh_start[0]
+            rate = matvec_count[0] / elapsed if elapsed > 0 else 0
+            
+            # Estimate remaining time
+            if rate > 0 and estimated_matvecs > matvec_count[0]:
+                remaining_matvecs = estimated_matvecs - matvec_count[0]
+                est_remaining = remaining_matvecs / rate
+                est_total = estimated_matvecs / rate
+                progress_callback(f"    [{elapsed:.2f}s / est. {est_total:.1f}s] {matvec_count[0]} matvecs ({progress_pct:.3f}% est., {rate:.0f} matvecs/s, ~{est_remaining:.1f}s remaining)...")
+            else:
+                progress_callback(f"    [{elapsed:.2f}s] {matvec_count[0]} matvecs ({progress_pct:.3f}% est., {rate:.0f} matvecs/s)...")
+            
+            last_progress_time[0] = current_time
+        
+        return _matvec_Bproj(x)
+    
+    if progress_callback:
+        progress_callback(f"    Solving eigenvalue problem (k={k_calc}, n={n}, ncv={ncv_est})...")
+    
+    Bop = LinearOperator((n, n), matvec=_matvec_Bproj_with_progress, dtype=np.float64)
+    
+    # Reset counters and start time right before eigsh
+    matvec_count[0] = 0
+    eigsh_start[0] = time.time()
+    last_progress_time[0] = time.time()
     
     vals, y = eigsh(
         Bop,
@@ -664,8 +742,12 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms, the
         which="SA",
         tol=1e-6,  # Further relaxed for speed (was 1e-7)
         maxiter=10000,  # Reduced maxiter
-        ncv=min(max(2 * k_calc + 1, 20), n)  # Optimal subspace size for ARPACK
+        ncv=ncv_est
     )
+    eigsh_time = time.time() - eigsh_start[0]
+    if progress_callback:
+        progress_callback(f"    Eigenvalue solve complete: {matvec_count[0]} matvecs in {eigsh_time:.2f}s ({matvec_count[0]/eigsh_time:.0f} matvecs/s), processing eigenvectors...")
+    
     vals = np.real(vals)
     y = np.real(y)
 
@@ -733,12 +815,24 @@ def select_physical_eigs_per_m(Ma: csr_matrix, meta, active: np.ndarray, ms, the
     results = []
     if n_vecs > 3 and N_WORKERS > 1:
         # Use threading - numba functions release GIL so this works well
+        if progress_callback:
+            progress_callback(f"    Processing {n_vecs} eigenvectors in parallel ({N_WORKERS} workers)...")
         with ThreadPoolExecutor(max_workers=N_WORKERS) as executor:
             futures = [executor.submit(process_eigenvector, i) for i in range(n_vecs)]
-            results = [f.result() for f in as_completed(futures)]
+            completed = 0
+            for f in as_completed(futures):
+                results.append(f.result())
+                completed += 1
+                if progress_callback and completed % max(1, n_vecs // 10) == 0:
+                    progress_callback(f"    Processed {completed}/{n_vecs} eigenvectors...")
     else:
         # Sequential for small number of vectors
-        results = [process_eigenvector(i) for i in range(n_vecs)]
+        if progress_callback:
+            progress_callback(f"    Processing {n_vecs} eigenvectors sequentially...")
+        for i in range(n_vecs):
+            results.append(process_eigenvector(i))
+            if progress_callback and (i + 1) % max(1, n_vecs // 10) == 0:
+                progress_callback(f"    Processed {i + 1}/{n_vecs} eigenvectors...")
     
     # Collect best results (keep slowest gamma for each m)
     for result in results:
@@ -974,20 +1068,45 @@ def main():
             except Exception as e:
                 print(f"[Warning] Could not load existing eigenvectors: {e}")
         
-        def process_single_file_batch(T_file, path):
+        def process_single_file_batch(T_file, path, file_idx=None, total_files=None):
             """Process a single file and return results."""
+            import time
+            start_time = time.time()
             try:
+                # Progress header
+                if file_idx is not None and total_files is not None:
+                    print(f"\n[Progress] File {file_idx + 1}/{total_files} | Theta={T_file:.6g} | {os.path.basename(path)}", flush=True)
+                else:
+                    print(f"\n[Progress] Theta={T_file:.6g} | {os.path.basename(path)}", flush=True)
+                
                 # Load file
+                print(f"  [1/4] Loading file...", end='', flush=True)
                 with open(path, "rb") as fp:
                     M, meta = pickle.load(fp)
+                load_time = time.time() - start_time
+                print(f" ✓ ({load_time:.2f}s)", flush=True)
                 
+                # Get active operator
+                print(f"  [2/4] Computing active operator...", end='', flush=True)
                 Ma, active = get_active_operator(M, meta)
-                print(f"[process] Theta={T_file:.6g}  |  {os.path.basename(path)}  |  shape={Ma.shape}")
+                active_time = time.time() - start_time
+                print(f" ✓ shape={Ma.shape} ({active_time:.2f}s)", flush=True)
                 
-                # Process
-                sel = select_physical_eigs_per_m(Ma, meta, active, ms, theta_val=float(T_file))
+                # Process eigenvalues
+                print(f"  [3/4] Computing eigenvalues...", flush=True)
+                eig_sub_start = time.time()
+                
+                def eig_progress(msg):
+                    """Progress callback for eigenvalue computation."""
+                    print(msg, flush=True)
+                
+                sel = select_physical_eigs_per_m(Ma, meta, active, ms, theta_val=float(T_file), progress_callback=eig_progress)
+                eig_time = time.time() - start_time
+                eig_sub_time = time.time() - eig_sub_start
+                print(f"  [3/4] ✓ Complete! ({eig_sub_time:.2f}s)", flush=True)
                 
                 # Extract results
+                print(f"  [4/4] Extracting results...", end='', flush=True)
                 result_gammas = {}
                 result_eigenvectors = {}
                 for m in ms:
@@ -1006,9 +1125,13 @@ def main():
                 # Clean up memory
                 del M, meta, Ma, active, sel
                 
+                total_time = time.time() - start_time
+                print(f" ✓ Complete! Total time: {total_time:.2f}s", flush=True)
+                
                 return (float(T_file), float(T_file), result_gammas, result_eigenvectors, grid_meta)
             except Exception as e:
-                print(f"[Error] Processing file {path}: {e}")
+                elapsed = time.time() - start_time
+                print(f" ✗ Error after {elapsed:.2f}s: {e}", flush=True)
                 import traceback
                 traceback.print_exc()
                 return None
@@ -1024,8 +1147,11 @@ def main():
             
             # Process batch (sequential to avoid memory issues)
             batch_results = []
+            total_files = len(file_info)
+            global_file_idx = start_idx
             for T_file, path, _ in batch_files:
-                result = process_single_file_batch(T_file, path)
+                result = process_single_file_batch(T_file, path, file_idx=global_file_idx, total_files=total_files)
+                global_file_idx += 1
                 if result is not None:
                     batch_results.append(result)
             

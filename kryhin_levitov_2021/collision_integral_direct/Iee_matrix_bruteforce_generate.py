@@ -101,7 +101,8 @@ SHIFT_Y = 0.0        # e.g. 0.5 or (1.0/3.0) or -0.5
 # dp=0.08 => dp^2=6.4e-3 > Theta_min, which produces a T->0 "floor".
 
 # Energy delta broadening (Lorentzian) --- MUST scale with temperature to avoid T->0 floor
-LAMBDA_REL = 0.1    # sets lambda_eff = LAMBDA_REL * Theta
+LAMBDA_REL = 0.1    # lambda_T = LAMBDA_REL * Theta
+LAMBDA_DP_REL = 0.35  # lambda_dp = LAMBDA_DP_REL * (2*dp)  [energy resolution near p~1]
 LAMBDA_MIN = 1e-12
 
 V2   = 1.0         # |V|^2
@@ -111,8 +112,8 @@ HBAR = 1.0         # ħ (set 1 for dimensionless)
 # TEST: Generate only for Theta = 0.0508
 # Thetas = [0.001]#[0.0508]
 # Thetas = [0.001]
-# Thetas = np.geomspace(0.001, 0.01, 5)
-Thetas = [0.0001, 0.0001585, 0.0002512, 0.0003981, 0.0006310, 0.001, 0.0015849, 0.0025119, 0.0039811, 0.0044668, 0.0063096, 0.0089125, 0.012589, 0.017783, 0.031623, 0.050119, 0.089125, 0.15849, 0.28184, 0.79433, ]
+Thetas = [0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04, 0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28]#np.geomspace(0.001, 1.28, 30)
+# Thetas = [0.0001, 0.0001585, 0.0002512, 0.0003981, 0.0006310, 0.001, 0.0015849, 0.0025119, 0.0039811, 0.0044668, 0.0063096, 0.0089125, 0.012589, 0.017783, 0.031623, 0.050119, 0.089125, 0.15849, 0.28184, 0.79433, ]
 # Thetas=[0.001]
 # print(Thetas)
 # Thetas = np.geomspace(0.0025, 1.28, 30).astype(float).tolist()
@@ -239,7 +240,7 @@ def precompute(nx, ny, dp: float, Theta: float, shift_x: float = 0.0, shift_y: f
     return px, py, P, eps, f
 
 
-def active_indices(f: np.ndarray, eps: np.ndarray, Theta: float, cutoff: float) -> np.ndarray:
+def active_indices(f: np.ndarray, eps: np.ndarray, Theta: float, cutoff: float, dp: float) -> np.ndarray:
     """
     Active set should follow the thermal shell width ~ Theta.
     Using only w=f(1-f) on a coarse Cartesian grid can "freeze" the shell at the lattice energy spacing ~ dp^2.
@@ -247,7 +248,9 @@ def active_indices(f: np.ndarray, eps: np.ndarray, Theta: float, cutoff: float) 
     w = f * (1.0 - f)
     # Require near the Fermi surface in ENERGY (since eps = p^2 and eps_F = 1 in your units)
     # The multiplier 10 is conservative; tighten/loosen if needed.
-    shell = np.abs(eps - 1.0) < (10.0 * Theta)
+    # eps grid resolution near FS: Δeps ~ 2*dp.
+    shell_width = max(10.0 * Theta, 6.0 * (2.0 * dp))
+    shell = np.abs(eps - 1.0) < shell_width
     return np.where((w > cutoff) & shell)[0].astype(np.int32)
 
 
@@ -257,10 +260,10 @@ if USE_NUMBA:
                                    active, pos, dp, lam_eff, pref, dimless_scale):
         """
         Assemble CLOSED active-subspace operator Ma (shape Nactive x Nactive).
-        NOTE: This implements P I P projection:
+        NOTE: This implements a closed operator on the active subspace:
           - row index i1 is active (output restricted to active)
           - columns correspond to active eta only
-          - if i2' is inactive, we keep the event but drop the +eta_{2'} term (since eta=0 there)
+          - requires i2' to be active (skip event if i2' is inactive) => closed operator
 
         Parallel over active-row index a1: safe because only writes into row a1.
         """
@@ -301,8 +304,10 @@ if USE_NUMBA:
                     if i2p < 0:
                         continue
 
-                    # PIP projection: a2p may be -1 (inactive); that's OK
+                    # Require 2' active => closed operator on active subspace
                     a2p = pos[i2p]
+                    if a2p < 0:
+                        continue
 
                     e2p = eps[i2p]
                     f2p = f[i2p]
@@ -320,8 +325,7 @@ if USE_NUMBA:
 
                     # (eta_{1'} + eta_{2'} - eta_1 - eta_2)
                     Ma[a1, a1p] += W
-                    if a2p >= 0:
-                        Ma[a1, a2p] += W
+                    Ma[a1, a2p] += W
                     Ma[a1, a1]  -= W
                     Ma[a1, a2]  -= W
 
@@ -332,7 +336,7 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
     px, py, P, eps, f = precompute(nx, ny, dp_T, Theta, float(SHIFT_X), float(SHIFT_Y))
 
     # Temperature-following active shell
-    active = active_indices(f, eps, Theta, ACTIVE_CUTOFF)
+    active = active_indices(f, eps, Theta, ACTIVE_CUTOFF, dp_T)
     Nstates = nx.size
     Nactive = int(active.size)
     print(f"Theta={Theta:.6g}  Nmax={Nmax_T}  dp={dp_T:.6g}  "
@@ -354,7 +358,10 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
         dimless_scale = DIMLESS_CONST
 
     # Temperature-scaled Lorentzian width to avoid T->0 floor
-    lam_eff = max(LAMBDA_REL * Theta, LAMBDA_MIN)
+    # Energy resolution on eps=p^2 grid near the FS is Δeps ~ 2*dp (not dp^2).
+    lam_T  = LAMBDA_REL * Theta
+    lam_dp = LAMBDA_DP_REL * (2.0 * dp_T)
+    lam_eff = max(lam_T, lam_dp, LAMBDA_MIN)
 
     if BUILD_ACTIVE_ONLY:
         Ma = np.zeros((Nactive, Nactive), dtype=np.float64)
@@ -385,7 +392,10 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
                         i2p = int(idx_map[ix, iy])
                         if i2p < 0:
                             continue
-                        a2p = int(pos[i2p])  # may be -1 (inactive); that's OK for PIP projection
+                        a2p = int(pos[i2p])
+                        # Require 2' active => closed operator on active subspace
+                        if a2p < 0:
+                            continue
 
                         e2p, f2p = float(eps[i2p]), float(f[i2p])
                         dE = e1 + e2 - e1p - e2p
@@ -398,8 +408,7 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
                         W = pref * dimless_scale * F * delta_eps * dp4
 
                         Ma[a1, a1p] += W
-                        if a2p >= 0:
-                            Ma[a1, a2p] += W
+                        Ma[a1, a2p] += W
                         Ma[a1, a1]  -= W
                         Ma[a1, a2]  -= W
 
