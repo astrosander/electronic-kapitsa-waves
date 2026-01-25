@@ -78,16 +78,15 @@ DP_FLOOR     = 1e-4         # safety
 # If False: enforce DP_RING_MAX strictly (prioritize ring detail over size)
 PRIORITIZE_SIZE_OVER_RING = False
 
-# PATCH: increase ring accuracy without increasing matrix size:
-# - make dp smaller by boosting Theta/dp^2 target (more lattice resolution on ring)
-# - compensate by tightening active-shell width so Nactive ~ shell_width/dp^2 stays ~constant
-#   (empirically keeps file sizes close while improving ring sampling)
-RING_PIXEL_BOOST = 2.25    # Level-2: 2.25 gives ~1.5× more ring resolution; Level-3: use 3.0 for even more
-RING_SHELL_TIGHTEN = 1.0 / RING_PIXEL_BOOST
+# PATCH (strong): push much higher ring accuracy.
+# Smaller dp is necessary to expose clean T^2 (even m) and especially T^4 (odd m).
+# We will *not* try to keep file sizes constant here; accuracy first.
+RING_PIXEL_BOOST = 3.0      # strong; try 2.5–4.0
+RING_SHELL_TIGHTEN = 0.45   # tighter ring (suppresses bulk contamination)
 
 # Compute pixel ratios for both regions
-PIXEL_RATIO_LOW = (THETA_ANCHOR_LOW / (DP_ANCHOR_LOW * DP_ANCHOR_LOW)) * RING_PIXEL_BOOST
-PIXEL_RATIO_HIGH = (THETA_ANCHOR_HIGH / (DP_ANCHOR_HIGH * DP_ANCHOR_HIGH)) * RING_PIXEL_BOOST
+PIXEL_RATIO_LOW  = (THETA_ANCHOR_LOW  / (DP_ANCHOR_LOW  * DP_ANCHOR_LOW )) * RING_PIXEL_BOOST
+PIXEL_RATIO_HIGH = (THETA_ANCHOR_HIGH / (DP_ANCHOR_HIGH * DP_ANCHOR_HIGH)) * (0.75 * RING_PIXEL_BOOST)
 
 # Optional: choose Nmax so the momentum box isn't absurdly tiny at low T
 # pmax ~= (Nmax/2)*dp. 2.5 is usually safe for low T; use 4.0 if you want the same as your old runs.
@@ -112,10 +111,11 @@ SHIFT_Y = 0.5
 # dp=0.08 => dp^2=6.4e-3 > Theta_min, which produces a T->0 "floor".
 
 # Energy delta broadening (Lorentzian) --- MUST scale with temperature to avoid T->0 floor
-# PATCH: Level-2: sharper delta_eps vs T and grid resolution (still protected by lam_dp and LAMBDA_MIN)
-# Level-3: use LAMBDA_REL=0.035, LAMBDA_DP_REL=0.12 for even sharper (may expose discretization noise)
-LAMBDA_REL = 0.05      # lambda_T = LAMBDA_REL * Theta (sharper energy conservation)
-LAMBDA_DP_REL = 0.18   # lambda_dp = LAMBDA_DP_REL * (2*dp)  [energy resolution near p~1]
+# PATCH (strong): sharpen energy conservation to recover proper low-T exponents.
+# You MUST keep a dp-controlled floor to avoid numerical noise, but it should be small.
+LAMBDA_REL = 0.03        # lambda_T = 0.03 * Theta  (was 0.1)
+LAMBDA_DP_REL = 0.10     # lambda_dp = 0.10 * (2*dp)  (was 0.35)
+LAMBDA_DP2_REL = 0.30    # NEW: lambda_dp2 = 0.30 * (dp^2) (energy spacing scale)
 LAMBDA_MIN = 1e-12
 
 V2   = 1.0         # |V|^2
@@ -258,6 +258,9 @@ def active_indices(f: np.ndarray, eps: np.ndarray, Theta: float, cutoff: float, 
     """
     Active set should follow the thermal shell width ~ Theta.
     Using only w=f(1-f) on a coarse Cartesian grid can "freeze" the shell at the lattice energy spacing ~ dp^2.
+    
+    PATCH (strong): restrict to a true ring around p≈1 (not just energy window) to reduce
+    bulk contamination that pollutes angular harmonics on a Cartesian lattice.
     """
     w = f * (1.0 - f)
     # Require near the Fermi surface in ENERGY (since eps = p^2 and eps_F = 1 in your units)
@@ -265,8 +268,19 @@ def active_indices(f: np.ndarray, eps: np.ndarray, Theta: float, cutoff: float, 
     # eps grid resolution near FS: Δeps ~ 2*dp.
     base_width = max(10.0 * Theta, 6.0 * (2.0 * dp))
     shell_width = float(RING_SHELL_TIGHTEN) * base_width
+
+    # Convert energy window into a radial window around p≈1:
+    # eps = p^2, so near p=1: |eps-1| ≈ 2|p-1|
+    # => |p-1| < shell_width/2 is consistent.
+    # But enforce also a dp-controlled floor, otherwise at tiny Theta the ring becomes undersampled.
+    p_rad = 0.5 * shell_width
+    p_rad = max(p_rad, 2.5 * dp)  # ensure multiple lattice points across ring
+
+    # Compute p from eps without extra arrays
+    p = np.sqrt(np.maximum(eps, 0.0))
+    ring = np.abs(p - 1.0) < p_rad
     shell = np.abs(eps - 1.0) < shell_width
-    return np.where((w > cutoff) & shell)[0].astype(np.int32)
+    return np.where((w > cutoff) & shell & ring)[0].astype(np.int32)
 
 
 if USE_NUMBA:
@@ -374,9 +388,11 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
 
     # Temperature-scaled Lorentzian width to avoid T->0 floor
     # Energy resolution on eps=p^2 grid near the FS is Δeps ~ 2*dp (not dp^2).
-    lam_T  = LAMBDA_REL * Theta
-    lam_dp = LAMBDA_DP_REL * (2.0 * dp_T)
-    lam_eff = max(lam_T, lam_dp, LAMBDA_MIN)
+    # PATCH (strong): add dp^2 scale to protect against energy spacing discretization.
+    lam_T   = LAMBDA_REL * Theta
+    lam_dp  = LAMBDA_DP_REL * (2.0 * dp_T)
+    lam_dp2 = LAMBDA_DP2_REL * (dp_T * dp_T)
+    lam_eff = max(lam_T, lam_dp, lam_dp2, LAMBDA_MIN)
 
     if BUILD_ACTIVE_ONLY:
         Ma = np.zeros((Nactive, Nactive), dtype=np.float64)

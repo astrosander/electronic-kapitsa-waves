@@ -14,6 +14,10 @@ from matplotlib.colors import TwoSlopeNorm
 ms = [0, 1, 2, 3, 4, 5, 6, 7, 8]
 k = 0  # Figure-1 style (no "-a2" files)
 
+# PATCH: allow radial structure in each angular mode (critical for T^4 odd-m asymptotics)
+RADIAL_BASIS_K = 6          # number of radial powers (k=0..K-1); 6–10 usually enough
+RADIAL_SIGMA_P_MULT = 3.0   # sets Gaussian envelope width in p around p=1
+
 plt.rcParams['text.usetex'] = False
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
@@ -638,6 +642,8 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     px, py = reconstruct_px_py(meta)
     theta = np.arctan2(py, px)
     P = np.sqrt(px * px + py * py)
+    Theta = float(meta.get("Theta", 0.0))
+    dp = float(meta.get("dp", 0.0))
     
     # Collision operator: -M v = gamma W v
     # Handle matrix conversion carefully to avoid memory issues
@@ -674,11 +680,11 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     print(f"  [sanity] ||A px||/||px|| = {Apx_norm/(px_norm + 1e-30):.6e}")
     print(f"  [sanity] ||A py||/||py|| = {Apy_norm/(py_norm + 1e-30):.6e}")
     
-    # Invariants (conserved modes): constant (density)
-    # NOTE: px, py are NOT removed for m=1 (they ARE m=1)
-    inv_vecs = [np.ones(n, dtype=np.float64)]
+    # Invariants: density and momentum should be treated carefully.
+    # Density is always conserved; momentum corresponds to the m=1 sector.
+    inv_vecs = [np.ones(n, dtype=np.float64), px.copy(), py.copy()]
     
-    # W-orthonormalize invariants (only density for now)
+    # W-orthonormalize invariants (density + px + py)
     inv_orth = []
     for v in inv_vecs:
         v_norm = v.copy()
@@ -707,19 +713,30 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
         if m == 1:
             # IMPORTANT: m=1 *is* momentum conservation.
             # Use px, py as basis and do NOT project them out.
-            # Only remove density mode if desired
-            remove = inv_orth[:1] if len(inv_orth) > 0 else None  # remove only density
+            # Remove only density for m=1, because px/py *are* the m=1 conserved modes
+            remove = inv_orth[:1] if len(inv_orth) > 0 else None
             U_list = w_orthonormalize([px.copy(), py.copy()], w_safe, remove_basis=remove)
         else:
-            # For m>=2: use harmonic basis with radial factor
-            # Include P^m factor so it matches (px + i*py)^m structure
-            c = (P**m) * np.cos(m * theta)
-            s = (P**m) * np.sin(m * theta)
-            
-            # For m>=2, can safely remove all invariants (density, and optionally px, py)
-            # But px, py are not in inv_orth anymore, so just remove density
-            remove = inv_orth[:1] if len(inv_orth) > 0 else None
-            U_list = w_orthonormalize([c, s], w_safe, remove_basis=remove)
+            # PATCH: for m>=2, allow radial structure (P-1)^k * cos/sin(mθ).
+            # This is crucial: odd-m T^4 asymptotics typically requires cancellations
+            # that a pure angular harmonic (2D basis) cannot represent.
+            remove = inv_orth[:1] if len(inv_orth) > 0 else None  # remove density only
+
+            # Choose a radial envelope width in p around p=1.
+            # Thermal radial width in p is ~Theta/2 (since eps=p^2).
+            # Also include dp so we don't make the envelope narrower than grid resolution.
+            sigma_p = max(RADIAL_SIGMA_P_MULT * (0.5 * Theta), 4.0 * dp, 1e-12)
+            z = (P - 1.0) / sigma_p
+            g = np.exp(-0.5 * z * z)
+
+            basis = []
+            # Use powers of (P-1) (scaled by sigma_p) for numerical conditioning
+            for kk in range(int(RADIAL_BASIS_K)):
+                rk = (z ** kk)
+                basis.append(g * rk * np.cos(m * theta))
+                basis.append(g * rk * np.sin(m * theta))
+
+            U_list = w_orthonormalize(basis, w_safe, remove_basis=remove)
         
         if len(U_list) == 0:
             print(f"  [m={m}] No valid basis, skipping")
