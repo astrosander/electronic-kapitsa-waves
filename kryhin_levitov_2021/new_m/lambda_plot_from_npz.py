@@ -300,7 +300,97 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
     if out_png:
         fig.savefig(out_png, dpi=300)
         print(f"Saved: {out_png}")
+    
+    # Don't show here, will show both figures together at the end
+
+
+def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None):
+    """
+    Plot logarithmic derivative of the decay rate gamma_m to extract the local scaling exponent.
+    
+    For odd m, the crossover from T^2 to T^4 scaling is clearly visible, where the crossover
+    temperature T* decreases with increasing m.
+    """
+    # Small square figure for logarithmic derivative plot
+    fig, ax = plt.subplots(figsize=(6, 6))
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
+    
+    # Get max mode for colormap normalization
+    max_m = int(np.max(modes)) if len(modes) > 0 else 8
+    
+    # Reference lines for T^2 and T^4 scaling
+    T_ref = T[np.isfinite(T) & (T > 0)]
+    if len(T_ref) > 0:
+        ax.axhline(y=2.0, color='blue', linestyle='--', linewidth=1.0, alpha=0.5, label=r"$T^2$ scaling")
+        ax.axhline(y=4.0, color='red', linestyle='-.', linewidth=1.0, alpha=0.5, label=r"$T^4$ scaling")
+    
+    for m in modes:
+        m_int = int(m)
+        # Skip m=0 and m=1 for logarithmic derivative plot
+        if m_int <= 1:
+            continue
+            
+        if m_int in gammas:
+            gm = np.array(gammas[m_int], dtype=np.float64)
+            mask = np.isfinite(gm) & (gm > 0.0) & (T > 0.0)
+            if np.any(mask):
+                T_plot = T[mask]
+                gm_plot = gm[mask]
+                
+                # Compute logarithmic derivative: d(log(γ)) / d(log(T))
+                # For discrete data: log(γ_{i+1}/γ_i) / log(T_{i+1}/T_i)
+                if len(T_plot) > 1:
+                    # Compute differences
+                    log_T_diff = np.diff(np.log(T_plot))
+                    log_gamma_diff = np.diff(np.log(gm_plot))
+                    
+                    # Avoid division by zero
+                    valid = np.abs(log_T_diff) > 1e-12
+                    if np.any(valid):
+                        exponent = log_gamma_diff[valid] / log_T_diff[valid]
+                        # Use midpoints of temperature intervals for plotting
+                        T_mid = np.sqrt(T_plot[:-1] * T_plot[1:])[valid]
+                        exponent_plot = exponent
+                        
+                        # Filter out extreme outliers (likely numerical noise)
+                        exponent_median = np.median(exponent_plot)
+                        exponent_std = np.std(exponent_plot)
+                        outlier_mask = np.abs(exponent_plot - exponent_median) < 5 * exponent_std
+                        
+                        if np.any(outlier_mask):
+                            T_mid = T_mid[outlier_mask]
+                            exponent_plot = exponent_plot[outlier_mask]
+                            
+                            color, alpha = get_color_and_alpha(m_int, max_m)
+                            linestyle = '-'
+                            
+                            # Use thinner lines for red (even) modes
+                            if m_int % 2 == 0:
+                                linewidth = 1.3
+                            else:
+                                linewidth = 2.0
+                            
+                            ax.semilogx(T_mid, exponent_plot, 
+                                      linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
+    
+    ax.set_xlabel(r"Temperature, $T/T_F$")
+    ax.set_ylabel(r"Local scaling exponent, $\frac{d\log(\gamma_m)}{d\log(T)}$")
+    ax.set_ylim([0, 6])  # Reasonable range for exponents (0 to 6)
+    ax.legend(loc='best', fontsize=12)
+    ax.grid(True, alpha=0.3, linestyle='--')
+    
+    fig.tight_layout()
+    
+    if out_svg:
+        fig.savefig(out_svg)
+        print(f"Saved: {out_svg}")
+    
+    if out_png:
+        fig.savefig(out_png, dpi=300)
+        print(f"Saved: {out_png}")
     plt.show()
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -346,7 +436,20 @@ def main():
     if T_requested is not None:
         print(f"Requested temperature range: {T_requested.min():.6g} to {T_requested.max():.6g}")
     
+    # Plot main figure: gamma_m / T^2
     plot_from_data(T, modes, gammas, args.output_png, args.output_svg)
+    
+    # Plot logarithmic derivative figure
+    # Use the same base name as the main plot
+    if args.output_png is not None:
+        base = os.path.splitext(args.output_png)[0]
+    else:
+        base = os.path.splitext(args.input)[0]
+    
+    logderiv_png = f"{base}_logderiv.png"
+    logderiv_svg = f"{base}_logderiv.svg"
+    
+    plot_logarithmic_derivative(T, modes, gammas, logderiv_png, logderiv_svg)
     print("Plotting complete.")
 
 

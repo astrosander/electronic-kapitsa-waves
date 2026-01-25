@@ -22,6 +22,13 @@ RADIAL_SIGMA_P_MULT = 3.0   # sets Gaussian envelope width in p around p=1
 # If you need stabilization, use a RELATIVE regularization tied to matrix scale.
 REG_ABS = 0.0
 
+# --- NEW: make m=0 be the first *decaying isotropic* mode (nonzero) ---
+# This is NOT the conserved density mode. We project density (and optionally energy) out,
+# then find the smallest non-negative eigenvalue in an m=0 radial basis.
+COMPUTE_M0_RELAX = True
+M0_BASIS_ORDER = 8          # number of radial basis polynomials (increase for accuracy)
+M0_PROJECT_OUT_ENERGY = True  # recommended: remove energy-like invariant too
+
 plt.rcParams['text.usetex'] = False
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
@@ -319,7 +326,9 @@ def main():
         for Theta in Thetas:
             y.append(eigs[Theta][m])
             if k == 0:
-                y0.append(eigs[Theta][0])
+                # IMPORTANT: keep baseline as conserved density (=0),
+                # even if we repurpose m0 to be an isotropic relaxation mode.
+                y0.append(0.0)
             else:
                 y0.append(eigs[Theta][1])
         
@@ -350,7 +359,9 @@ def main():
         y0 = []
         for Theta in Thetas:
             y.append(eigs[Theta][m])
-            y0.append(eigs[Theta][0])
+            # IMPORTANT: keep baseline as conserved density (=0),
+            # even if we repurpose m0 to be an isotropic relaxation mode.
+            y0.append(0.0)
         power = 2
         y_arr = np.array(y)
         y0_arr = np.array(y0)
@@ -646,7 +657,9 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     px, py = reconstruct_px_py(meta)
     theta = np.arctan2(py, px)
     P = np.sqrt(px * px + py * py)
+    eps = P * P
     Theta = float(meta.get("Theta", 0.0))
+    Theta_val = float(meta.get("Theta", 1.0))  # Use 1.0 as default for scaling
     dp = float(meta.get("dp", 0.0))
     
     # Collision operator: -M v = gamma W v
@@ -707,11 +720,70 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     
     for m in ms:
         if m == 0:
-            # m=0: constant mode (conserved density)
-            u0 = inv_orth[0] if len(inv_orth) > 0 else np.ones(n, dtype=np.float64) / np.sqrt(n)
-            eigenfunctions[m] = u0
-            eigenvalues[m] = 0.0
-            print(f"  [m={m}] density mode: gamma=0.0 (conserved)")
+            if not COMPUTE_M0_RELAX:
+                # Old behavior: conserved density mode
+                u0 = inv_orth[0] if len(inv_orth) > 0 else np.ones(n, dtype=np.float64) / np.sqrt(n)
+                eigenfunctions[m] = u0
+                eigenvalues[m] = 0.0
+                print(f"  [m={m}] density mode: gamma=0.0 (conserved)")
+                continue
+
+            # NEW behavior: smallest nonzero isotropic (m=0) decay mode
+            # 1) build "remove" basis: density, and optionally energy-like mode
+            remove = inv_orth[:1] if len(inv_orth) > 0 else None
+            if M0_PROJECT_OUT_ENERGY:
+                ones = np.ones(n, dtype=np.float64)
+                mean_eps = wdot(ones, eps, w_safe) / max(wdot(ones, ones, w_safe), 1e-300)
+                e_mode = (eps - mean_eps).astype(np.float64)
+                e_orth = w_orthonormalize([e_mode], w_safe, remove_basis=remove)
+                if remove is None:
+                    remove = e_orth
+                else:
+                    remove = remove + e_orth
+
+            # 2) build a radial (angle-independent) basis around the Fermi surface
+            # Scale by Theta so basis stays O(1) across temperatures
+            Tscale = max(Theta_val, 1e-12)
+            x = (eps - 1.0) / Tscale
+            basis_raw = [(x ** k).astype(np.float64) for k in range(1, int(M0_BASIS_ORDER) + 1)]
+
+            U_list = w_orthonormalize(basis_raw, w_safe, remove_basis=remove)
+            if len(U_list) == 0:
+                # Fallback: if basis collapses, report density mode
+                u0 = inv_orth[0] if len(inv_orth) > 0 else np.ones(n, dtype=np.float64) / np.sqrt(n)
+                eigenfunctions[m] = u0
+                eigenvalues[m] = 0.0
+                print(f"  [m={m}] basis empty -> gamma=0.0 (density fallback)")
+                continue
+
+            # 3) project operator and solve small eigenproblem
+            U = np.column_stack(U_list)
+            AU = A.dot(U)
+            C = U.T @ AU
+            C = 0.5 * (C + C.T)
+
+            evals, evecs = np.linalg.eigh(C)
+            evals = np.real(evals)
+            evals = evals[np.isfinite(evals)]
+            evals = evals[evals >= -1e-12]
+            if len(evals) == 0:
+                eigenfunctions[m] = None
+                eigenvalues[m] = np.nan
+                print(f"  [m={m}] No valid eigenvalues in radial subspace")
+                continue
+
+            j = np.argmin(np.maximum(evals, 0.0))
+            gamma = float(max(evals[j], 0.0))
+            u = U @ evecs[:, j]
+
+            # normalize in W-norm
+            nrm = np.sqrt(max(wdot(u, u, w_safe), 0.0))
+            if nrm > 1e-30:
+                u = u / nrm
+
+            eigenfunctions[m] = u
+            eigenvalues[m] = gamma
+            print(f"  [m={m}] isotropic relax: gamma={gamma:.6e}")
             continue
         
         if m == 1:
