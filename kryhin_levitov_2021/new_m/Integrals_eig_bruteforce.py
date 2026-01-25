@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
 
 # Configuration
-ms = [0, 1, 2, 3, 4, 5, 6, 7, 8]
+ms = [0, 1, 2, 3, 4, 5, 6, 7, 8,9,10,11,12,13,14,15,16,18,19,20]#[0, 1, 2, 3, 4, 5, 6, 7, 8]
 k = 0  # Figure-1 style (no "-a2" files)
 
 # PATCH: allow radial structure in each angular mode (critical for T^4 odd-m asymptotics)

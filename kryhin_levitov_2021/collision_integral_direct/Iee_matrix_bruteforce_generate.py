@@ -78,6 +78,16 @@ DP_FLOOR     = 1e-4         # safety
 # If False: enforce DP_RING_MAX strictly (prioritize ring detail over size)
 PRIORITIZE_SIZE_OVER_RING = False
 
+# ------------------------- LOW-T BOX VALIDITY -------------------------
+# At very low Theta, your dp(theta) can become so small that Nmax hits NMAX_MAX
+# and the momentum box fails to reach the Fermi surface p=1 (=> garbage rates).
+# We therefore:
+#   (i) use a smaller p-box requirement at ultra-low T (dominant scattering stays near p~1),
+#  (ii) enforce dp >= dp_box_min(theta) so choose_Nmax() won't clamp.
+PBOX_MIN_HIGH = 2.5
+PBOX_MIN_LOW  = 1.8
+THETA_PBOX_SWITCH = 1e-3
+
 # PATCH (strong): push much higher ring accuracy.
 # Smaller dp is necessary to expose clean T^2 (even m) and especially T^4 (odd m).
 # We will *not* try to keep file sizes constant here; accuracy first.
@@ -90,9 +100,9 @@ PIXEL_RATIO_HIGH = (THETA_ANCHOR_HIGH / (DP_ANCHOR_HIGH * DP_ANCHOR_HIGH)) * (0.
 
 # Optional: choose Nmax so the momentum box isn't absurdly tiny at low T
 # pmax ~= (Nmax/2)*dp. 2.5 is usually safe for low T; use 4.0 if you want the same as your old runs.
-PBOX_MIN = 2.5
+PBOX_MIN = PBOX_MIN_HIGH
 NMAX_MIN = 320   # Level-2: increased from 200 to allow better high-T accuracy (was clamped before)
-NMAX_MAX = 1200
+NMAX_MAX = 3200  # Increased to allow valid box at ultra-low T (Theta ~ 1e-4)
 
 # --- NEW: grid shift (take half-integers instead of integers) ---
 # Physical momenta are p = dp * (n + shift), where n is integer lattice index.
@@ -193,6 +203,12 @@ def even_ge(n: int) -> int:
     return n if (n % 2 == 0) else (n + 1)
 
 
+def pbox_for_theta(theta: float) -> float:
+    """Return appropriate pbox requirement based on temperature."""
+    t = float(theta)
+    return float(PBOX_MIN_LOW) if (t <= float(THETA_PBOX_SWITCH)) else float(PBOX_MIN_HIGH)
+
+
 def choose_dp(theta: float) -> float:
     """
     Choose dp to keep Theta/dp^2 constant (constant ring pixels / Nactive).
@@ -200,6 +216,7 @@ def choose_dp(theta: float) -> float:
     If PRIORITIZE_SIZE_OVER_RING is True, allows dp to exceed DP_RING_MAX to maintain size.
     """
     theta_val = float(theta)
+    pbox = pbox_for_theta(theta_val)
     
     # Choose anchor based on temperature range
     if theta_val < THETA_CROSSOVER:
@@ -215,12 +232,19 @@ def choose_dp(theta: float) -> float:
         dp_T = math.sqrt(theta_val / pixel_ratio)
         # No ring cap for high-T (dp is already large)
     
+    # --- CRITICAL: ensure the box can actually contain the required momentum range ---
+    # If dp is too small, choose_Nmax(dp) would demand Nmax > NMAX_MAX, then clamp happens,
+    # and pmax becomes too small (can even be < 1), producing nonsense low-T rates.
+    dp_box_min = (2.0 * pbox) / float(NMAX_MAX)
+    dp_T = max(dp_T, dp_box_min)
+    
     return max(dp_T, float(DP_FLOOR))
 
 
-def choose_Nmax(dp_T: float) -> int:
-    """Choose Nmax to ensure pmax >= PBOX_MIN."""
-    n = math.ceil(2.0 * float(PBOX_MIN) / max(dp_T, 1e-30))
+def choose_Nmax(dp_T: float, theta: float) -> int:
+    """Choose Nmax to ensure pmax >= pbox_for_theta(theta)."""
+    pbox = pbox_for_theta(theta)
+    n = math.ceil(2.0 * float(pbox) / max(dp_T, 1e-30))
     n = max(n, int(NMAX_MIN))
     n = min(n, int(NMAX_MAX))
     return even_ge(n)
@@ -372,8 +396,16 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
     active = active_indices(f, eps, Theta, ACTIVE_CUTOFF, dp_T)
     Nstates = nx.size
     Nactive = int(active.size)
+    
+    # Diagnostic: actual pmax reached by the grid (account for half-step)
+    pmax = (float(half) - 0.5) * float(dp_T)
+    
     print(f"Theta={Theta:.6g}  Nmax={Nmax_T}  dp={dp_T:.6g}  "
-          f"Nstates={Nstates}  Nactive={Nactive}  USE_NUMBA={USE_NUMBA}  ACTIVE_ONLY={BUILD_ACTIVE_ONLY}")
+          f"Nstates={Nstates}  Nactive={Nactive}  USE_NUMBA={USE_NUMBA}  ACTIVE_ONLY={BUILD_ACTIVE_ONLY}  pmax={pmax:.4f}")
+    
+    if pmax < 1.05:
+        print(f"WARNING: pmax={pmax:.4f} < 1.05. Grid does not properly include the Fermi surface p=1. "
+              f"Low-T eigenvalues will be garbage. Increase NMAX_MAX or relax dp(theta) scaling / pbox.")
 
     # Resolution warning (this is *the* main reason your curves don't scale at very low T on a Cartesian grid)
     if (dp_T * dp_T) > (0.5 * Theta):
@@ -463,6 +495,7 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
         "Nmax": int(Nmax_T),
         "half": int(half),
         "dp": float(dp_T),
+        "pmax": float(pmax),
         "lambda": float(lam_eff),
         "V2": float(V2),
         "hbar": float(HBAR),
@@ -490,11 +523,13 @@ def main():
         print(f"[AUTO_GRID] Low-T anchor (Theta<{THETA_CROSSOVER}): Theta={THETA_ANCHOR_LOW}, dp={DP_ANCHOR_LOW}, PIXEL_RATIO={PIXEL_RATIO_LOW:.6f}")
         print(f"[AUTO_GRID] High-T anchor (Theta>={THETA_CROSSOVER}): Theta={THETA_ANCHOR_HIGH}, dp={DP_ANCHOR_HIGH}, PIXEL_RATIO={PIXEL_RATIO_HIGH:.6f}")
         print(f"[AUTO_GRID] PRIORITIZE_SIZE_OVER_RING={PRIORITIZE_SIZE_OVER_RING} (allows dp>{DP_RING_MAX} to keep size constant)")
+        print(f"[AUTO_GRID] Low-T pbox: {PBOX_MIN_LOW} for Theta<= {THETA_PBOX_SWITCH}, High-T pbox: {PBOX_MIN_HIGH}")
+        print(f"[AUTO_GRID] NMAX_MAX={NMAX_MAX}")
     for T in Thetas:
         Theta = float(T)
         if AUTO_DP_FROM_ANCHOR:
             dp_T = choose_dp(Theta)
-            Nmax_T = choose_Nmax(dp_T)
+            Nmax_T = choose_Nmax(dp_T, Theta)
             # Determine which anchor was used
             if Theta < THETA_CROSSOVER:
                 pixel_ratio = PIXEL_RATIO_LOW

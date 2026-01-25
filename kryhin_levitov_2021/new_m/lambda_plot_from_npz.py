@@ -133,45 +133,74 @@ def load_data(csv_path: str):
 
 def get_color_and_alpha(m, max_m=8):
     """
-    Get color and alpha for mode m using rainbow colormap (adjusted for visibility on white).
+    Get color and alpha for mode m with custom color scheme for visibility on white background.
     - m=0,1: darker gray with small alpha
-    - m=2,4,6,8 (even): use darker blue-green part of rainbow
-    - m=3,5,7 (odd): use darker red-orange part of rainbow
+    - m=3,5,7... (odd): blue to darker/more contrast blue, gradient with m increase
+    - m=2,4,6,8,10,12,14... (even): red to redder colors, gradient with m increase
     """
-    # Use rainbow colormap but adjust positions to avoid light colors
-    colormap = plt.cm.rainbow
-    
     if m <= 1:
         # m=0,1: use darker gray with reduced alpha (dashed lines)
         color = 'black' if m == 0 else '#34495E'  # Darker grays
         return color, 0.4  # Reduced alpha for dashed lines
     elif m % 2 == 0:
-        # Even modes (2,4,6,8): map to darker blue-green part of rainbow
-        # Avoid light cyan, use darker blues and greens (0.55 to 0.75)
-        even_modes = [2, 4, 6, 8]
+        # Even modes (2,4,6,8,10,12,14...): red to redder colors
+        # Start with bright red, get darker/more saturated red as m increases
+        even_modes = sorted([m_val for m_val in range(2, max_m + 1, 2)])
         if m in even_modes:
             idx = even_modes.index(m)
-            normalized = idx / (len(even_modes) - 1) if len(even_modes) > 1 else 0.0
-            # Map to darker blue-green range: 0.55 (darker blue) to 0.75 (darker green)
-            rainbow_pos = 0.55 + normalized * 0.20
+            normalized = idx / max(len(even_modes) - 1, 1)  # Normalize to [0, 1]
         else:
-            # Fallback for other even modes
-            rainbow_pos = 0.65
-        color = colormap(rainbow_pos)
+            # For even modes beyond max_m, extrapolate
+            normalized = min(1.0, (m - 2) / (2 * max(len(even_modes), 1)))
+        
+        # Red colors: wider range from orange-red to deep maroon for more distinct colors
+        # Use a wider color range to make different even modes more distinguishable
+        if normalized < 0.33:
+            # First third: orange-red to bright red
+            t = normalized / 0.33
+            r = 1.0
+            g = 0.4 + t * (-0.2)  # 0.4 -> 0.2
+            b = 0.0
+        elif normalized < 0.67:
+            # Second third: bright red to crimson
+            t = (normalized - 0.33) / 0.34
+            r = 1.0 + t * (-0.2)  # 1.0 -> 0.8
+            g = 0.2 + t * (-0.15)  # 0.2 -> 0.05
+            b = 0.0
+        else:
+            # Last third: crimson to deep maroon
+            t = (normalized - 0.67) / 0.33
+            r = 0.8 + t * (-0.3)  # 0.8 -> 0.5
+            g = 0.05 + t * (-0.05)  # 0.05 -> 0.0
+            b = 0.0 + t * 0.1  # 0.0 -> 0.1 (slight blue tint for maroon)
+        
+        r = max(0.0, min(1.0, r))
+        g = max(0.0, min(1.0, g))
+        b = max(0.0, min(1.0, b))
+        
+        color = (r, g, b)
         return color, 1.0
     else:
-        # Odd modes (3,5,7): map to darker red-orange part of rainbow
-        # Avoid light yellow, use darker reds and oranges (0.0 to 0.25)
-        odd_modes = [3, 5, 7]
+        # Odd modes (3,5,7,9,11,13...): blue to darker/more contrast blue
+        # Start with medium blue, get darker/more contrasted blue as m increases
+        odd_modes = sorted([m_val for m_val in range(3, max_m + 1, 2)])
         if m in odd_modes:
             idx = odd_modes.index(m)
-            normalized = idx / (len(odd_modes) - 1) if len(odd_modes) > 1 else 0.0
-            # Map to darker red-orange range: 0.0 (red) to 0.25 (darker orange, avoiding yellow)
-            rainbow_pos = 0.0 + normalized * 0.25
+            normalized = idx / max(len(odd_modes) - 1, 1)  # Normalize to [0, 1]
         else:
-            # Fallback for other odd modes
-            rainbow_pos = 0.125
-        color = colormap(rainbow_pos)
+            # For odd modes beyond max_m, extrapolate
+            normalized = min(1.0, (m - 3) / (2 * max(len(odd_modes), 1)))
+        
+        # Blue colors: from bright blue to darker/more contrast blue
+        # Interpolate between bright blue and deep blue for better visibility on white
+        r_start, g_start, b_start = 0.2, 0.5, 1.0  # Bright blue (good visibility on white)
+        r_end, g_end, b_end = 0.0, 0.2, 0.6  # Darker blue (more contrast, deeper)
+        
+        r = r_start + normalized * (r_end - r_start)
+        g = g_start + normalized * (g_end - g_start)
+        b = b_start + normalized * (b_end - b_start)
+        
+        color = (r, g, b)
         return color, 1.0
 
 
@@ -205,9 +234,15 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
                 
                 color, alpha = get_color_and_alpha(m_int, max_m)
                 linestyle = '-' if m_int <= 1 else '-'
-                # Use slightly thicker lines for better visibility on white background
-                linewidth =1.8 if m_int <= 1 else 2.0
-                ax.loglog(T_plot, gm_over_T2, label=fr"$m={m_int}$", 
+                # Use thinner lines for red (even) modes to improve separation when close
+                # Keep thicker lines for blue (odd) modes and special modes
+                if m_int <= 1:
+                    linewidth = 1.8
+                elif m_int % 2 == 0:
+                    linewidth = 1.3  # Thinner for red (even) modes
+                else:
+                    linewidth = 2.0  # Thicker for blue (odd) modes
+                ax.loglog(T_plot, gm_over_T2, #label=fr"$m={m_int}$", 
                          linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
 
     # Add T^2 and T^4 reference lines
