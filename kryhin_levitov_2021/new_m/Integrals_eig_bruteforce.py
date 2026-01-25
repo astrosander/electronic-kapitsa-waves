@@ -19,7 +19,7 @@ plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
 
 # Directory where bruteforce matrices are stored
-MATRIX_DIR = r"D:\Downloads\1_23_26\Matrixes_bruteforce"#"collision_integral_direct/Matrixes_bruteforce"
+MATRIX_DIR = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce"#"collision_integral_direct/Matrixes_bruteforce"
 
 
 def _theta_str(theta: float) -> str:

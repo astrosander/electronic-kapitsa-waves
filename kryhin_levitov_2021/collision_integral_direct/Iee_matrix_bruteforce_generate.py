@@ -78,9 +78,16 @@ DP_FLOOR     = 1e-4         # safety
 # If False: enforce DP_RING_MAX strictly (prioritize ring detail over size)
 PRIORITIZE_SIZE_OVER_RING = True
 
+# PATCH: increase ring accuracy without increasing matrix size:
+# - make dp smaller by boosting Theta/dp^2 target (more lattice resolution on ring)
+# - compensate by tightening active-shell width so Nactive ~ shell_width/dp^2 stays ~constant
+#   (empirically keeps file sizes close while improving ring sampling)
+RING_PIXEL_BOOST = 1.60    # 1.4–2.0 is typical; 1.6 is a safe first step
+RING_SHELL_TIGHTEN = 1.0 / RING_PIXEL_BOOST
+
 # Compute pixel ratios for both regions
-PIXEL_RATIO_LOW = THETA_ANCHOR_LOW / (DP_ANCHOR_LOW * DP_ANCHOR_LOW)
-PIXEL_RATIO_HIGH = THETA_ANCHOR_HIGH / (DP_ANCHOR_HIGH * DP_ANCHOR_HIGH)
+PIXEL_RATIO_LOW = (THETA_ANCHOR_LOW / (DP_ANCHOR_LOW * DP_ANCHOR_LOW)) * RING_PIXEL_BOOST
+PIXEL_RATIO_HIGH = (THETA_ANCHOR_HIGH / (DP_ANCHOR_HIGH * DP_ANCHOR_HIGH)) * RING_PIXEL_BOOST
 
 # Optional: choose Nmax so the momentum box isn't absurdly tiny at low T
 # pmax ~= (Nmax/2)*dp. 2.5 is usually safe for low T; use 4.0 if you want the same as your old runs.
@@ -92,8 +99,12 @@ NMAX_MAX = 1200
 # Physical momenta are p = dp * (n + shift), where n is integer lattice index.
 # Use 0.5 for half-integer grid, 1/3 for third-integer grid, etc.
 # "top/left" in array sense often means negative shift; choose sign as you want.
-SHIFT_X = 0.0        # e.g. 0.5 or (1.0/3.0) or -0.5
-SHIFT_Y = 0.0        # e.g. 0.5 or (1.0/3.0) or -0.5
+#
+# PATCH: increase Dirac-ring resolution WITHOUT growing matrix size:
+# Use a half-integer lattice. This de-aliases the p≈1 shell against the axes and
+# increases effective angular sampling on the ring at essentially fixed Nactive.
+SHIFT_X = 0.5
+SHIFT_Y = 0.5
 
 # IMPORTANT:
 # For low-T scaling you must resolve the thermal shell: need dp^2 << Theta_min.
@@ -101,8 +112,9 @@ SHIFT_Y = 0.0        # e.g. 0.5 or (1.0/3.0) or -0.5
 # dp=0.08 => dp^2=6.4e-3 > Theta_min, which produces a T->0 "floor".
 
 # Energy delta broadening (Lorentzian) --- MUST scale with temperature to avoid T->0 floor
-LAMBDA_REL = 0.1    # lambda_T = LAMBDA_REL * Theta
-LAMBDA_DP_REL = 0.35  # lambda_dp = LAMBDA_DP_REL * (2*dp)  [energy resolution near p~1]
+# PATCH: smaller broadening improves accuracy once dp is finer (still protected by lam_dp and LAMBDA_MIN)
+LAMBDA_REL = 0.07      # lambda_T = LAMBDA_REL * Theta
+LAMBDA_DP_REL = 0.25   # lambda_dp = LAMBDA_DP_REL * (2*dp)  [energy resolution near p~1]
 LAMBDA_MIN = 1e-12
 
 V2   = 1.0         # |V|^2
@@ -116,7 +128,8 @@ HBAR = 1.0         # ħ (set 1 for dimensionless)
 # Thetas = [0.0001, 0.0001585, 0.0002512, 0.0003981, 0.0006310, 0.001, 0.0015849, 0.0025119, 0.0039811, 0.0044668, 0.0063096, 0.0089125, 0.012589, 0.017783, 0.031623, 0.050119, 0.089125, 0.15849, 0.28184, 0.79433, ]
 # Thetas=[0.001]
 # print(Thetas)
-Thetas = np.geomspace(5e-5, 1e1, 200).astype(float).tolist()
+Thetas = [0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
+          0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28]#np.geomspace(5e-5, 1e1, 200).astype(float).tolist()
 
 # active-shell cutoff: only include states where f(1-f) > cutoff
 ACTIVE_CUTOFF = 1e-8
@@ -249,7 +262,8 @@ def active_indices(f: np.ndarray, eps: np.ndarray, Theta: float, cutoff: float, 
     # Require near the Fermi surface in ENERGY (since eps = p^2 and eps_F = 1 in your units)
     # The multiplier 10 is conservative; tighten/loosen if needed.
     # eps grid resolution near FS: Δeps ~ 2*dp.
-    shell_width = max(10.0 * Theta, 6.0 * (2.0 * dp))
+    base_width = max(10.0 * Theta, 6.0 * (2.0 * dp))
+    shell_width = float(RING_SHELL_TIGHTEN) * base_width
     shell = np.abs(eps - 1.0) < shell_width
     return np.where((w > cutoff) & shell)[0].astype(np.int32)
 
