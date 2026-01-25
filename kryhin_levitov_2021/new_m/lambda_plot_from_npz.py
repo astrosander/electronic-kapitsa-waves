@@ -239,8 +239,8 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
             # T^4 reference: C_T4 * T^2
             ref_T4_normalized = C_T4 * (T_ref ** 2)
             
-            ax.loglog(T_ref, ref_T2_normalized*1000, '--', color='blue', linewidth=1.0, label=r"$\propto T^2$")
-            ax.loglog(T_ref, ref_T4_normalized*1000000000, '-.', color='red', linewidth=1.0, label=r"$\propto T^4$")
+            ax.loglog(T_ref, ref_T2_normalized*10000000000000, '--', color='blue', linewidth=1.0, label=r"$\propto T^2$")
+            ax.loglog(T_ref, ref_T4_normalized*10000000000000, '-.', color='red', linewidth=1.0, label=r"$\propto T^4$")
 
     # Set limits based on data curves only (not reference lines)
     if len(T_valid) > 0 and len(gamma_over_T2_valid) > 0:
@@ -250,7 +250,7 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
         ax.set_ylim([gamma_over_T2_valid.min(), gamma_over_T2_valid.max()])
 
     # ax.set_xlim([T_valid.min(), T_valid.max()])
-    ax.set_ylim(1e-4, 1e0)
+    ax.set_ylim(1e-6, 1e0)
 
     ax.set_xlabel(r"Temperature, $T/T_F$")
     ax.set_ylabel(r"Decay rate (eigenvalue), $\gamma_m / T^2$")

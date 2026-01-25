@@ -18,6 +18,10 @@ k = 0  # Figure-1 style (no "-a2" files)
 RADIAL_BASIS_K = 6          # number of radial powers (k=0..K-1); 6–10 usually enough
 RADIAL_SIGMA_P_MULT = 3.0   # sets Gaussian envelope width in p around p=1
 
+# PATCH: do NOT add an absolute diagonal regularization when chasing tiny low-T rates.
+# If you need stabilization, use a RELATIVE regularization tied to matrix scale.
+REG_ABS = 0.0
+
 plt.rcParams['text.usetex'] = False
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
@@ -440,10 +444,10 @@ def compute_eigenfunctions(Ma, meta, n_eigs=10):
     # So we solve: (-M) v = gamma W v
     A = -Ma if isinstance(Ma, csr_matrix) else csr_matrix(-Ma)
     
-    # Add tiny regularization to help convergence
-    reg = 1e-14
+    # Add tiny regularization to help convergence (if needed)
     n = A.shape[0]
-    A = A + diags([reg] * n, 0, format="csr")
+    if REG_ABS > 0.0:
+        A = A + diags([REG_ABS] * n, 0, format="csr")
     
     # Transform to symmetric problem: B = W^{-1/2} A W^{-1/2}
     # Then solve: B y = gamma y, and recover v = W^{-1/2} y
@@ -667,10 +671,10 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     
     W = diags(w_safe, 0, format="csr")
     
-    # Add tiny regularization
-    reg = 1e-14
+    # Add tiny regularization (if needed)
     n = A.shape[0]
-    A = A + diags([reg] * n, 0, format="csr")
+    if REG_ABS > 0.0:
+        A = A + diags([REG_ABS] * n, 0, format="csr")
     
     # Sanity check: verify momentum conservation
     Apx_norm = np.linalg.norm(A.dot(px))

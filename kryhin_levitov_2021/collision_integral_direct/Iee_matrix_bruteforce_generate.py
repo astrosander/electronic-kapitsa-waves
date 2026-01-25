@@ -112,11 +112,10 @@ SHIFT_Y = 0.5
 
 # Energy delta broadening (Lorentzian) --- MUST scale with temperature to avoid T->0 floor
 # PATCH (strong): sharpen energy conservation to recover proper low-T exponents.
-# You MUST keep a dp-controlled floor to avoid numerical noise, but it should be small.
+# PATCH: dp^2 floor (not dp). Under momentum conservation, typical Δε mismatch scales ~O(dp^2).
 LAMBDA_REL = 0.03        # lambda_T = 0.03 * Theta  (was 0.1)
-LAMBDA_DP_REL = 0.10     # lambda_dp = 0.10 * (2*dp)  (was 0.35)
-LAMBDA_DP2_REL = 0.30    # NEW: lambda_dp2 = 0.30 * (dp^2) (energy spacing scale)
-LAMBDA_MIN = 1e-12
+LAMBDA_DP2_REL = 5.0      # lambda_dp2 = 5.0 * dp^2 (energy spacing scale)
+LAMBDA_MIN = 1e-16       # reduced from 1e-12 to allow tiny rates at very low T
 
 V2   = 1.0         # |V|^2
 HBAR = 1.0         # ħ (set 1 for dimensionless)
@@ -129,8 +128,11 @@ HBAR = 1.0         # ħ (set 1 for dimensionless)
 # Thetas = [0.0001, 0.0001585, 0.0002512, 0.0003981, 0.0006310, 0.001, 0.0015849, 0.0025119, 0.0039811, 0.0044668, 0.0063096, 0.0089125, 0.012589, 0.017783, 0.031623, 0.050119, 0.089125, 0.15849, 0.28184, 0.79433, ]
 # Thetas=[0.001]
 # print(Thetas)
-Thetas = [0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
-          0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28]#np.geomspace(5e-5, 1e1, 200).astype(float).tolist()
+# PATCH: include the asymptotic window (1e-4 to 1e-3) where T^4 scaling should appear
+# Also include overlap with higher temperatures for continuity
+Thetas = (np.geomspace(1e-4, 1e-3, 12).tolist()
+          + [0.0012, 0.0016, 0.002, 0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
+             0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28])
 
 # active-shell cutoff: only include states where f(1-f) > cutoff
 ACTIVE_CUTOFF = 1e-8
@@ -225,9 +227,9 @@ def choose_Nmax(dp_T: float) -> int:
 
 
 def make_index_map(nx: np.ndarray, ny: np.ndarray, Nmax: int, half: int) -> np.ndarray:
+    # PATCH: vectorized for performance (critical when Nmax becomes thousands at low T)
     idx_map = -np.ones((Nmax, Nmax), dtype=np.int32)
-    for i in range(nx.size):
-        idx_map[nx[i] + half, ny[i] + half] = i
+    idx_map[nx + half, ny + half] = np.arange(nx.size, dtype=np.int32)
     return idx_map
 
 
@@ -264,9 +266,11 @@ def active_indices(f: np.ndarray, eps: np.ndarray, Theta: float, cutoff: float, 
     """
     w = f * (1.0 - f)
     # Require near the Fermi surface in ENERGY (since eps = p^2 and eps_F = 1 in your units)
-    # The multiplier 10 is conservative; tighten/loosen if needed.
-    # eps grid resolution near FS: Δeps ~ 2*dp.
-    base_width = max(10.0 * Theta, 6.0 * (2.0 * dp))
+    # PATCH: make the shell Theta-dominated with a dp^2 floor (NOT dp).
+    # This avoids the low-T "sqrt(T)" floor that comes from using dp in eps-space.
+    SHELL_REL = 20.0
+    SHELL_DP2_REL = 80.0
+    base_width = max(SHELL_REL * Theta, SHELL_DP2_REL * (dp * dp))
     shell_width = float(RING_SHELL_TIGHTEN) * base_width
 
     # Convert energy window into a radial window around p≈1:
@@ -387,12 +391,10 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
         dimless_scale = DIMLESS_CONST
 
     # Temperature-scaled Lorentzian width to avoid T->0 floor
-    # Energy resolution on eps=p^2 grid near the FS is Δeps ~ 2*dp (not dp^2).
-    # PATCH (strong): add dp^2 scale to protect against energy spacing discretization.
+    # PATCH: dp^2 floor for λ (see comment above).
     lam_T   = LAMBDA_REL * Theta
-    lam_dp  = LAMBDA_DP_REL * (2.0 * dp_T)
     lam_dp2 = LAMBDA_DP2_REL * (dp_T * dp_T)
-    lam_eff = max(lam_T, lam_dp, lam_dp2, LAMBDA_MIN)
+    lam_eff = max(lam_T, lam_dp2, LAMBDA_MIN)
 
     if BUILD_ACTIVE_ONLY:
         Ma = np.zeros((Nactive, Nactive), dtype=np.float64)
