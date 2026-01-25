@@ -76,13 +76,13 @@ DP_RING_MAX  = 0.03         # preferred cap for ring detail (only applies to low
 DP_FLOOR     = 1e-4         # safety
 # If True: allow dp to exceed DP_RING_MAX to keep file size constant
 # If False: enforce DP_RING_MAX strictly (prioritize ring detail over size)
-PRIORITIZE_SIZE_OVER_RING = True
+PRIORITIZE_SIZE_OVER_RING = False
 
 # PATCH: increase ring accuracy without increasing matrix size:
 # - make dp smaller by boosting Theta/dp^2 target (more lattice resolution on ring)
 # - compensate by tightening active-shell width so Nactive ~ shell_width/dp^2 stays ~constant
 #   (empirically keeps file sizes close while improving ring sampling)
-RING_PIXEL_BOOST = 1.60    # 1.4–2.0 is typical; 1.6 is a safe first step
+RING_PIXEL_BOOST = 2.25    # Level-2: 2.25 gives ~1.5× more ring resolution; Level-3: use 3.0 for even more
 RING_SHELL_TIGHTEN = 1.0 / RING_PIXEL_BOOST
 
 # Compute pixel ratios for both regions
@@ -92,7 +92,7 @@ PIXEL_RATIO_HIGH = (THETA_ANCHOR_HIGH / (DP_ANCHOR_HIGH * DP_ANCHOR_HIGH)) * RIN
 # Optional: choose Nmax so the momentum box isn't absurdly tiny at low T
 # pmax ~= (Nmax/2)*dp. 2.5 is usually safe for low T; use 4.0 if you want the same as your old runs.
 PBOX_MIN = 2.5
-NMAX_MIN = 200
+NMAX_MIN = 320   # Level-2: increased from 200 to allow better high-T accuracy (was clamped before)
 NMAX_MAX = 1200
 
 # --- NEW: grid shift (take half-integers instead of integers) ---
@@ -112,9 +112,10 @@ SHIFT_Y = 0.5
 # dp=0.08 => dp^2=6.4e-3 > Theta_min, which produces a T->0 "floor".
 
 # Energy delta broadening (Lorentzian) --- MUST scale with temperature to avoid T->0 floor
-# PATCH: smaller broadening improves accuracy once dp is finer (still protected by lam_dp and LAMBDA_MIN)
-LAMBDA_REL = 0.07      # lambda_T = LAMBDA_REL * Theta
-LAMBDA_DP_REL = 0.25   # lambda_dp = LAMBDA_DP_REL * (2*dp)  [energy resolution near p~1]
+# PATCH: Level-2: sharper delta_eps vs T and grid resolution (still protected by lam_dp and LAMBDA_MIN)
+# Level-3: use LAMBDA_REL=0.035, LAMBDA_DP_REL=0.12 for even sharper (may expose discretization noise)
+LAMBDA_REL = 0.05      # lambda_T = LAMBDA_REL * Theta (sharper energy conservation)
+LAMBDA_DP_REL = 0.18   # lambda_dp = LAMBDA_DP_REL * (2*dp)  [energy resolution near p~1]
 LAMBDA_MIN = 1e-12
 
 V2   = 1.0         # |V|^2

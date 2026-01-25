@@ -102,7 +102,10 @@ def reconstruct_momentum_grid(meta):
     
     # Create angular bins: use uniform grid like original (N_th = 100)
     # But adjust to match the actual distribution of angles
-    n_theta_bins = 100  # match original N_th
+    # PATCH: higher angular resolution improves reconstruction accuracy
+    # (does not change matrices, only postprocessing). With finer dp and half-integer shift,
+    # you can safely use more bins without throwing away resolution.
+    n_theta_bins = 360  # Level-2: increased from 100; Level-3: use 720 for very smooth Fourier modes
     th_bins = np.linspace(-np.pi, np.pi, n_theta_bins + 1)
     th_centers = 0.5 * (th_bins[:-1] + th_bins[1:])
     
