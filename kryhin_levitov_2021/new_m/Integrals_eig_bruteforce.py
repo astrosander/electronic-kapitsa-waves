@@ -352,6 +352,7 @@ def main():
     print("=== Step 1: Computing eigenfunctions for each temperature ===", flush=True)
     all_eigenfunctions = {}
     all_eigenvalues_from_funcs = {}
+    all_invariants = {}
     
     for Theta, fname in files_with_theta:
         print(f"\n[compute eigenfunctions] Theta={Theta:.6g}", flush=True)
@@ -362,18 +363,13 @@ def main():
         print(f"  Matrix shape: {Ma.shape}, type: {type(Ma).__name__}", flush=True)
         
         # Compute eigenfunctions for angular modes
-        eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra = compute_eigenfunctions_by_mode(Ma, meta, ms=ms)
+        eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra, invariants = compute_eigenfunctions_by_mode(Ma, meta, ms=ms)
         
         # Store results (these are small compared to matrices)
         all_eigenfunctions[Theta] = eigenfunctions
         all_eigenvalues_from_funcs[Theta] = eigenvalues
-        # Store extra modes (invariants: dens, px, py) if present
-        if "dens" in eigenvalues_extra:
-            all_eigenvalues_from_funcs[Theta]["dens"] = eigenvalues_extra["dens"]
-        if "px" in eigenvalues_extra:
-            all_eigenvalues_from_funcs[Theta]["px"] = eigenvalues_extra["px"]
-        if "py" in eigenvalues_extra:
-            all_eigenvalues_from_funcs[Theta]["py"] = eigenvalues_extra["py"]
+        # Store invariants separately
+        all_invariants[Theta] = invariants
         
         # Skip eigenfunction plotting to save time - only compute eigenvalues
         # plot_eigenfunctions_by_mode(eigenfunctions, eigenvalues, px, py, Theta, ms=ms,
@@ -401,13 +397,13 @@ def main():
             else:
                 eigs[Theta][m] = 0.0
         
-        # Add extra modes (invariants: dens, px, py) if present
-        if "dens" in all_eigenvalues_from_funcs[Theta]:
-            eigs[Theta]["dens"] = all_eigenvalues_from_funcs[Theta]["dens"]
-        if "px" in all_eigenvalues_from_funcs[Theta]:
-            eigs[Theta]["px"] = all_eigenvalues_from_funcs[Theta]["px"]
-        if "py" in all_eigenvalues_from_funcs[Theta]:
-            eigs[Theta]["py"] = all_eigenvalues_from_funcs[Theta]["py"]
+        # Add invariants from separate storage
+        if Theta in all_invariants:
+            inv = all_invariants[Theta]
+            eigs[Theta]["dens"] = inv.get("dens", np.nan)
+            eigs[Theta]["px"] = inv.get("px", np.nan)
+            eigs[Theta]["py"] = inv.get("py", np.nan)
+            eigs[Theta]["eps"] = inv.get("eps", np.nan)
     
     # ---- Verify asymptotic scaling ----
     # Now m=0 and m=1 are relaxing modes (not conserved), so include them
@@ -527,29 +523,18 @@ def main():
     with open(csv_filename, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
         
-        # Header: T, m0, m1, m2, ..., dens, px, py (if present)
-        header = ['T'] + [f'm{m}' for m in ms]
-        # Check if extra modes (invariants) exist
-        has_dens = any("dens" in eigs[t] for t in Thetas)
-        has_px = any("px" in eigs[t] for t in Thetas)
-        has_py = any("py" in eigs[t] for t in Thetas)
-        if has_dens:
-            header.append('dens')
-        if has_px:
-            header.append('px')
-        if has_py:
-            header.append('py')
+        # Header: T, m0, m1, m2, ..., dens, px, py, eps
+        header = ['T'] + [f'm{m}' for m in ms] + ['dens', 'px', 'py', 'eps']
         writer.writerow(header)
         
         # Write data rows
         for Theta in Thetas:
             row = [Theta] + [eigs[Theta].get(m, 0.0) for m in ms]
-            if has_dens:
-                row.append(eigs[Theta].get("dens", np.nan))
-            if has_px:
-                row.append(eigs[Theta].get("px", np.nan))
-            if has_py:
-                row.append(eigs[Theta].get("py", np.nan))
+            # Add invariants (computed via Rayleigh quotient)
+            row.append(eigs[Theta].get("dens", np.nan))
+            row.append(eigs[Theta].get("px", np.nan))
+            row.append(eigs[Theta].get("py", np.nan))
+            row.append(eigs[Theta].get("eps", np.nan))
             writer.writerow(row)
     
     print(f"Saved: {csv_filename}", flush=True)
@@ -736,6 +721,19 @@ def wdot(u, v, w):
     """Weighted inner product: u^T W v"""
     return float(np.dot(u, w * v))
 
+def rayleigh_gamma(A, w_safe, v):
+    """
+    Compute generalized decay rate: gamma = (v^T A v)/(v^T W v)
+    for generalized eigenproblem A v = gamma W v.
+    """
+    v = v.astype(np.float64, copy=False)
+    Av = A.dot(v)
+    num = float(np.dot(v, Av))
+    den = float(np.dot(v, w_safe * v))
+    if den <= 1e-300:
+        return np.nan
+    return num / den
+
 
 def w_orthonormalize(vecs, w, remove_basis=None):
     """
@@ -886,6 +884,24 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     py_norm = np.linalg.norm(py)
     print(f"  [sanity] ||A px||/||px|| = {Apx_norm/(px_norm + 1e-30):.3e}")
     print(f"  [sanity] ||A py||/||py|| = {Apy_norm/(py_norm + 1e-30):.3e}")
+    
+    # --- Compute invariants using Rayleigh quotient ---
+    dens_vec = np.ones(n, dtype=np.float64)
+    eps_phys = eps_dim * MU_BAND  # physical energy
+    
+    gamma_dens = rayleigh_gamma(A, w_safe, dens_vec)
+    gamma_px   = rayleigh_gamma(A, w_safe, px)
+    gamma_py   = rayleigh_gamma(A, w_safe, py)
+    gamma_eps  = rayleigh_gamma(A, w_safe, eps_phys)
+    
+    invariants = {
+        "dens": gamma_dens,
+        "px": gamma_px,
+        "py": gamma_py,
+        "eps": gamma_eps,
+    }
+    
+    print(f"  [invariants] gamma_dens={gamma_dens:.6e}  gamma_px={gamma_px:.6e}  gamma_py={gamma_py:.6e}  gamma_eps={gamma_eps:.6e}", flush=True)
     
     # Invariants: density and momentum should be treated carefully.
     # Density is always conserved; momentum corresponds to the m=1 sector.
@@ -1119,7 +1135,7 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
         
         print(f"  [m={m}] gamma={gamma:.6e}")
     
-    return eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra
+    return eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra, invariants
 
 
 def plot_eigenfunctions_main(Theta=None, n_eigs=10, n_plot=6, use_angular_modes=True):
@@ -1153,12 +1169,12 @@ def plot_eigenfunctions_main(Theta=None, n_eigs=10, n_plot=6, use_angular_modes=
     if use_angular_modes:
         # Compute eigenfunctions for specific angular modes
         ms = [0, 1, 2, 3, 4, 5, 6, 7, 8]
-        eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra = compute_eigenfunctions_by_mode(Ma, meta, ms=ms)
+        eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra, invariants = compute_eigenfunctions_by_mode(Ma, meta, ms=ms)
         
         # Plot eigenfunctions for each mode
         plot_eigenfunctions_by_mode(eigenfunctions, eigenvalues, px, py, Theta, ms=ms)
         
-        return eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra
+        return eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra, invariants
     else:
         # Compute general eigenfunctions
         vals, vecs, px, py = compute_eigenfunctions(Ma, meta, n_eigs=n_eigs)

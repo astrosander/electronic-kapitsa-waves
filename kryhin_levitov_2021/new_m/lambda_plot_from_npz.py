@@ -266,18 +266,23 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
                 break
         
         if gamma_ref is not None and gamma_ref > 0:
+            # For T^1: gamma = C_T1 * T^1
             # For T^2: gamma = C_T2 * T^2
             # For T^4: gamma = C_T4 * T^4
+            C_T1 = gamma_ref / (T_mid ** 1)
             C_T2 = gamma_ref / (T_mid ** 2)
-            C_T4 = gamma_ref / (T_mid ** 1)
+            C_T4 = gamma_ref / (T_mid ** 4)
             
+            # T^1 reference: C_T1 * T^1
+            ref_T1 = C_T1 * (T_ref ** 1)
             # T^2 reference: C_T2 * T^2
             ref_T2 = C_T2 * (T_ref ** 2)
             # T^4 reference: C_T4 * T^4
-            ref_T4 = C_T4 * (T_ref ** 1)
+            ref_T4 = C_T4 * (T_ref ** 4)
             
-            ax.loglog(T_ref, ref_T2, '--', color='blue', linewidth=1.0, alpha=0.5, label=r"$\propto T^2$")
-            ax.loglog(T_ref, ref_T4, '-.', color='red', linewidth=1.0, alpha=0.5, label=r"$\propto T^1$")
+            ax.loglog(T_ref, ref_T1, ':', color='darkgreen', linewidth=1.5, alpha=0.8, label=r"$\propto T^1$")
+            ax.loglog(T_ref, ref_T2, '--', color='darkblue', linewidth=1.5, alpha=0.8, label=r"$\propto T^2$")
+            ax.loglog(T_ref, ref_T4, '-.', color='darkred', linewidth=1.5, alpha=0.8, label=r"$\propto T^4$")
 
     # Set limits based on data curves only (not reference lines)
     if len(T_valid) > 0 and len(gamma_valid) > 0:
