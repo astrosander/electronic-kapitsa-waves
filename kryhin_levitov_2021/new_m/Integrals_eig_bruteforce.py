@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
 
 # Configuration
-ms = [0, 1, 2, 3, 4, 5, 6, 7, 8,9,10,11,12,13,14,15,16,18,19,20]#[0, 1, 2, 3, 4, 5, 6, 7, 8]
+ms = [0, 1, 2, 3, 4, 5, 6, 7, 8]#,9,10,11,12,13,14,15,16,18,19,20]#[0, 1, 2, 3, 4, 5, 6, 7, 8]
 k = 0  # Figure-1 style (no "-a2" files)
 
 # PATCH: allow radial structure in each angular mode (critical for T^4 odd-m asymptotics)
@@ -261,6 +261,79 @@ def compute_eigenvalue_from_eigenfunction(Ma, meta, eigenfunction, m):
     return float(gamma)
 
 
+def verify_asymptotics(Thetas, eigs, modes=(2, 3, 4, 0), low_max=5e-2, high_min=1.5):
+    """
+    Verify asymptotic scaling behavior of eigenvalues.
+    
+    For Gurzhi / Fermi-liquid (Θ ≪ 1): γ(Θ) ∝ Θ²  =>  γ(Θ)/Θ² plateaus
+    For Planckian / Sachdev (Θ ≫ 1):   γ(Θ) ∝ Θ   =>  γ(Θ)/Θ plateaus
+    
+    Args:
+        Thetas: list of temperatures
+        eigs: dict mapping Theta -> dict mapping m -> eigenvalue
+        modes: modes to verify (default: 2,3,4,0 - skip m=1 which is conserved momentum)
+        low_max: maximum Theta for low-T window (default: 5e-2)
+        high_min: minimum Theta for high-T window (default: 1.5)
+    """
+    Thetas = np.array(sorted(Thetas), dtype=float)
+    
+    def fit_slope(theta_mask, y):
+        """Fit log(y) = a * log(Theta) + b, return slope a."""
+        x = np.log(Thetas[theta_mask])
+        z = np.log(y[theta_mask])
+        a, b = np.polyfit(x, z, 1)  # z ~ a x + b
+        return a, b
+    
+    print("\n" + "="*70)
+    print("=== Asymptotic Scaling Verification ===")
+    print("="*70)
+    
+    for m in modes:
+        if m == 1:
+            continue  # momentum conserved => skip
+        y = np.array([eigs[t][m] for t in Thetas], dtype=float)
+        good = np.isfinite(y) & (y > 0)
+        
+        if good.sum() < 6:
+            print(f"\n[m={m}] not enough positive points ({good.sum()} valid)")
+            continue
+        
+        # local slope (central diff)
+        tt = np.log(Thetas[good])
+        yy = np.log(y[good])
+        alpha = np.gradient(yy, tt)
+        
+        low = good & (Thetas <= low_max)
+        high = good & (Thetas >= high_min)
+        
+        print(f"\n[m={m}]")
+        if low.sum() >= 4:
+            aL, _ = fit_slope(low, y)
+            print(f"  low-T fit  (Theta <= {low_max:g}): slope a = {aL:.3f}  (target ~2)")
+            # plateau check
+            gamma_over_theta2 = y[low] / (Thetas[low]**2)
+            print(f"  low-T plateau check: median(gamma/Theta^2) = {np.median(gamma_over_theta2):.3e}")
+            print(f"                         std(gamma/Theta^2) = {np.std(gamma_over_theta2):.3e}")
+        else:
+            print(f"  low-T: not enough points ({low.sum()} points)")
+        
+        if high.sum() >= 4:
+            aH, _ = fit_slope(high, y)
+            print(f"  high-T fit (Theta >= {high_min:g}): slope a = {aH:.3f} (target ~1)")
+            # plateau check
+            gamma_over_theta = y[high] / Thetas[high]
+            print(f"  high-T plateau check: median(gamma/Theta) = {np.median(gamma_over_theta):.3e}")
+            print(f"                        std(gamma/Theta) = {np.std(gamma_over_theta):.3e}")
+        else:
+            print(f"  high-T: not enough points ({high.sum()} points)")
+        
+        # quick diagnostic: where alpha is near 2 or near 1
+        print(f"  alpha(theta) range: [{alpha.min():.2f}, {alpha.max():.2f}]")
+        print(f"  valid points: {good.sum()}/{len(Thetas)}")
+    
+    print("\n" + "="*70)
+
+
 def main():
     print("=== Eigenvalue / angular-distribution postprocessing (bruteforce) ===", flush=True)
     
@@ -316,6 +389,9 @@ def main():
                 eigs[Theta][m] = all_eigenvalues_from_funcs[Theta][m]
             else:
                 eigs[Theta][m] = 0.0
+    
+    # ---- Verify asymptotic scaling ----
+    verify_asymptotics(Thetas, eigs, modes=(2, 3, 4, 0), low_max=5e-2, high_min=1.5)
     
     # ---- Plot eigenvalues as in original script (Figure-1 style) ----
     f10, ax10 = plt.subplots(figsize=(8*0.9, 6*0.9))
@@ -658,11 +734,26 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     # Reconstruct px, py, and angles
     px, py = reconstruct_px_py(meta)
     theta = np.arctan2(py, px)
-    P = np.sqrt(px * px + py * py)
-    eps = P  # Dirac: ε(p)=|p| (was parabolic: eps = P*P)
+    P = np.sqrt(px * px + py * py)   # this is k
+    
+    # --- bilayer dispersion: ε(k) = √(v²k² + U²) - U ---
+    # Use same naming as generator
+    U_BAND = float(meta.get("U_band", meta.get("band_u", 10.0)))
+    V_BAND = float(meta.get("v_band", meta.get("band_v", 1.0)))
+    MU_BAND = float(meta.get("mu_band", meta.get("mu_f", 1.0)))
+    kF = float(meta.get("kF", meta.get("p_f", np.sqrt(MU_BAND*(MU_BAND + 2.0*U_BAND))/max(V_BAND, 1e-12))))
+    vF = float(meta.get("vF", meta.get("v_f", (V_BAND*V_BAND*kF)/max(MU_BAND+U_BAND, 1e-12))))
+    
+    # dimensionless energy: eps_dim = eps(k) / mu, so Fermi level is at eps_dim = 1
+    eps = np.sqrt((V_BAND * P)**2 + U_BAND * U_BAND) - U_BAND
+    eps_dim = eps / MU_BAND
+    
     Theta = float(meta.get("Theta", 0.0))
     Theta_val = float(meta.get("Theta", 1.0))  # Use 1.0 as default for scaling
     dp = float(meta.get("dp", 0.0))
+    
+    # Print band parameters for diagnostics
+    print(f"  [band] U={U_BAND} v={V_BAND} μ={MU_BAND}  kF={kF:.6f}  vF={vF:.6f}", flush=True)
     
     # Collision operator: -M v = gamma W v
     # Handle matrix conversion carefully to avoid memory issues
@@ -690,6 +781,17 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     n = A.shape[0]
     if REG_ABS > 0.0:
         A = A + diags([REG_ABS] * n, 0, format="csr")
+    
+    # Sanity check: verify momentum conservation
+    # Also check energy conservation quality (optional but informative)
+    if n > 0:
+        # Use physical eps for energy conservation check
+        eps_phys = eps_dim * MU_BAND
+        eps_norm = np.linalg.norm(eps_phys)
+        if eps_norm > 1e-30:
+            A_eps = A.dot(eps_phys)
+            Ae = np.linalg.norm(A_eps) / eps_norm
+            print(f"  [sanity] ||A eps||/||eps|| = {Ae:.6e}", flush=True)
     
     # Sanity check: verify momentum conservation
     Apx_norm = np.linalg.norm(A.dot(px))
@@ -735,8 +837,10 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
             remove = inv_orth[:1] if len(inv_orth) > 0 else None
             if M0_PROJECT_OUT_ENERGY:
                 ones = np.ones(n, dtype=np.float64)
-                mean_eps = wdot(ones, eps, w_safe) / max(wdot(ones, ones, w_safe), 1e-300)
-                e_mode = (eps - mean_eps).astype(np.float64)
+                # Use physical eps for energy projection
+                eps_phys = eps_dim * MU_BAND
+                mean_eps = wdot(ones, eps_phys, w_safe) / max(wdot(ones, ones, w_safe), 1e-300)
+                e_mode = (eps_phys - mean_eps).astype(np.float64)
                 e_orth = w_orthonormalize([e_mode], w_safe, remove_basis=remove)
                 if remove is None:
                     remove = e_orth
@@ -745,8 +849,9 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
 
             # 2) build a radial (angle-independent) basis around the Fermi surface
             # Scale by Theta so basis stays O(1) across temperatures
+            # Use dimensionless energy: eps_dim - 1 (Fermi level is at eps_dim = 1)
             Tscale = max(Theta_val, 1e-12)
-            x = (eps - 1.0) / Tscale
+            x = (eps_dim - 1.0) / Tscale
             basis_raw = [(x ** k).astype(np.float64) for k in range(1, int(M0_BASIS_ORDER) + 1)]
 
             U_list = w_orthonormalize(basis_raw, w_safe, remove_basis=remove)
@@ -795,20 +900,22 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
             remove = inv_orth[:1] if len(inv_orth) > 0 else None
             U_list = w_orthonormalize([px.copy(), py.copy()], w_safe, remove_basis=remove)
         else:
-            # PATCH: for m>=2, allow radial structure (P-1)^k * cos/sin(mθ).
+            # PATCH: for m>=2, allow radial structure (P-k_F)^k * cos/sin(mθ).
             # This is crucial: odd-m T^4 asymptotics typically requires cancellations
             # that a pure angular harmonic (2D basis) cannot represent.
             remove = inv_orth[:1] if len(inv_orth) > 0 else None  # remove density only
 
-            # Choose a radial envelope width in p around p=1.
-            # Thermal radial width in p is ~Theta/2 (since eps=p^2).
+            # Choose a radial envelope width in k around k_F.
+            # Thermal radial width in k: dk_th = (Theta / depsdk_dim) where depsdk_dim = vF/mu
             # Also include dp so we don't make the envelope narrower than grid resolution.
-            sigma_p = max(RADIAL_SIGMA_P_MULT * (0.5 * Theta), 4.0 * dp, 1e-12)
-            z = (P - 1.0) / sigma_p
+            depsdk_dim = max(vF / MU_BAND, 1e-12)
+            dk_th = (Theta / depsdk_dim)  # k-width corresponding to energy width Theta
+            sigma_k = max(RADIAL_SIGMA_P_MULT * dk_th, 4.0 * dp, 1e-12)
+            z = (P - kF) / sigma_k
             g = np.exp(-0.5 * z * z)
 
             basis = []
-            # Use powers of (P-1) (scaled by sigma_p) for numerical conditioning
+            # Use powers of (P-k_F) (scaled by sigma_p) for numerical conditioning
             for kk in range(int(RADIAL_BASIS_K)):
                 rk = (z ** kk)
                 basis.append(g * rk * np.cos(m * theta))

@@ -140,7 +140,7 @@ def get_color_and_alpha(m, max_m=8):
     """
     if m <= 1:
         # m=0,1: use darker gray with reduced alpha (dashed lines)
-        color = 'black' if m == 0 else '#34495E'  # Darker grays
+        color = 'black' if m == 0 else 'green'  # Darker grays
         return color, 0.4  # Reduced alpha for dashed lines
     elif m % 2 == 0:
         # Even modes (2,4,6,8,10,12,14...): red to redder colors
@@ -241,8 +241,12 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
                     linewidth = 1.3  # Thinner for red (even) modes
                 else:
                     linewidth = 2.0  # Thicker for blue (odd) modes
-                ax.loglog(T_plot, gm_plot, #label=fr"$m={m_int}$", 
-                         linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
+                if m<=1:
+                    ax.loglog(T_plot, gm_plot, label=fr"$m={m_int}$", 
+                             linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
+                else:
+                    ax.loglog(T_plot, gm_plot, #label=fr"$m={m_int}$", 
+                                 linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
 
     # Add T^2 and T^4 reference lines
     # Normalize to match a typical data point for visual reference
@@ -265,15 +269,15 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
             # For T^2: gamma = C_T2 * T^2
             # For T^4: gamma = C_T4 * T^4
             C_T2 = gamma_ref / (T_mid ** 2)
-            C_T4 = gamma_ref / (T_mid ** 4)
+            C_T4 = gamma_ref / (T_mid ** 1)
             
             # T^2 reference: C_T2 * T^2
             ref_T2 = C_T2 * (T_ref ** 2)
             # T^4 reference: C_T4 * T^4
-            ref_T4 = C_T4 * (T_ref ** 4)
+            ref_T4 = C_T4 * (T_ref ** 1)
             
             ax.loglog(T_ref, ref_T2, '--', color='blue', linewidth=1.0, alpha=0.5, label=r"$\propto T^2$")
-            ax.loglog(T_ref, ref_T4, '-.', color='red', linewidth=1.0, alpha=0.5, label=r"$\propto T^4$")
+            ax.loglog(T_ref, ref_T4, '-.', color='red', linewidth=1.0, alpha=0.5, label=r"$\propto T^1$")
 
     # Set limits based on data curves only (not reference lines)
     if len(T_valid) > 0 and len(gamma_valid) > 0:

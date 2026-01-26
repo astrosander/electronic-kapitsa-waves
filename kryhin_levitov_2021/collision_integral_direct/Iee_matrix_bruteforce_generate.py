@@ -44,7 +44,8 @@ if USE_NUMBA:
     # Optional diagnostics: NEVER disable numba if these fail
     try:
         print("cpu_count:", os.cpu_count())
-        print("affinity:", len(os.sched_getaffinity(0)))
+        if hasattr(os, "sched_getaffinity"):
+            print("affinity:", len(os.sched_getaffinity(0)))
         print("numba threads:", numba.get_num_threads())
         print("numba layer:", numba.threading_layer())
     except Exception as e:
@@ -131,23 +132,49 @@ LAMBDA_MIN = 1e-16       # reduced from 1e-12 to allow tiny rates at very low T
 V2   = 1.0         # |V|^2
 HBAR = 1.0         # ħ (set 1 for dimensionless)
 
-# temperatures (T/T_F). Adjust as you like:
-# TEST: Generate only for Theta = 0.0508
-# Thetas = [0.001]#[0.0508]
-# Thetas = [0.001]
-# Thetas = [0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04, 0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28]#np.geomspace(0.001, 1.28, 30)
-# Thetas = [0.0001, 0.0001585, 0.0002512, 0.0003981, 0.0006310, 0.001, 0.0015849, 0.0025119, 0.0039811, 0.0044668, 0.0063096, 0.0089125, 0.012589, 0.017783, 0.031623, 0.050119, 0.089125, 0.15849, 0.28184, 0.79433, ]
-# Thetas=[0.001]
-# print(Thetas)
-# PATCH: include the asymptotic window (1e-4 to 1e-3) where T^4 scaling should appear
-# Also include overlap with higher temperatures for continuity
-Thetas = (np.geomspace(1e-4, 1e-3, 12).tolist()
-          + [0.0012, 0.0016, 0.002, 0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
-             0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28])
+# ---- BAND PARAMETERS (bilayer) ----
+MU_BAND = 1.0
+U_BAND  = 10.0 * MU_BAND
+V_BAND  = 1.0
+
+# Compute Fermi surface parameters
+# k_F = (1/v) * sqrt(μ(μ+2U))
+kF = math.sqrt(MU_BAND * (MU_BAND + 2.0 * U_BAND)) / V_BAND
+# v_F = v²k_F / (U + μ)
+vF = (V_BAND * V_BAND * kF) / (U_BAND + MU_BAND)
+
+print(f"[band-init] U={U_BAND:.6g} v={V_BAND:.6g} mu={MU_BAND:.6g}  kF={kF:.6g}  vF={vF:.6g}")
+
+# Backward compatibility aliases (for now)
+BAND_U = U_BAND
+BAND_V = V_BAND
+MU_F = MU_BAND
+P_F = kF
+V_F = vF
+
+# --- asymptotic verification run ---
+VERIFY_ASYMPTOTICS = True#True#False  # Set to True to run only the two asymptotic windows
+
+if VERIFY_ASYMPTOTICS:
+    # Low-T window: Gurzhi / Fermi-liquid regime (Θ ≪ 1) where γ ∝ Θ²
+    # High-T window: Planckian / Sachdev regime (Θ ≫ 1) where γ ∝ Θ
+    # Thetas=np.geomspace(1.5, 6.0, 10)
+    Thetas = (np.geomspace(2e-3, 5e-2, 10).tolist()   # Gurzhi window
+              + np.geomspace(1.5, 6.0, 10).tolist())  # Planckian window
+else:
+    # Original temperature range
+    # PATCH: include the asymptotic window (1e-4 to 1e-3) where T^4 scaling should appear
+    # Also include overlap with higher temperatures for continuity
+    Thetas = (np.geomspace(1e-4, 1e-3, 12).tolist()
+              + [0.0012, 0.0016, 0.002, 0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
+                 0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28])
+
+# Hard cap to avoid "runs forever" - runtime scales roughly O(Nactive^3)
+NACTIVE_MAX = 4500   # try 3000–5000 on your CPU (was 6000)
 
 # active-shell cutoff: only include states where f(1-f) > cutoff
 # Increased slightly to help reduce Nactive at ultra-low T (optional: try 1e-7 or 3e-7 if needed)
-ACTIVE_CUTOFF = 1e-8
+ACTIVE_CUTOFF = 3e-7   # was 1e-8; try 1e-7–1e-6 to reduce Nactive
 
 # DO NOT include an explicit 1/Theta prefactor.
 # If you want a constant phase-space normalization, keep only the constant (2π)^-4.
@@ -205,10 +232,19 @@ def even_ge(n: int) -> int:
     return n if (n % 2 == 0) else (n + 1)
 
 
+# Thermal margin for momentum box
+THERMAL_SIGMA = 8.0  # how many T's of energy to include
+
 def pbox_for_theta(theta: float) -> float:
-    """Return appropriate pbox requirement based on temperature."""
-    t = float(theta)
-    return float(PBOX_MIN_LOW) if (t <= float(THETA_PBOX_SWITCH)) else float(PBOX_MIN_HIGH)
+    """
+    Ensure the momentum box actually contains the Fermi surface.
+    We require pmax >= kF + thermal margin.
+    """
+    # need to include kF plus thermal tail: dk ~ (THERMAL_SIGMA*T)/vF
+    # T = Theta * mu (in energy units)
+    T = float(theta) * MU_BAND
+    dk = (THERMAL_SIGMA * T) / max(vF, 1e-12)
+    return max(PBOX_MIN_HIGH, kF + dk)
 
 
 def choose_dp(theta: float) -> float:
@@ -264,52 +300,71 @@ def precompute(nx, ny, dp: float, Theta: float, shift_x: float = 0.0, shift_y: f
     Vectorized precompute for huge speedup when Nmax grows.
     NOTE: indices nx,ny remain integers for exact momentum conservation via idx_map,
     but physical momenta are shifted.
+    
+    Uses bilayer dispersion: ε(k) = √(v²k² + U²) - U
+    Returns dimensionless energy: eps_dim = eps(k) / μ, so Fermi level is at eps_dim = 1
+    Standard Fermi function: f = 1 / (exp((eps_dim-1)/Theta) + 1)
     """
     px = dp * (nx.astype(np.float64) + shift_x)
     py = dp * (ny.astype(np.float64) + shift_y)
-    P  = np.sqrt(px * px + py * py)
-    eps = P  # Dirac: ε(p)=|p| in ε_F units (was parabolic: eps = P*P)
+    k  = np.sqrt(px * px + py * py)
     
-    # Vectorized f computation
-    invT = 1.0 / float(Theta)
-    em = math.exp(-invT)
-    a = 1.0 - em
-    x = (eps - 1.0) * invT
+    # dimensionless energy: eps_dim = eps(k) / mu, so Fermi level is at eps_dim = 1
+    eps = np.sqrt((V_BAND * k)**2 + U_BAND * U_BAND) - U_BAND
+    eps_dim = eps / MU_BAND
+    
+    # Fermi-Dirac: f = 1 / (exp((eps - mu)/T)+1)  =>  exp((eps_dim-1)/Theta)
+    x = (eps_dim - 1.0) / float(Theta)
     x = np.clip(x, -700.0, 700.0)
-    ex = np.exp(x)
-    f = a / (ex + a)
+    f = 1.0 / (np.exp(x) + 1.0)
     
-    return px, py, P, eps, f
+    return px, py, k, eps_dim, f
 
 
-def active_indices(f: np.ndarray, eps: np.ndarray, Theta: float, cutoff: float, dp: float) -> np.ndarray:
+def active_indices(f: np.ndarray, eps_dim: np.ndarray, k: np.ndarray, Theta: float, cutoff: float, dp: float) -> np.ndarray:
     """
     Active set should follow the thermal shell width ~ Theta.
     Using only w=f(1-f) on a coarse Cartesian grid can "freeze" the shell at the lattice energy spacing.
     
-    PATCH (strong): restrict to a true ring around p≈1 (not just energy window) to reduce
-    bulk contamination that pollutes angular harmonics on a Cartesian lattice.
+    PATCH: For bilayer dispersion, active shell must be around k_F, not p=1.
+    - Energy shell: |eps_dim - 1| < shell_E (in dimensionless units)
+    - Momentum shell: |k - kF| < dk, where dk ~ T/v_F
     
-    PATCH: For Dirac dispersion, eps = p, so energy mismatch scales ~O(dp), not dp^2.
+    PATCH: Make the shell scale with Theta first; dp is only a small floor.
+    Also cap Nactive to NACTIVE_MAX by keeping only the most important states (largest w=f(1-f)).
     """
     w = f * (1.0 - f)
-    # Require near the Fermi surface in ENERGY (for Dirac: eps = p, eps_F = 1)
-    # PATCH: make the shell Theta-dominated with a dp floor (NOT dp^2 for Dirac).
-    SHELL_REL = 20.0
-    SHELL_DP_REL = 40.0  # For Dirac: dp floor (was 80.0 * dp^2 for parabolic)
-    base_width = max(SHELL_REL * Theta, SHELL_DP_REL * dp)
-    shell_width = float(RING_SHELL_TIGHTEN) * base_width
-
-    # For Dirac: eps = p, so energy window is already in p-space
-    # |eps-1| = |p-1|, so shell_width directly gives p_rad
-    # PATCH: use parameterized floor to control ring thickness (prevents Nactive explosion)
-    p_rad = max(0.5 * shell_width, RING_FLOOR_DP_MULT * dp)
-
-    # For Dirac: p = eps (no sqrt needed)
-    p = eps
-    ring = np.abs(p - 1.0) < p_rad
-    shell = np.abs(eps - 1.0) < shell_width
-    return np.where((w > cutoff) & shell & ring)[0].astype(np.int32)
+    
+    # Energy shell in dimensionless units (eps_dim)
+    SHELL_REL = 8.0
+    shell_e = SHELL_REL * float(Theta)
+    
+    # convert energy width -> k-width using vF:  d(eps_dim)/dk = vF/mu
+    depsdk_dim = max(vF / MU_BAND, 1e-12)
+    dk = shell_e / depsdk_dim
+    
+    # ring thickness: Theta-dominated, dp as floor
+    RING_SHELL_TIGHTEN = 0.45
+    RING_FLOOR_DP_MULT = 0.65
+    dk = max(RING_SHELL_TIGHTEN * dk, RING_FLOOR_DP_MULT * dp)
+    
+    shell = np.abs(eps_dim - 1.0) < shell_e
+    ring  = np.abs(k - kF) < dk
+    
+    active = np.where((w > cutoff) & shell & ring)[0].astype(np.int32)
+    
+    # ---- runtime cap: keep EXACTLY the top-NACTIVE_MAX states by weight ----
+    if active.size > NACTIVE_MAX:
+        ww = w[active]
+        # indices of the top-K weights (unsorted)
+        keep = np.argpartition(ww, -NACTIVE_MAX)[-NACTIVE_MAX:]
+        active = active[keep].astype(np.int32)
+        # optional: sort by descending weight for reproducibility
+        ww_keep = ww[keep]
+        order = np.argsort(ww_keep)[::-1]
+        active = active[order].astype(np.int32)
+    
+    return active
 
 
 if USE_NUMBA:
@@ -391,12 +446,17 @@ if USE_NUMBA:
 def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
     nx, ny, half = build_centered_lattice(Nmax_T)
     idx_map = make_index_map(nx, ny, Nmax_T, half)
-    px, py, P, eps, f = precompute(nx, ny, dp_T, Theta, float(SHIFT_X), float(SHIFT_Y))
+    px, py, k, eps_dim, f = precompute(nx, ny, dp_T, Theta, float(SHIFT_X), float(SHIFT_Y))
 
     # Temperature-following active shell
-    active = active_indices(f, eps, Theta, ACTIVE_CUTOFF, dp_T)
+    active = active_indices(f, eps_dim, k, Theta, ACTIVE_CUTOFF, dp_T)
     Nstates = nx.size
     Nactive = int(active.size)
+    
+    # Belt and suspenders: ensure Nactive <= NACTIVE_MAX (shouldn't happen after exact-topK fix)
+    if Nactive > NACTIVE_MAX:
+        active = active[:NACTIVE_MAX]
+        Nactive = NACTIVE_MAX
     
     # Diagnostic: actual pmax reached by the grid (account for half-step)
     pmax = (float(half) - 0.5) * float(dp_T)
@@ -404,15 +464,12 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
     print(f"Theta={Theta:.6g}  Nmax={Nmax_T}  dp={dp_T:.6g}  "
           f"Nstates={Nstates}  Nactive={Nactive}  USE_NUMBA={USE_NUMBA}  ACTIVE_ONLY={BUILD_ACTIVE_ONLY}  pmax={pmax:.4f}")
     
-    # Hard stop protection: skip matrices that would take too long
-    MAX_NACTIVE = 6000
-    if Nactive > MAX_NACTIVE:
-        print(f"SKIP Theta={Theta}: Nactive={Nactive} > {MAX_NACTIVE} (too slow, would take days)")
-        return
+    # Info when capped
+    if Nactive == NACTIVE_MAX:
+        print(f"  [info] active set capped at NACTIVE_MAX={NACTIVE_MAX}")
     
-    if pmax < 1.05:
-        print(f"WARNING: pmax={pmax:.4f} < 1.05. Grid does not properly include the Fermi surface p=1. "
-              f"Low-T eigenvalues will be garbage. Increase NMAX_MAX or relax dp(theta) scaling / pbox.")
+    if pmax < 1.05 * kF:
+        print(f"WARNING: pmax={pmax:.4f} < {1.05*kF:.4f} (1.05*kF). Grid misses FS -> garbage.")
 
     # Resolution warning (this is *the* main reason your curves don't scale at very low T on a Cartesian grid)
     if (dp_T * dp_T) > (0.5 * Theta):
@@ -430,31 +487,38 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
         dimless_scale = DIMLESS_CONST
 
     # Temperature-scaled Lorentzian width to avoid T->0 floor
-    # PATCH: For Dirac, dp floor for λ (energy mismatch scales ~O(dp), not dp^2).
-    lam_T   = LAMBDA_REL * Theta
-    lam_dp  = LAMBDA_DP_REL * dp_T
+    # PATCH: For bilayer, lambda is in dimensionless energy units (eps_dim)
+    # lambda_dp ~ (vF/mu) * dp (linear mismatch in dimensionless units)
+    lam_T = LAMBDA_REL * Theta
+    
+    # lambda is in dimensionless energy units (eps_dim), so multiply by (vF/mu)*dp
+    lam_dp = LAMBDA_DP_REL * (vF / MU_BAND) * dp_T
     lam_eff = max(lam_T, lam_dp, LAMBDA_MIN)
 
     if BUILD_ACTIVE_ONLY:
         Ma = np.zeros((Nactive, Nactive), dtype=np.float64)
 
         if USE_NUMBA:
+            # Convert eps_dim back to physical eps for numba function (it uses eps in energy conservation)
+            eps_phys = eps_dim * MU_BAND
             assemble_rows_numba_active(
-                Ma, nx, ny, idx_map, half, eps, f,
+                Ma, nx, ny, idx_map, half, eps_phys, f,
                 active, pos,
                 float(dp_T), float(lam_eff), float(pref), float(dimless_scale)
             )
         else:
             dp4 = dp_T ** 4
+            # Convert eps_dim back to physical eps for energy conservation
+            eps_phys = eps_dim * MU_BAND
             for a1, i1 in enumerate(active):
                 n1x, n1y = int(nx[i1]), int(ny[i1])
-                e1, f1 = float(eps[i1]), float(f[i1])
+                e1, f1 = float(eps_phys[i1]), float(f[i1])
                 for a2, i2 in enumerate(active):
                     n2x, n2y = int(nx[i2]), int(ny[i2])
-                    e2, f2 = float(eps[i2]), float(f[i2])
+                    e2, f2 = float(eps_phys[i2]), float(f[i2])
                     for a1p, i1p in enumerate(active):
                         n1px, n1py = int(nx[i1p]), int(ny[i1p])
-                        e1p, f1p = float(eps[i1p]), float(f[i1p])
+                        e1p, f1p = float(eps_phys[i1p]), float(f[i1p])
 
                         n2px = n1x + n2x - n1px
                         n2py = n1y + n2y - n1py
@@ -511,6 +575,12 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
         "active_only": bool(BUILD_ACTIVE_ONLY),
         "shift_x": float(SHIFT_X),
         "shift_y": float(SHIFT_Y),
+        # Band parameters for bilayer dispersion
+        "U_band": float(U_BAND),
+        "v_band": float(V_BAND),
+        "mu_band": float(MU_BAND),
+        "kF": float(kF),
+        "vF": float(vF),
         # Store only what eigen solver needs (active-only arrays):
         "active": active.astype(np.int32),
         "w_active": w_full[active].astype(np.float64),
