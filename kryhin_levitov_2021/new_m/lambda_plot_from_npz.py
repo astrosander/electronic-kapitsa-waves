@@ -206,16 +206,16 @@ def get_color_and_alpha(m, max_m=8):
 
 def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
     """
-    Plot gamma_m(T)/T^2 from loaded data.
+    Plot gamma_m(T) from loaded data (without dividing by T^2).
     """
-    # --- plot gamma_m(T)/T^2 ---
+    # --- plot gamma_m(T) ---
     fig, ax = plt.subplots(figsize=(8 * 0.9, 6 * 0.9))
     fig.patch.set_facecolor('white')  # Ensure white background
     ax.set_facecolor('white')
 
     # Collect valid data points for setting limits (before plotting reference lines)
     T_valid = []
-    gamma_over_T2_valid = []
+    gamma_valid = []
     
     # Get max mode for colormap normalization
     max_m = int(np.max(modes)) if len(modes) > 0 else 8
@@ -228,9 +228,8 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
             if np.any(mask):
                 T_plot = T[mask]
                 gm_plot = gm[mask]
-                gm_over_T2 = gm_plot / (T_plot ** 2)
                 T_valid.extend(T_plot)
-                gamma_over_T2_valid.extend(gm_over_T2)
+                gamma_valid.extend(gm_plot)
                 
                 color, alpha = get_color_and_alpha(m_int, max_m)
                 linestyle = '-' if m_int <= 1 else '-'
@@ -242,7 +241,7 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
                     linewidth = 1.3  # Thinner for red (even) modes
                 else:
                     linewidth = 2.0  # Thicker for blue (odd) modes
-                ax.loglog(T_plot, gm_over_T2, #label=fr"$m={m_int}$", 
+                ax.loglog(T_plot, gm_plot, #label=fr"$m={m_int}$", 
                          linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
 
     # Add T^2 and T^4 reference lines
@@ -263,32 +262,28 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
                 break
         
         if gamma_ref is not None and gamma_ref > 0:
-            # Normalize so ref lines pass through (T_mid, gamma_ref/T_mid^2)
-            # For T^2: gamma = C_T2 * T^2, so gamma/T^2 = C_T2 (constant)
-            # For T^4: gamma = C_T4 * T^4, so gamma/T^2 = C_T4 * T^2
+            # For T^2: gamma = C_T2 * T^2
+            # For T^4: gamma = C_T4 * T^4
             C_T2 = gamma_ref / (T_mid ** 2)
             C_T4 = gamma_ref / (T_mid ** 4)
             
-            # T^2 reference: constant line at C_T2
-            ref_T2_normalized = np.full_like(T_ref, C_T2)*10
-            # T^4 reference: C_T4 * T^2
-            ref_T4_normalized = C_T4 * (T_ref ** 2)
+            # T^2 reference: C_T2 * T^2
+            ref_T2 = C_T2 * (T_ref ** 2)
+            # T^4 reference: C_T4 * T^4
+            ref_T4 = C_T4 * (T_ref ** 4)
             
-            ax.loglog(T_ref, ref_T2_normalized*10000000000000, '--', color='blue', linewidth=1.0, label=r"$\propto T^2$")
-            ax.loglog(T_ref, ref_T4_normalized*10000000000000, '-.', color='red', linewidth=1.0, label=r"$\propto T^4$")
+            ax.loglog(T_ref, ref_T2, '--', color='blue', linewidth=1.0, alpha=0.5, label=r"$\propto T^2$")
+            ax.loglog(T_ref, ref_T4, '-.', color='red', linewidth=1.0, alpha=0.5, label=r"$\propto T^4$")
 
     # Set limits based on data curves only (not reference lines)
-    if len(T_valid) > 0 and len(gamma_over_T2_valid) > 0:
+    if len(T_valid) > 0 and len(gamma_valid) > 0:
         T_valid = np.array(T_valid)
-        gamma_over_T2_valid = np.array(gamma_over_T2_valid)
+        gamma_valid = np.array(gamma_valid)
         ax.set_xlim([T_valid.min(), T_valid.max()])
-        ax.set_ylim([gamma_over_T2_valid.min(), gamma_over_T2_valid.max()])
-
-    # ax.set_xlim([T_valid.min(), T_valid.max()])
-    ax.set_ylim(1e-6, 1e0)
+        ax.set_ylim([gamma_valid.min(), gamma_valid.max()])
 
     ax.set_xlabel(r"Temperature, $T/T_F$")
-    ax.set_ylabel(r"Decay rate (eigenvalue), $\gamma_m / T^2$")
+    ax.set_ylabel(r"Decay rate (eigenvalue), $\gamma_m$")
     ax.legend()
 
     fig.tight_layout()

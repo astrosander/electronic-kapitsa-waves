@@ -34,7 +34,7 @@ plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
 
 # Directory where bruteforce matrices are stored
-MATRIX_DIR = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce"#"collision_integral_direct/Matrixes_bruteforce"
+MATRIX_DIR = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce"#"collision_integral_direct/Matrixes_bruteforce"
 
 
 def _theta_str(theta: float) -> str:
@@ -334,8 +334,8 @@ def main():
         
         power = 2  # same choices as original
         
-        # Only plot m != 0,1 prominently (same logic as original code)
-        if k == 0 and m != 0 and m != 1:
+        # Plot all modes except m=1 (momentum conserved => zero line is boring)
+        if k == 0 and m != 1:
             # Filter out invalid values
             y_arr = np.array(y)
             y0_arr = np.array(y0)
@@ -346,8 +346,10 @@ def main():
                 log_vals = 3*np.log(2*np.pi) + np.log((y_arr[valid] - y0_arr[valid])/(Thetas_arr[valid]**power))
                 # Only plot if we have enough points
                 if len(log_vals) > 6:
+                    # Use dotted line for m=0 to make it stand out visually
+                    ls = ":" if m == 0 else "-"
                     ax10.plot(log_thetas[6:], log_vals[6:],
-                              label=f"m = {m}", linewidth=1.5)
+                              label=f"m = {m}", linewidth=1.5, linestyle=ls)
             
             print(f"m={m}", log_thetas[6:] if len(log_vals) > 6 else [], 
                   log_vals[6:] if len(log_vals) > 6 else [])
@@ -657,7 +659,7 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     px, py = reconstruct_px_py(meta)
     theta = np.arctan2(py, px)
     P = np.sqrt(px * px + py * py)
-    eps = P * P
+    eps = P  # Dirac: ε(p)=|p| (was parabolic: eps = P*P)
     Theta = float(meta.get("Theta", 0.0))
     Theta_val = float(meta.get("Theta", 1.0))  # Use 1.0 as default for scaling
     dp = float(meta.get("dp", 0.0))

@@ -90,9 +90,10 @@ THETA_PBOX_SWITCH = 1e-3
 
 # PATCH (strong): push much higher ring accuracy.
 # Smaller dp is necessary to expose clean T^2 (even m) and especially T^4 (odd m).
-# We will *not* try to keep file sizes constant here; accuracy first.
-RING_PIXEL_BOOST = 3.0      # strong; try 2.5–4.0
+# Reduced from 3.0 to 1.5 to keep Nactive manageable (runtime-safe range: 1.2–1.8)
+RING_PIXEL_BOOST = 1.5      # reduced from 3.0 to prevent Nactive explosion
 RING_SHELL_TIGHTEN = 0.45   # tighter ring (suppresses bulk contamination)
+RING_FLOOR_DP_MULT = 0.65   # ring thickness floor multiplier (was effectively 2.5; 0.6–1.0 is safe)
 
 # Compute pixel ratios for both regions
 PIXEL_RATIO_LOW  = (THETA_ANCHOR_LOW  / (DP_ANCHOR_LOW  * DP_ANCHOR_LOW )) * RING_PIXEL_BOOST
@@ -122,9 +123,9 @@ SHIFT_Y = 0.5
 
 # Energy delta broadening (Lorentzian) --- MUST scale with temperature to avoid T->0 floor
 # PATCH (strong): sharpen energy conservation to recover proper low-T exponents.
-# PATCH: dp^2 floor (not dp). Under momentum conservation, typical Δε mismatch scales ~O(dp^2).
+# PATCH: For Dirac dispersion, energy is linear in p, so mismatch scales ~O(dp), not dp^2.
 LAMBDA_REL = 0.03        # lambda_T = 0.03 * Theta  (was 0.1)
-LAMBDA_DP2_REL = 5.0      # lambda_dp2 = 5.0 * dp^2 (energy spacing scale)
+LAMBDA_DP_REL = 2.0      # lambda_dp = 2.0 * dp (energy spacing scale for Dirac)
 LAMBDA_MIN = 1e-16       # reduced from 1e-12 to allow tiny rates at very low T
 
 V2   = 1.0         # |V|^2
@@ -145,6 +146,7 @@ Thetas = (np.geomspace(1e-4, 1e-3, 12).tolist()
              0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28])
 
 # active-shell cutoff: only include states where f(1-f) > cutoff
+# Increased slightly to help reduce Nactive at ultra-low T (optional: try 1e-7 or 3e-7 if needed)
 ACTIVE_CUTOFF = 1e-8
 
 # DO NOT include an explicit 1/Theta prefactor.
@@ -266,7 +268,7 @@ def precompute(nx, ny, dp: float, Theta: float, shift_x: float = 0.0, shift_y: f
     px = dp * (nx.astype(np.float64) + shift_x)
     py = dp * (ny.astype(np.float64) + shift_y)
     P  = np.sqrt(px * px + py * py)
-    eps = P * P  # constant shift cancels in Δε anyway
+    eps = P  # Dirac: ε(p)=|p| in ε_F units (was parabolic: eps = P*P)
     
     # Vectorized f computation
     invT = 1.0 / float(Theta)
@@ -283,29 +285,28 @@ def precompute(nx, ny, dp: float, Theta: float, shift_x: float = 0.0, shift_y: f
 def active_indices(f: np.ndarray, eps: np.ndarray, Theta: float, cutoff: float, dp: float) -> np.ndarray:
     """
     Active set should follow the thermal shell width ~ Theta.
-    Using only w=f(1-f) on a coarse Cartesian grid can "freeze" the shell at the lattice energy spacing ~ dp^2.
+    Using only w=f(1-f) on a coarse Cartesian grid can "freeze" the shell at the lattice energy spacing.
     
     PATCH (strong): restrict to a true ring around p≈1 (not just energy window) to reduce
     bulk contamination that pollutes angular harmonics on a Cartesian lattice.
+    
+    PATCH: For Dirac dispersion, eps = p, so energy mismatch scales ~O(dp), not dp^2.
     """
     w = f * (1.0 - f)
-    # Require near the Fermi surface in ENERGY (since eps = p^2 and eps_F = 1 in your units)
-    # PATCH: make the shell Theta-dominated with a dp^2 floor (NOT dp).
-    # This avoids the low-T "sqrt(T)" floor that comes from using dp in eps-space.
+    # Require near the Fermi surface in ENERGY (for Dirac: eps = p, eps_F = 1)
+    # PATCH: make the shell Theta-dominated with a dp floor (NOT dp^2 for Dirac).
     SHELL_REL = 20.0
-    SHELL_DP2_REL = 80.0
-    base_width = max(SHELL_REL * Theta, SHELL_DP2_REL * (dp * dp))
+    SHELL_DP_REL = 40.0  # For Dirac: dp floor (was 80.0 * dp^2 for parabolic)
+    base_width = max(SHELL_REL * Theta, SHELL_DP_REL * dp)
     shell_width = float(RING_SHELL_TIGHTEN) * base_width
 
-    # Convert energy window into a radial window around p≈1:
-    # eps = p^2, so near p=1: |eps-1| ≈ 2|p-1|
-    # => |p-1| < shell_width/2 is consistent.
-    # But enforce also a dp-controlled floor, otherwise at tiny Theta the ring becomes undersampled.
-    p_rad = 0.5 * shell_width
-    p_rad = max(p_rad, 2.5 * dp)  # ensure multiple lattice points across ring
+    # For Dirac: eps = p, so energy window is already in p-space
+    # |eps-1| = |p-1|, so shell_width directly gives p_rad
+    # PATCH: use parameterized floor to control ring thickness (prevents Nactive explosion)
+    p_rad = max(0.5 * shell_width, RING_FLOOR_DP_MULT * dp)
 
-    # Compute p from eps without extra arrays
-    p = np.sqrt(np.maximum(eps, 0.0))
+    # For Dirac: p = eps (no sqrt needed)
+    p = eps
     ring = np.abs(p - 1.0) < p_rad
     shell = np.abs(eps - 1.0) < shell_width
     return np.where((w > cutoff) & shell & ring)[0].astype(np.int32)
@@ -403,6 +404,12 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
     print(f"Theta={Theta:.6g}  Nmax={Nmax_T}  dp={dp_T:.6g}  "
           f"Nstates={Nstates}  Nactive={Nactive}  USE_NUMBA={USE_NUMBA}  ACTIVE_ONLY={BUILD_ACTIVE_ONLY}  pmax={pmax:.4f}")
     
+    # Hard stop protection: skip matrices that would take too long
+    MAX_NACTIVE = 6000
+    if Nactive > MAX_NACTIVE:
+        print(f"SKIP Theta={Theta}: Nactive={Nactive} > {MAX_NACTIVE} (too slow, would take days)")
+        return
+    
     if pmax < 1.05:
         print(f"WARNING: pmax={pmax:.4f} < 1.05. Grid does not properly include the Fermi surface p=1. "
               f"Low-T eigenvalues will be garbage. Increase NMAX_MAX or relax dp(theta) scaling / pbox.")
@@ -423,10 +430,10 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
         dimless_scale = DIMLESS_CONST
 
     # Temperature-scaled Lorentzian width to avoid T->0 floor
-    # PATCH: dp^2 floor for λ (see comment above).
+    # PATCH: For Dirac, dp floor for λ (energy mismatch scales ~O(dp), not dp^2).
     lam_T   = LAMBDA_REL * Theta
-    lam_dp2 = LAMBDA_DP2_REL * (dp_T * dp_T)
-    lam_eff = max(lam_T, lam_dp2, LAMBDA_MIN)
+    lam_dp  = LAMBDA_DP_REL * dp_T
+    lam_eff = max(lam_T, lam_dp, LAMBDA_MIN)
 
     if BUILD_ACTIVE_ONLY:
         Ma = np.zeros((Nactive, Nactive), dtype=np.float64)
