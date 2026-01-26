@@ -126,7 +126,8 @@ SHIFT_Y = 0.5
 # PATCH (strong): sharpen energy conservation to recover proper low-T exponents.
 # PATCH: For Dirac dispersion, energy is linear in p, so mismatch scales ~O(dp), not dp^2.
 LAMBDA_REL = 0.03        # lambda_T = 0.03 * Theta  (was 0.1)
-LAMBDA_DP_REL = 2.0      # lambda_dp = 2.0 * dp (energy spacing scale for Dirac)
+LAMBDA_DP_REL = 2.0      # lambda_dp = 2.0 * v_typ * dp (energy spacing scale)
+LAMBDA_DP_CAP_REL = 0.5  # cap: lam_dp <= 0.5 * Theta (prevents energy nonconservation at high T)
 LAMBDA_MIN = 1e-16       # reduced from 1e-12 to allow tiny rates at very low T
 
 V2   = 1.0         # |V|^2
@@ -491,8 +492,14 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
     # lambda_dp ~ (vF/mu) * dp (linear mismatch in dimensionless units)
     lam_T = LAMBDA_REL * Theta
     
-    # lambda is in dimensionless energy units (eps_dim), so multiply by (vF/mu)*dp
-    lam_dp = LAMBDA_DP_REL * (vF / MU_BAND) * dp_T
+    # dp floor should be in ENERGY units: δε ~ v_typ * dp
+    # Use vF (already computed from band parameters)
+    v_typ = vF / MU_BAND  # dimensionless velocity at Fermi surface
+    lam_dp = LAMBDA_DP_REL * v_typ * dp_T
+    
+    # Cap dp-floor so it can't dominate at high T (prevents energy nonconservation)
+    lam_dp = min(lam_dp, LAMBDA_DP_CAP_REL * Theta)
+    
     lam_eff = max(lam_T, lam_dp, LAMBDA_MIN)
 
     if BUILD_ACTIVE_ONLY:
