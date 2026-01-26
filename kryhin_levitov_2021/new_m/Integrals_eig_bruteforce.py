@@ -289,9 +289,13 @@ def verify_asymptotics(Thetas, eigs, modes=(2, 3, 4, 0), low_max=5e-2, high_min=
     print("="*70)
     
     for m in modes:
-        if m == 1:
-            continue  # momentum conserved => skip
-        y = np.array([eigs[t][m] for t in Thetas], dtype=float)
+        # Handle both integer modes (m=0,1,2,3,4,...) and string modes (dens, px, py)
+        if isinstance(m, str):
+            # String mode like "dens", "px", "py" (invariants)
+            y = np.array([eigs[t].get(m, np.nan) for t in Thetas], dtype=float)
+        else:
+            # Integer mode
+            y = np.array([eigs[t].get(m, np.nan) for t in Thetas], dtype=float)
         good = np.isfinite(y) & (y > 0)
         
         if good.sum() < 6:
@@ -358,11 +362,18 @@ def main():
         print(f"  Matrix shape: {Ma.shape}, type: {type(Ma).__name__}", flush=True)
         
         # Compute eigenfunctions for angular modes
-        eigenfunctions, eigenvalues, px, py = compute_eigenfunctions_by_mode(Ma, meta, ms=ms)
+        eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra = compute_eigenfunctions_by_mode(Ma, meta, ms=ms)
         
         # Store results (these are small compared to matrices)
         all_eigenfunctions[Theta] = eigenfunctions
         all_eigenvalues_from_funcs[Theta] = eigenvalues
+        # Store extra modes (invariants: dens, px, py) if present
+        if "dens" in eigenvalues_extra:
+            all_eigenvalues_from_funcs[Theta]["dens"] = eigenvalues_extra["dens"]
+        if "px" in eigenvalues_extra:
+            all_eigenvalues_from_funcs[Theta]["px"] = eigenvalues_extra["px"]
+        if "py" in eigenvalues_extra:
+            all_eigenvalues_from_funcs[Theta]["py"] = eigenvalues_extra["py"]
         
         # Skip eigenfunction plotting to save time - only compute eigenvalues
         # plot_eigenfunctions_by_mode(eigenfunctions, eigenvalues, px, py, Theta, ms=ms,
@@ -389,9 +400,18 @@ def main():
                 eigs[Theta][m] = all_eigenvalues_from_funcs[Theta][m]
             else:
                 eigs[Theta][m] = 0.0
+        
+        # Add extra modes (invariants: dens, px, py) if present
+        if "dens" in all_eigenvalues_from_funcs[Theta]:
+            eigs[Theta]["dens"] = all_eigenvalues_from_funcs[Theta]["dens"]
+        if "px" in all_eigenvalues_from_funcs[Theta]:
+            eigs[Theta]["px"] = all_eigenvalues_from_funcs[Theta]["px"]
+        if "py" in all_eigenvalues_from_funcs[Theta]:
+            eigs[Theta]["py"] = all_eigenvalues_from_funcs[Theta]["py"]
     
     # ---- Verify asymptotic scaling ----
-    verify_asymptotics(Thetas, eigs, modes=(2, 3, 4, 0), low_max=5e-2, high_min=1.5)
+    # Now m=0 and m=1 are relaxing modes (not conserved), so include them
+    verify_asymptotics(Thetas, eigs, modes=(0, 1, 2, 3, 4), low_max=5e-2, high_min=1.5)
     
     # ---- Plot eigenvalues as in original script (Figure-1 style) ----
     f10, ax10 = plt.subplots(figsize=(8*0.9, 6*0.9))
@@ -410,25 +430,32 @@ def main():
         
         power = 2  # same choices as original
         
+        # Initialize arrays (fixes UnboundLocalError)
+        log_thetas = np.array([])
+        log_vals = np.array([])
+        
         # Plot all modes except m=1 (momentum conserved => zero line is boring)
         if k == 0 and m != 1:
             # Filter out invalid values
-            y_arr = np.array(y)
-            y0_arr = np.array(y0)
-            Thetas_arr = np.array(Thetas)
-            valid = (y_arr - y0_arr) > 0
+            y_arr = np.array(y, dtype=float)
+            y0_arr = np.array(y0, dtype=float)
+            Thetas_arr = np.array(Thetas, dtype=float)
+            valid = np.isfinite(y_arr) & np.isfinite(y0_arr) & ((y_arr - y0_arr) > 0)
             if np.any(valid):
                 log_thetas = np.log(Thetas_arr[valid])
                 log_vals = 3*np.log(2*np.pi) + np.log((y_arr[valid] - y0_arr[valid])/(Thetas_arr[valid]**power))
                 # Only plot if we have enough points
-                if len(log_vals) > 6:
+                if log_vals.size > 6:
                     # Use dotted line for m=0 to make it stand out visually
                     ls = ":" if m == 0 else "-"
                     ax10.plot(log_thetas[6:], log_vals[6:],
                               label=f"m = {m}", linewidth=1.5, linestyle=ls)
-            
-            print(f"m={m}", log_thetas[6:] if len(log_vals) > 6 else [], 
-                  log_vals[6:] if len(log_vals) > 6 else [])
+        
+        if log_vals.size > 0:
+            print(f"m={m}", log_thetas[6:] if log_vals.size > 6 else log_thetas,
+                  log_vals[6:] if log_vals.size > 6 else log_vals)
+        else:
+            print(f"m={m}: no positive points to plot")
     
     # m=1 dashed special line (as in original)
     if k == 0:
@@ -441,17 +468,24 @@ def main():
             # even if we repurpose m0 to be an isotropic relaxation mode.
             y0.append(0.0)
         power = 2
-        y_arr = np.array(y)
-        y0_arr = np.array(y0)
-        Thetas_arr = np.array(Thetas)
-        valid = (y_arr - y0_arr) > 0
+        y_arr = np.array(y, dtype=float)
+        y0_arr = np.array(y0, dtype=float)
+        Thetas_arr = np.array(Thetas, dtype=float)
+        
+        # Initialize arrays (fixes UnboundLocalError)
+        log_thetas = np.array([])
+        log_vals = np.array([])
+        
+        valid = np.isfinite(y_arr) & np.isfinite(y0_arr) & ((y_arr - y0_arr) > 0)
         if np.any(valid):
             log_thetas = np.log(Thetas_arr[valid])
             log_vals = 3*np.log(2*np.pi) + np.log((y_arr[valid] - y0_arr[valid])/(Thetas_arr[valid]**power))
-            if len(log_vals) > 5:
+            if log_vals.size > 5:
                 ax10.plot(log_thetas[5:], log_vals[5:],
                           label="m = 1", linestyle="--", linewidth=1.5, color="gray")
                 print("m=1", log_thetas[5:], log_vals[5:])
+        else:
+            print("m=1: no positive points to plot")
     
     # Reference lines (same as original)
     x_ref = np.linspace(-4.7, -3.0, 100)
@@ -493,13 +527,29 @@ def main():
     with open(csv_filename, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
         
-        # Write header: T, m0, m1, m2, ...
+        # Header: T, m0, m1, m2, ..., dens, px, py (if present)
         header = ['T'] + [f'm{m}' for m in ms]
+        # Check if extra modes (invariants) exist
+        has_dens = any("dens" in eigs[t] for t in Thetas)
+        has_px = any("px" in eigs[t] for t in Thetas)
+        has_py = any("py" in eigs[t] for t in Thetas)
+        if has_dens:
+            header.append('dens')
+        if has_px:
+            header.append('px')
+        if has_py:
+            header.append('py')
         writer.writerow(header)
         
         # Write data rows
         for Theta in Thetas:
-            row = [Theta] + [eigs[Theta][m] for m in ms]
+            row = [Theta] + [eigs[Theta].get(m, 0.0) for m in ms]
+            if has_dens:
+                row.append(eigs[Theta].get("dens", np.nan))
+            if has_px:
+                row.append(eigs[Theta].get("px", np.nan))
+            if has_py:
+                row.append(eigs[Theta].get("py", np.nan))
             writer.writerow(row)
     
     print(f"Saved: {csv_filename}", flush=True)
@@ -716,6 +766,29 @@ def w_orthonormalize(vecs, w, remove_basis=None):
     return basis
 
 
+def band_velocity(px, py, meta):
+    """
+    Compute band velocity v = dε/dk for bilayer dispersion.
+    Returns velocity components vx, vy in dimensionless units (scaled by 1/mu).
+    """
+    U_BAND = float(meta.get("U_band", meta.get("band_u", 10.0)))
+    V_BAND = float(meta.get("v_band", meta.get("band_v", 1.0)))
+    MU_BAND = float(meta.get("mu_band", meta.get("mu_f", 1.0)))
+    
+    k = np.sqrt(px*px + py*py)
+    k_safe = np.maximum(k, 1e-300)
+    
+    denom = np.sqrt((V_BAND*k)**2 + U_BAND*U_BAND)
+    dEdk = (V_BAND*V_BAND * k) / denom  # dε/dk (in energy units)
+    
+    # Velocity in dimensionless form: dEdk/mu
+    dEdk_dim = dEdk / MU_BAND
+    
+    vx = dEdk_dim * px / k_safe
+    vy = dEdk_dim * py / k_safe
+    return vx, vy
+
+
 def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     """
     Compute eigenfunctions for specific angular modes m on the Fermi ring.
@@ -792,14 +865,27 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
             A_eps = A.dot(eps_phys)
             Ae = np.linalg.norm(A_eps) / eps_norm
             print(f"  [sanity] ||A eps||/||eps|| = {Ae:.6e}", flush=True)
+        
+        # Check current/velocity conservation (should be ~0 for parabolic, nonzero for non-parabolic)
+        vx, vy = band_velocity(px, py, meta)
+        vx_norm = np.linalg.norm(vx)
+        vy_norm = np.linalg.norm(vy)
+        if vx_norm > 1e-30:
+            A_vx = A.dot(vx)
+            Avx = np.linalg.norm(A_vx) / vx_norm
+            print(f"  [sanity] ||A vx||/||vx|| = {Avx:.6e}", flush=True)
+        if vy_norm > 1e-30:
+            A_vy = A.dot(vy)
+            Avy = np.linalg.norm(A_vy) / vy_norm
+            print(f"  [sanity] ||A vy||/||vy|| = {Avy:.6e}", flush=True)
     
     # Sanity check: verify momentum conservation
     Apx_norm = np.linalg.norm(A.dot(px))
     px_norm = np.linalg.norm(px)
     Apy_norm = np.linalg.norm(A.dot(py))
     py_norm = np.linalg.norm(py)
-    print(f"  [sanity] ||A px||/||px|| = {Apx_norm/(px_norm + 1e-30):.6e}")
-    print(f"  [sanity] ||A py||/||py|| = {Apy_norm/(py_norm + 1e-30):.6e}")
+    print(f"  [sanity] ||A px||/||px|| = {Apx_norm/(px_norm + 1e-30):.3e}")
+    print(f"  [sanity] ||A py||/||py|| = {Apy_norm/(py_norm + 1e-30):.3e}")
     
     # Invariants: density and momentum should be treated carefully.
     # Density is always conserved; momentum corresponds to the m=1 sector.
@@ -821,18 +907,18 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     
     eigenfunctions = {}
     eigenvalues = {}
+    eigenfunctions_extra = {}
+    eigenvalues_extra = {}
+    
+    # Store conserved modes for later use
+    dens_u = inv_orth[0] if len(inv_orth) > 0 else None
+    px_u   = inv_orth[1] if len(inv_orth) > 1 else None
+    py_u   = inv_orth[2] if len(inv_orth) > 2 else None
     
     for m in ms:
         if m == 0:
-            if not COMPUTE_M0_RELAX:
-                # Old behavior: conserved density mode
-                u0 = inv_orth[0] if len(inv_orth) > 0 else np.ones(n, dtype=np.float64) / np.sqrt(n)
-                eigenfunctions[m] = u0
-                eigenvalues[m] = 0.0
-                print(f"  [m={m}] density mode: gamma=0.0 (conserved)")
-                continue
-
-            # NEW behavior: smallest nonzero isotropic (m=0) decay mode
+            # Compute the relaxing isotropic m=0 mode (orthogonal to density)
+            # This is the slowest decaying isotropic mode, not the conserved density
             # 1) build "remove" basis: density, and optionally energy-like mode
             remove = inv_orth[:1] if len(inv_orth) > 0 else None
             if M0_PROJECT_OUT_ENERGY:
@@ -856,11 +942,10 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
 
             U_list = w_orthonormalize(basis_raw, w_safe, remove_basis=remove)
             if len(U_list) == 0:
-                # Fallback: if basis collapses, report density mode
-                u0 = inv_orth[0] if len(inv_orth) > 0 else np.ones(n, dtype=np.float64) / np.sqrt(n)
-                eigenfunctions[m] = u0
-                eigenvalues[m] = 0.0
-                print(f"  [m={m}] basis empty -> gamma=0.0 (density fallback)")
+                # Basis collapsed - cannot compute relaxing mode
+                eigenfunctions[m] = None
+                eigenvalues[m] = np.nan
+                print(f"  [m=0] basis empty -> cannot compute relaxing mode")
                 continue
 
             # 3) project operator and solve small eigenproblem
@@ -876,7 +961,7 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
             if len(evals) == 0:
                 eigenfunctions[m] = None
                 eigenvalues[m] = np.nan
-                print(f"  [m={m}] No valid eigenvalues in radial subspace")
+                print(f"  [m=0] No valid eigenvalues in radial subspace")
                 continue
 
             j = np.argmin(np.maximum(evals, 0.0))
@@ -890,15 +975,87 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
 
             eigenfunctions[m] = u
             eigenvalues[m] = gamma
-            print(f"  [m={m}] isotropic relax: gamma={gamma:.6e}")
+            print(f"  [m=0] relaxing isotropic mode: gamma={gamma:.6e}")
+            
+            # Store conserved density separately for diagnostics
+            if dens_u is not None:
+                eigenfunctions_extra["dens"] = dens_u
+                eigenvalues_extra["dens"] = 0.0
+            
             continue
         
         if m == 1:
-            # IMPORTANT: m=1 *is* momentum conservation.
-            # Use px, py as basis and do NOT project them out.
-            # Remove only density for m=1, because px/py *are* the m=1 conserved modes
-            remove = inv_orth[:1] if len(inv_orth) > 0 else None
-            U_list = w_orthonormalize([px.copy(), py.copy()], w_safe, remove_basis=remove)
+            # Compute the relaxing m=1 mode (orthogonal to momentum)
+            # This is the slowest decaying m=1 harmonic, not the conserved momentum
+            # Build remove basis: density + momentum (px, py)
+            remove = []
+            if dens_u is not None:
+                remove.append(dens_u)
+            if px_u is not None:
+                remove.append(px_u)
+            if py_u is not None:
+                remove.append(py_u)
+            
+            # Build m=1 radial basis with proper angular structure
+            # Use radial envelope around kF with m=1 angular harmonics
+            depsdk_dim = max(vF / MU_BAND, 1e-12)
+            dk_th = Theta_val / depsdk_dim
+            sigma_k = max(RADIAL_SIGMA_P_MULT * dk_th, 4.0 * dp, 1e-12)
+            
+            z = (P - kF) / sigma_k
+            g = np.exp(-0.5 * z * z)
+            
+            basis = []
+            for kk in range(int(RADIAL_BASIS_K)):
+                rk = z ** kk
+                basis.append(g * rk * np.cos(1 * theta))
+                basis.append(g * rk * np.sin(1 * theta))
+            
+            U_list = w_orthonormalize(basis, w_safe, remove_basis=remove if len(remove) > 0 else None)
+            
+            if len(U_list) == 0:
+                eigenfunctions[m] = None
+                eigenvalues[m] = np.nan
+                print("  [m=1] relaxing m=1: basis empty")
+                continue
+            
+            # Project operator and solve
+            U = np.column_stack(U_list)
+            AU = A.dot(U)
+            C = U.T @ AU
+            C = 0.5 * (C + C.T)
+            
+            evals, evecs = np.linalg.eigh(C)
+            evals = np.real(evals)
+            evals = evals[np.isfinite(evals) & (evals >= -1e-12)]
+            
+            if len(evals) == 0:
+                eigenfunctions[m] = None
+                eigenvalues[m] = np.nan
+                print("  [m=1] relaxing m=1: No valid eigenvalues")
+                continue
+            
+            j = np.argmin(np.maximum(evals, 0.0))
+            gamma = float(max(evals[j], 0.0))
+            u = U @ evecs[:, j]
+            
+            nrm = np.sqrt(max(wdot(u, u, w_safe), 0.0))
+            if nrm > 1e-30:
+                u /= nrm
+            
+            eigenfunctions[m] = u
+            eigenvalues[m] = gamma
+            print(f"  [m=1] relaxing m=1 mode: gamma={gamma:.6e}")
+            
+            # Store conserved momentum separately for diagnostics
+            if px_u is not None:
+                eigenfunctions_extra["px"] = px_u
+                eigenvalues_extra["px"] = 0.0
+            if py_u is not None:
+                eigenfunctions_extra["py"] = py_u
+                eigenvalues_extra["py"] = 0.0
+            
+            continue
         else:
             # PATCH: for m>=2, allow radial structure (P-k_F)^k * cos/sin(mθ).
             # This is crucial: odd-m T^4 asymptotics typically requires cancellations
@@ -957,20 +1114,12 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
             u = u / nrm
         
         # Optional: make m=1 plot stable by aligning with +px if it's that mode
-        if m == 1:
-            px_proj = abs(wdot(u, px, w_safe))
-            py_proj = abs(wdot(u, py, w_safe))
-            if px_proj >= py_proj:
-                u *= np.sign(wdot(u, px, w_safe) + 1e-300)
-            else:
-                u *= np.sign(wdot(u, py, w_safe) + 1e-300)
-        
         eigenfunctions[m] = u
         eigenvalues[m] = gamma
         
         print(f"  [m={m}] gamma={gamma:.6e}")
     
-    return eigenfunctions, eigenvalues, px, py
+    return eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra
 
 
 def plot_eigenfunctions_main(Theta=None, n_eigs=10, n_plot=6, use_angular_modes=True):
@@ -1004,12 +1153,12 @@ def plot_eigenfunctions_main(Theta=None, n_eigs=10, n_plot=6, use_angular_modes=
     if use_angular_modes:
         # Compute eigenfunctions for specific angular modes
         ms = [0, 1, 2, 3, 4, 5, 6, 7, 8]
-        eigenfunctions, eigenvalues, px, py = compute_eigenfunctions_by_mode(Ma, meta, ms=ms)
+        eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra = compute_eigenfunctions_by_mode(Ma, meta, ms=ms)
         
         # Plot eigenfunctions for each mode
         plot_eigenfunctions_by_mode(eigenfunctions, eigenvalues, px, py, Theta, ms=ms)
         
-        return eigenfunctions, eigenvalues, px, py
+        return eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra
     else:
         # Compute general eigenfunctions
         vals, vecs, px, py = compute_eigenfunctions(Ma, meta, n_eigs=n_eigs)

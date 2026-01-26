@@ -140,8 +140,8 @@ def get_color_and_alpha(m, max_m=8):
     """
     if m <= 1:
         # m=0,1: use darker gray with reduced alpha (dashed lines)
-        color = 'black' if m == 0 else 'green'  # Darker grays
-        return color, 0.4  # Reduced alpha for dashed lines
+        color = 'black' if m == 0 else 'violet'  # Darker grays
+        return color, 1.0  # Reduced alpha for dashed lines
     elif m % 2 == 0:
         # Even modes (2,4,6,8,10,12,14...): red to redder colors
         # Start with bright red, get darker/more saturated red as m increases
@@ -236,7 +236,7 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
                 # Use thinner lines for red (even) modes to improve separation when close
                 # Keep thicker lines for blue (odd) modes and special modes
                 if m_int <= 1:
-                    linewidth = 1.8
+                    linewidth = 3.5#1.8
                 elif m_int % 2 == 0:
                     linewidth = 1.3  # Thinner for red (even) modes
                 else:
