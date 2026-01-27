@@ -44,8 +44,7 @@ if USE_NUMBA:
     # Optional diagnostics: NEVER disable numba if these fail
     try:
         print("cpu_count:", os.cpu_count())
-        if hasattr(os, "sched_getaffinity"):
-            print("affinity:", len(os.sched_getaffinity(0)))
+        print("affinity:", len(os.sched_getaffinity(0)))
         print("numba threads:", numba.get_num_threads())
         print("numba layer:", numba.threading_layer())
     except Exception as e:
@@ -63,30 +62,21 @@ AUTO_DP_FROM_ANCHOR = True
 # Piecewise anchors for different temperature ranges
 # Low-T anchor (0.01 < Theta < 0.1): targets ~20MB
 THETA_ANCHOR_LOW = 0.02
-DP_ANCHOR_LOW_BASE    = 0.03
+DP_ANCHOR_LOW    = 0.03
 # High-T anchor (0.1 < Theta < 1): targets ~20MB
 # Use Theta=0.3 as anchor since it's in the middle of the range
 # Current: Theta=0.3, dp=0.116 gives 10.6MB (too small)
 # Target: ~20MB requires ~sqrt(20/10.6) ≈ 1.37x more Nactive
 # So dp should be ~0.116/1.37 ≈ 0.085 to get ~20MB
 THETA_ANCHOR_HIGH = 0.3
-DP_ANCHOR_HIGH_BASE    = 0.085        # adjusted to target ~20MB at Theta=0.3
+DP_ANCHOR_HIGH    = 0.085        # adjusted to target ~20MB at Theta=0.3
 THETA_CROSSOVER   = 0.1          # switch between anchors at this temperature
-# FIX B3: Smooth transition width to avoid abrupt regime change
-THETA_CROSSOVER_WIDTH = 0.03     # smooth transition over ~[0.07, 0.13]
 
-DP_RING_MAX_BASE  = 0.06         # preferred cap for ring detail (only applies to low-T, harmless if PRIORITIZE_SIZE_OVER_RING=True)
+DP_RING_MAX  = 0.03         # preferred cap for ring detail (only applies to low-T)
 DP_FLOOR     = 1e-4         # safety
 # If True: allow dp to exceed DP_RING_MAX to keep file size constant
 # If False: enforce DP_RING_MAX strictly (prioritize ring detail over size)
-# FIX B2: Enable to prevent dp cap from creating regime switch in verification window
-PRIORITIZE_SIZE_OVER_RING = True
-
-# PATCH (recommended): keep angular sampling comparable across different kF
-# Scale dp anchors by (kF / K_F_REF). For μ=U=1 you get kF≈1.732, so dp gets ~0.378x smaller.
-# FIX B1: Disabled for now - was over-aggressive and causing NACTIVE_MAX saturation
-SCALE_DP_WITH_KF = False
-K_F_REF = 4.582576  # reference kF from your legacy μ=1, U=10, v=1 runs
+PRIORITIZE_SIZE_OVER_RING = False
 
 # ------------------------- LOW-T BOX VALIDITY -------------------------
 # At very low Theta, your dp(theta) can become so small that Nmax hits NMAX_MAX
@@ -100,16 +90,13 @@ THETA_PBOX_SWITCH = 1e-3
 
 # PATCH (strong): push much higher ring accuracy.
 # Smaller dp is necessary to expose clean T^2 (even m) and especially T^4 (odd m).
-# Reduced from 3.0 to 1.5 to keep Nactive manageable (runtime-safe range: 1.2–1.8)
-RING_PIXEL_BOOST = 1.5      # reduced from 3.0 to prevent Nactive explosion
+# We will *not* try to keep file sizes constant here; accuracy first.
+RING_PIXEL_BOOST = 3.0      # strong; try 2.5–4.0
 RING_SHELL_TIGHTEN = 0.45   # tighter ring (suppresses bulk contamination)
-# FIX B4: Reduced to help keep Nactive under control
-RING_FLOOR_DP_MULT = 0.35   # ring thickness floor multiplier (was 0.65; smaller = tighter ring = fewer active states)
 
-# Compute pixel ratios for both regions (will be recomputed after kF is known if SCALE_DP_WITH_KF is True)
-# These are placeholders; actual values computed after band-init
-PIXEL_RATIO_LOW  = None  # Will be set after kF is computed
-PIXEL_RATIO_HIGH = None  # Will be set after kF is computed
+# Compute pixel ratios for both regions
+PIXEL_RATIO_LOW  = (THETA_ANCHOR_LOW  / (DP_ANCHOR_LOW  * DP_ANCHOR_LOW )) * RING_PIXEL_BOOST
+PIXEL_RATIO_HIGH = (THETA_ANCHOR_HIGH / (DP_ANCHOR_HIGH * DP_ANCHOR_HIGH)) * (0.75 * RING_PIXEL_BOOST)
 
 # Optional: choose Nmax so the momentum box isn't absurdly tiny at low T
 # pmax ~= (Nmax/2)*dp. 2.5 is usually safe for low T; use 4.0 if you want the same as your old runs.
@@ -135,78 +122,107 @@ SHIFT_Y = 0.5
 
 # Energy delta broadening (Lorentzian) --- MUST scale with temperature to avoid T->0 floor
 # PATCH (strong): sharpen energy conservation to recover proper low-T exponents.
-# PATCH: For Dirac dispersion, energy is linear in p, so mismatch scales ~O(dp), not dp^2.
+# PATCH: dp^2 floor (not dp). Under momentum conservation, typical Δε mismatch scales ~O(dp^2).
 LAMBDA_REL = 0.03        # lambda_T = 0.03 * Theta  (was 0.1)
-LAMBDA_DP_REL = 2.0      # lambda_dp = 2.0 * v_typ * dp (energy spacing scale)
-LAMBDA_DP_CAP_REL = 0.5  # cap: lam_dp <= 0.5 * Theta (prevents energy nonconservation at high T)
+LAMBDA_DP2_REL = 5.0      # lambda_dp2 = 5.0 * dp^2 (energy spacing scale)
 LAMBDA_MIN = 1e-16       # reduced from 1e-12 to allow tiny rates at very low T
 
 V2   = 1.0         # |V|^2
 HBAR = 1.0         # ħ (set 1 for dimensionless)
 
-# ---- BAND PARAMETERS (bilayer) ----
-MU_BAND = 1.0
-# PATCH: run μ = U (ratio U/μ = 1)
-U_OVER_MU = 1.0
-U_BAND  = U_OVER_MU * MU_BAND
-V_BAND  = 1.0
+# ------------------------ BILAYER BAND PATCH ------------------------
+# Physical band params (same units as mu_phys)
+V_BAND   = 1.0   # v
+U_BAND   = 1.0   # U
+MU_PHYS  = 10.0  # chemical potential; choose MU_PHYS >> U_BAND to be in "Dirac-like" regime
 
-# Compute Fermi surface parameters
-# k_F = (1/v) * sqrt(μ(μ+2U))
-kF = math.sqrt(MU_BAND * (MU_BAND + 2.0 * U_BAND)) / V_BAND
-# v_F = v²k_F / (U + μ)
-vF = (V_BAND * V_BAND * kF) / (U_BAND + MU_BAND)
+# If you want fixed-density mu(T) instead of fixed mu, set this True.
+# Default False = keep mu fixed (as your text implies: "set U much smaller mu")
+FIX_DENSITY = False
 
-print(f"[band-init] U={U_BAND:.6g} v={V_BAND:.6g} mu={MU_BAND:.6g}  kF={kF:.6g}  vF={vF:.6g}")
+# Derived scales so that your dimensionless grid momentum P has FS at P=1 at T=0
+# Solve mu = sqrt(v^2 kF^2 + U^2) - U  =>  v^2 kF^2 = mu^2 + 2 mu U
+K_F0   = math.sqrt(MU_PHYS * MU_PHYS + 2.0 * MU_PHYS * U_BAND) / max(V_BAND, 1e-30)
 
-# ---- PATCH: derive dp anchors after kF is known ----
-if SCALE_DP_WITH_KF:
-    dp_scale = kF / K_F_REF
-else:
-    dp_scale = 1.0
+U_BAR  = U_BAND / MU_PHYS
+V_BAR  = (V_BAND * K_F0) / MU_PHYS   # = sqrt(1 + 2 U_BAR)
 
-DP_ANCHOR_LOW  = DP_ANCHOR_LOW_BASE  * dp_scale
-DP_ANCHOR_HIGH = DP_ANCHOR_HIGH_BASE * dp_scale
-DP_RING_MAX    = DP_RING_MAX_BASE    * dp_scale
+# Dimensionless target density in your (dimensionless) momentum units:
+# At T=0 with FS at P=1:  ∫_0^1 P dP = 1/2
+DENSITY_TARGET = 0.5
 
-# Recompute pixel ratios (must happen AFTER DP_ANCHOR_* are finalized)
-PIXEL_RATIO_LOW  = (THETA_ANCHOR_LOW  / (DP_ANCHOR_LOW  * DP_ANCHOR_LOW )) * RING_PIXEL_BOOST
-PIXEL_RATIO_HIGH = (THETA_ANCHOR_HIGH / (DP_ANCHOR_HIGH * DP_ANCHOR_HIGH)) * (0.75 * RING_PIXEL_BOOST)
+def eps_bilayer_vec(P: np.ndarray) -> np.ndarray:
+    # dimensionless energy in units of MU_PHYS, as a function of dimensionless momentum P=k/kF0
+    return np.sqrt((V_BAR * P) ** 2 + (U_BAR * U_BAR)) - U_BAR
 
-# Backward compatibility aliases (for now)
-BAND_U = U_BAND
-BAND_V = V_BAND
-MU_F = MU_BAND
-P_F = kF
-V_F = vF
+def eps_bilayer_scalar(p: float) -> float:
+    return math.sqrt((V_BAR * p) * (V_BAR * p) + (U_BAR * U_BAR)) - U_BAR
 
-# --- asymptotic verification run ---
-VERIFY_ASYMPTOTICS = True#True#False  # Set to True to run only the two asymptotic windows
+def vgroup_scalar(p: float) -> float:
+    # d eps / dP in dimensionless units
+    denom = math.sqrt((V_BAR * p) * (V_BAR * p) + (U_BAR * U_BAR))
+    return (V_BAR * V_BAR * p) / max(denom, 1e-30)
 
-if VERIFY_ASYMPTOTICS:
-    # Low-T window: Gurzhi / Fermi-liquid regime (Θ ≪ 1) where γ ∝ Θ²
-    # High-T window: Planckian / Sachdev regime (Θ ≫ 1) where γ ∝ Θ
-    Thetas=np.geomspace(2e-2, 2e-1, 20)
-    # Thetas = (np.geomspace(2e-3, 5e-2, 10).tolist()   # Gurzhi window
-    #           + np.geomspace(1.5, 6.0, 10).tolist())  # Planckian window
-else:
-    # Original temperature range
-    # PATCH: include the asymptotic window (1e-4 to 1e-3) where T^4 scaling should appear
-    # Also include overlap with higher temperatures for continuity
-    Thetas = (np.geomspace(1e-4, 1e-3, 12).tolist()
-              + [0.0012, 0.0016, 0.002, 0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
-                 0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28])
+def fermi_vec(eps: np.ndarray, mu_bar: float, Theta: float) -> np.ndarray:
+    # stable Fermi-Dirac: f = 1/(exp((eps-mu)/Theta)+1)
+    if Theta <= 0.0:
+        return (eps < mu_bar).astype(np.float64)
+    x = (eps - mu_bar) / Theta
+    x = np.clip(x, -700.0, 700.0)
+    return 1.0 / (np.exp(x) + 1.0)
 
-# Thetas = [theta for theta in Thetas if theta > 1.0]
+def density_from_mu(mu_bar: float, Theta: float, pmax: float = 12.0, npts: int = 8192) -> float:
+    # returns ∫_0^∞ P dP f(P) (dimensionless density up to the same constant prefactor as T=0)
+    P = np.linspace(0.0, pmax, npts)
+    eps = eps_bilayer_vec(P)
+    f = fermi_vec(eps, mu_bar, Theta)
+    return float(np.trapz(P * f, P))
+
+def solve_mu_bar_for_density(Theta: float) -> float:
+    # Solve density(mu,Theta)=DENSITY_TARGET via bisection.
+    # At low T, mu_bar ~ 1.
+    if Theta <= 0.0:
+        return 1.0
+
+    # bracket
+    mu_lo = -20.0
+    mu_hi =  5.0
+    d_lo = density_from_mu(mu_lo, Theta)
+    d_hi = density_from_mu(mu_hi, Theta)
+    # expand if needed
+    while d_lo > DENSITY_TARGET:
+        mu_lo -= 10.0
+        d_lo = density_from_mu(mu_lo, Theta)
+    while d_hi < DENSITY_TARGET:
+        mu_hi += 5.0
+        d_hi = density_from_mu(mu_hi, Theta)
+
+    for _ in range(70):
+        mu_mid = 0.5 * (mu_lo + mu_hi)
+        d_mid = density_from_mu(mu_mid, Theta)
+        if d_mid < DENSITY_TARGET:
+            mu_lo = mu_mid
+        else:
+            mu_hi = mu_mid
+    return 0.5 * (mu_lo + mu_hi)
+# -------------------------------------------------------------------
+
+# temperatures (T/T_F). Adjust as you like:
+# TEST: Generate only for Theta = 0.0508
+# Thetas = [0.001]#[0.0508]
+# Thetas = [0.001]
+# Thetas = [0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04, 0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28]#np.geomspace(0.001, 1.28, 30)
+# Thetas = [0.0001, 0.0001585, 0.0002512, 0.0003981, 0.0006310, 0.001, 0.0015849, 0.0025119, 0.0039811, 0.0044668, 0.0063096, 0.0089125, 0.012589, 0.017783, 0.031623, 0.050119, 0.089125, 0.15849, 0.28184, 0.79433, ]
+# Thetas=[0.001]
 # print(Thetas)
-
-# Hard cap to avoid "runs forever" - runtime scales roughly O(Nactive^3)
-# FIX B4: Raised to prevent saturation in verification window
-NACTIVE_MAX = 12000  # try 3000–5000 on your CPU (was 6000, raised to 12000 to prevent plateau)
+# PATCH: include the asymptotic window (1e-4 to 1e-3) where T^4 scaling should appear
+# Also include overlap with higher temperatures for continuity
+Thetas = (np.geomspace(1e-4, 1e-3, 12).tolist()
+          + [0.0012, 0.0016, 0.002, 0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
+             0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28])
 
 # active-shell cutoff: only include states where f(1-f) > cutoff
-# Increased slightly to help reduce Nactive at ultra-low T (optional: try 1e-7 or 3e-7 if needed)
-ACTIVE_CUTOFF = 3e-7   # was 1e-8; try 1e-7–1e-6 to reduce Nactive
+ACTIVE_CUTOFF = 1e-8
 
 # DO NOT include an explicit 1/Theta prefactor.
 # If you want a constant phase-space normalization, keep only the constant (2π)^-4.
@@ -264,51 +280,34 @@ def even_ge(n: int) -> int:
     return n if (n % 2 == 0) else (n + 1)
 
 
-# Thermal margin for momentum box
-THERMAL_SIGMA = 8.0  # how many T's of energy to include
-
 def pbox_for_theta(theta: float) -> float:
-    """
-    Ensure the momentum box actually contains the Fermi surface.
-    We require pmax >= kF + thermal margin.
-    """
-    # need to include kF plus thermal tail: dk ~ (THERMAL_SIGMA*T)/vF
-    # T = Theta * mu (in energy units)
-    T = float(theta) * MU_BAND
-    dk = (THERMAL_SIGMA * T) / max(vF, 1e-12)
-    return max(PBOX_MIN_HIGH, kF + dk)
-
-
-def smoothstep01(t: float) -> float:
-    """Smoothstep function: maps [0,1] -> [0,1] with smooth S-curve."""
-    # clamp to [0,1] then smoothstep
-    t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
-    return t * t * (3.0 - 2.0 * t)
+    """Return appropriate pbox requirement based on temperature."""
+    t = float(theta)
+    return float(PBOX_MIN_LOW) if (t <= float(THETA_PBOX_SWITCH)) else float(PBOX_MIN_HIGH)
 
 
 def choose_dp(theta: float) -> float:
     """
     Choose dp to keep Theta/dp^2 constant (constant ring pixels / Nactive).
     Uses piecewise anchors: low-T (0.01-0.1) and high-T (0.1-1) regions.
-    FIX B3: Smoothly blends between anchors around THETA_CROSSOVER to avoid abrupt regime change.
     If PRIORITIZE_SIZE_OVER_RING is True, allows dp to exceed DP_RING_MAX to maintain size.
     """
     theta_val = float(theta)
     pbox = pbox_for_theta(theta_val)
     
-    # FIX B3: Smooth blend between pixel ratios around THETA_CROSSOVER
-    if THETA_CROSSOVER_WIDTH > 0:
-        t = (theta_val - THETA_CROSSOVER) / THETA_CROSSOVER_WIDTH
-        s = smoothstep01(0.5 + 0.5 * t)  # maps theta=crossover to s=0.5
+    # Choose anchor based on temperature range
+    if theta_val < THETA_CROSSOVER:
+        # Low-T region: use low-T anchor
+        pixel_ratio = PIXEL_RATIO_LOW
+        dp_T = math.sqrt(theta_val / pixel_ratio)
+        # Apply ring cap only if prioritizing ring detail over size
+        if DP_RING_MAX is not None and not PRIORITIZE_SIZE_OVER_RING:
+            dp_T = min(dp_T, float(DP_RING_MAX))
     else:
-        s = 0.0 if theta_val < THETA_CROSSOVER else 1.0
-    
-    pixel_ratio = (1.0 - s) * PIXEL_RATIO_LOW + s * PIXEL_RATIO_HIGH
-    dp_T = math.sqrt(theta_val / pixel_ratio)
-    
-    # Only apply ring cap if you explicitly prioritize ring detail (and in low-T region)
-    if (not PRIORITIZE_SIZE_OVER_RING) and (theta_val < THETA_CROSSOVER) and (DP_RING_MAX is not None):
-        dp_T = min(dp_T, float(DP_RING_MAX))
+        # High-T region: use high-T anchor
+        pixel_ratio = PIXEL_RATIO_HIGH
+        dp_T = math.sqrt(theta_val / pixel_ratio)
+        # No ring cap for high-T (dp is already large)
     
     # --- CRITICAL: ensure the box can actually contain the required momentum range ---
     # If dp is too small, choose_Nmax(dp) would demand Nmax > NMAX_MAX, then clamp happens,
@@ -335,76 +334,49 @@ def make_index_map(nx: np.ndarray, ny: np.ndarray, Nmax: int, half: int) -> np.n
     return idx_map
 
 
-def precompute(nx, ny, dp: float, Theta: float, shift_x: float = 0.0, shift_y: float = 0.0):
+def precompute(nx, ny, dp: float, Theta: float, mu_bar: float,
+               shift_x: float = 0.0, shift_y: float = 0.0):
     """
-    Vectorized precompute for huge speedup when Nmax grows.
-    NOTE: indices nx,ny remain integers for exact momentum conservation via idx_map,
-    but physical momenta are shifted.
-    
-    Uses bilayer dispersion: ε(k) = √(v²k² + U²) - U
-    Returns dimensionless energy: eps_dim = eps(k) / μ, so Fermi level is at eps_dim = 1
-    Standard Fermi function: f = 1 / (exp((eps_dim-1)/Theta) + 1)
+    Physical momenta are P = dp*(n+shift) in UNITS OF kF0 (dimensionless),
+    so FS stays at P≈1 by construction.
+
+    eps is dimensionless in units of MU_PHYS (so mu_bar=mu/MU_PHYS).
     """
     px = dp * (nx.astype(np.float64) + shift_x)
     py = dp * (ny.astype(np.float64) + shift_y)
-    k  = np.sqrt(px * px + py * py)
-    
-    # dimensionless energy: eps_dim = eps(k) / mu, so Fermi level is at eps_dim = 1
-    eps = np.sqrt((V_BAND * k)**2 + U_BAND * U_BAND) - U_BAND
-    eps_dim = eps / MU_BAND
-    
-    # Fermi-Dirac: f = 1 / (exp((eps - mu)/T)+1)  =>  exp((eps_dim-1)/Theta)
-    x = (eps_dim - 1.0) / float(Theta)
-    x = np.clip(x, -700.0, 700.0)
-    f = 1.0 / (np.exp(x) + 1.0)
-    
-    return px, py, k, eps_dim, f
+    P  = np.sqrt(px * px + py * py)
+
+    eps = eps_bilayer_vec(P)
+    f = fermi_vec(eps, mu_bar, float(Theta))
+
+    return px, py, P, eps, f
 
 
-def active_indices(f: np.ndarray, eps_dim: np.ndarray, k: np.ndarray, Theta: float, cutoff: float, dp: float) -> np.ndarray:
+def active_indices(f: np.ndarray, P: np.ndarray, eps: np.ndarray,
+                   Theta: float, cutoff: float, dp: float, mu_bar: float) -> np.ndarray:
     """
-    Active set should follow the thermal shell width ~ Theta.
-    Using only w=f(1-f) on a coarse Cartesian grid can "freeze" the shell at the lattice energy spacing.
-    
-    PATCH: For bilayer dispersion, active shell must be around k_F, not p=1.
-    - Energy shell: |eps_dim - 1| < shell_E (in dimensionless units)
-    - Momentum shell: |k - kF| < dk, where dk ~ T/v_F
-    
-    PATCH: Make the shell scale with Theta first; dp is only a small floor.
-    Also cap Nactive to NACTIVE_MAX by keeping only the most important states (largest w=f(1-f)).
+    Active shell around eps ≈ mu_bar, with a radial ring around P≈1.
+    Use linearized conversion δε ≈ v_g δP at the FS.
     """
     w = f * (1.0 - f)
-    
-    # Energy shell in dimensionless units (eps_dim)
-    SHELL_REL = 8.0
-    shell_e = SHELL_REL * float(Theta)
-    
-    # convert energy width -> k-width using vF:  d(eps_dim)/dk = vF/mu
-    depsdk_dim = max(vF / MU_BAND, 1e-12)
-    dk = shell_e / depsdk_dim
-    
-    # ring thickness: Theta-dominated, dp as floor
-    RING_SHELL_TIGHTEN = 0.45
-    RING_FLOOR_DP_MULT = 0.65
-    dk = max(RING_SHELL_TIGHTEN * dk, RING_FLOOR_DP_MULT * dp)
-    
-    shell = np.abs(eps_dim - 1.0) < shell_e
-    ring  = np.abs(k - kF) < dk
-    
-    active = np.where((w > cutoff) & shell & ring)[0].astype(np.int32)
-    
-    # ---- runtime cap: keep EXACTLY the top-NACTIVE_MAX states by weight ----
-    if active.size > NACTIVE_MAX:
-        ww = w[active]
-        # indices of the top-K weights (unsorted)
-        keep = np.argpartition(ww, -NACTIVE_MAX)[-NACTIVE_MAX:]
-        active = active[keep].astype(np.int32)
-        # optional: sort by descending weight for reproducibility
-        ww_keep = ww[keep]
-        order = np.argsort(ww_keep)[::-1]
-        active = active[order].astype(np.int32)
-    
-    return active
+
+    # group velocity at FS (P=1) in dimensionless units:
+    vgF = vgroup_scalar(1.0)
+
+    # energy shell width: thermal + discretization floor (dp converted to energy via vgF)
+    SHELL_REL      = 20.0
+    SHELL_DPE_REL  = 12.0   # dp floor in ENERGY units (important in linear regime)
+    base_width = max(SHELL_REL * Theta, SHELL_DPE_REL * vgF * dp)
+    shell_width = float(RING_SHELL_TIGHTEN) * base_width
+
+    # convert energy shell to radial thickness using vgF: δP ~ δε/vg
+    p_rad = shell_width / max(vgF, 1e-12)
+    p_rad = max(p_rad, 2.5 * dp)  # ensure multiple lattice points across ring
+
+    ring = np.abs(P - 1.0) < p_rad
+    shell = np.abs(eps - mu_bar) < shell_width
+
+    return np.where((w > cutoff) & shell & ring)[0].astype(np.int32)
 
 
 if USE_NUMBA:
@@ -412,13 +384,11 @@ if USE_NUMBA:
     def assemble_rows_numba_active(Ma, nx, ny, idx_map, half, eps, f,
                                    active, pos, dp, lam_eff, pref, dimless_scale):
         """
-        Assemble active-subspace operator Ma (shape Nactive x Nactive).
-        NOTE: This implements an operator on the active subspace with out-scattering:
+        Assemble CLOSED active-subspace operator Ma (shape Nactive x Nactive).
+        NOTE: This implements a closed operator on the active subspace:
           - row index i1 is active (output restricted to active)
           - columns correspond to active eta only
-          - allows out-scattering: if 2' is inactive, we still include loss terms (-eta_1 - eta_2)
-            but only add gain term (+eta_2') if 2' is active
-          - This is more physics-correct than dropping events entirely when 2' is inactive
+          - requires i2' to be active (skip event if i2' is inactive) => closed operator
 
         Parallel over active-row index a1: safe because only writes into row a1.
         """
@@ -459,11 +429,11 @@ if USE_NUMBA:
                     if i2p < 0:
                         continue
 
-                    # PATCH: allow out-scattering from active subspace (don't drop events when 2' is inactive)
-                    # This is more physics-correct: scattering out of active manifold still contributes to relaxation
-                    a2p = pos[i2p]  # may be -1 (inactive)
-                    
-                    # Get e2p, f2p even if 2' is inactive (needed for energy conservation and Pauli factor)
+                    # Require 2' active => closed operator on active subspace
+                    a2p = pos[i2p]
+                    if a2p < 0:
+                        continue
+
                     e2p = eps[i2p]
                     f2p = f[i2p]
 
@@ -479,12 +449,8 @@ if USE_NUMBA:
                     W = pref * dimless_scale * F * delta_eps * dp4
 
                     # (eta_{1'} + eta_{2'} - eta_1 - eta_2)
-                    # Keep loss terms always (out-scattering contributes to relaxation)
-                    # Keep gain term for 1' (always active by construction)
-                    # Keep gain term for 2' only if active
                     Ma[a1, a1p] += W
-                    if a2p >= 0:
-                        Ma[a1, a2p] += W
+                    Ma[a1, a2p] += W
                     Ma[a1, a1]  -= W
                     Ma[a1, a2]  -= W
 
@@ -492,24 +458,16 @@ if USE_NUMBA:
 def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
     nx, ny, half = build_centered_lattice(Nmax_T)
     idx_map = make_index_map(nx, ny, Nmax_T, half)
-    px, py, k, eps_dim, f = precompute(nx, ny, dp_T, Theta, float(SHIFT_X), float(SHIFT_Y))
+    
+    # chemical potential in units of MU_PHYS
+    mu_bar = solve_mu_bar_for_density(Theta) if FIX_DENSITY else 1.0
+    
+    px, py, P, eps, f = precompute(nx, ny, dp_T, Theta, mu_bar, float(SHIFT_X), float(SHIFT_Y))
 
-    # Temperature-following active shell
-    active = active_indices(f, eps_dim, k, Theta, ACTIVE_CUTOFF, dp_T)
+    # Temperature-following active shell (now uses P and mu_bar)
+    active = active_indices(f, P, eps, Theta, ACTIVE_CUTOFF, dp_T, mu_bar)
     Nstates = nx.size
-    Nactive_raw = int(active.size)
-    Nactive = Nactive_raw
-    
-    # Belt and suspenders: ensure Nactive <= NACTIVE_MAX (shouldn't happen after exact-topK fix)
-    active_capped = False
-    if Nactive > NACTIVE_MAX:
-        active = active[:NACTIVE_MAX]
-        Nactive = NACTIVE_MAX
-        active_capped = True
-    
-    # Diagnostic: log active set size and capping (helps identify numerical floors)
-    print(f"  [diag-active] active_raw={Nactive_raw} active_final={Nactive} "
-          f"capped={active_capped} (NACTIVE_MAX={NACTIVE_MAX})")
+    Nactive = int(active.size)
     
     # Diagnostic: actual pmax reached by the grid (account for half-step)
     pmax = (float(half) - 0.5) * float(dp_T)
@@ -517,30 +475,9 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
     print(f"Theta={Theta:.6g}  Nmax={Nmax_T}  dp={dp_T:.6g}  "
           f"Nstates={Nstates}  Nactive={Nactive}  USE_NUMBA={USE_NUMBA}  ACTIVE_ONLY={BUILD_ACTIVE_ONLY}  pmax={pmax:.4f}")
     
-    # Diagnostic: check if dp hit a cap (helps identify numerical floors)
-    dp_hit_ring_cap = False
-    if THETA_CROSSOVER is not None and Theta < THETA_CROSSOVER:
-        if DP_RING_MAX is not None:
-            dp_from_pixel = math.sqrt(Theta / PIXEL_RATIO_LOW)
-            if dp_from_pixel > DP_RING_MAX and not PRIORITIZE_SIZE_OVER_RING:
-                dp_hit_ring_cap = True
-    if dp_hit_ring_cap:
-        print(f"  [diag-dp] dp hit DP_RING_MAX={DP_RING_MAX:.3e} cap")
-    
-    # Info when capped
-    if Nactive == NACTIVE_MAX:
-        print(f"  [info] active set capped at NACTIVE_MAX={NACTIVE_MAX}")
-    
-    # Diagnostic: check if dp hit a cap (helps identify numerical floors)
-    dp_hit_ring_cap = False
-    if Theta < THETA_CROSSOVER and DP_RING_MAX is not None:
-        dp_from_pixel = math.sqrt(Theta / PIXEL_RATIO_LOW)
-        if dp_from_pixel > DP_RING_MAX and not PRIORITIZE_SIZE_OVER_RING:
-            dp_hit_ring_cap = True
-            print(f"  [diag-dp] dp hit DP_RING_MAX={DP_RING_MAX:.3e} cap (would be {dp_from_pixel:.3e} without cap)")
-    
-    if pmax < 1.05 * kF:
-        print(f"WARNING: pmax={pmax:.4f} < {1.05*kF:.4f} (1.05*kF). Grid misses FS -> garbage.")
+    if pmax < 1.05:
+        print(f"WARNING: pmax={pmax:.4f} < 1.05. Grid does not properly include the Fermi surface p=1. "
+              f"Low-T eigenvalues will be garbage. Increase NMAX_MAX or relax dp(theta) scaling / pbox.")
 
     # Resolution warning (this is *the* main reason your curves don't scale at very low T on a Cartesian grid)
     if (dp_T * dp_T) > (0.5 * Theta):
@@ -558,50 +495,33 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
         dimless_scale = DIMLESS_CONST
 
     # Temperature-scaled Lorentzian width to avoid T->0 floor
-    # PATCH: For bilayer, lambda is in dimensionless energy units (eps_dim)
-    # lambda_dp ~ (vF/mu) * dp (linear mismatch in dimensionless units)
-    lam_T = LAMBDA_REL * Theta
-    
-    # dp floor should be in ENERGY units: δε ~ v_typ * dp
-    # Use vF (already computed from band parameters)
-    v_typ = vF / MU_BAND  # dimensionless velocity at Fermi surface
-    lam_dp_raw = LAMBDA_DP_REL * v_typ * dp_T
-    lam_dp_cap = LAMBDA_DP_CAP_REL * Theta
-    lam_dp = min(lam_dp_raw, lam_dp_cap)
-    
-    lam_eff_dim = max(lam_T, lam_dp, LAMBDA_MIN)
-    # PATCH: convert lambda from dimensionless (eps_dim units) to physical energy units
-    # This is critical for μ≠1 cases (e.g., μ=U with μ≠1)
-    lam_eff = lam_eff_dim * MU_BAND
-    
-    # Diagnostic: log what's driving lambda (helps identify numerical floors)
-    print(f"  [diag-lambda] lam_T={lam_T:.3e} lam_dp_raw={lam_dp_raw:.3e} "
-          f"lam_dp_cap={lam_dp_cap:.3e} lam_dp={lam_dp:.3e} lam_eff_dim={lam_eff_dim:.3e} lam_eff={lam_eff:.3e}")
+    # energy-resolution floors:
+    # for bilayer/Dirac-like parts, the natural energy spacing is ~ v_g * dp (NOT dp^2)
+    vgF = vgroup_scalar(1.0)
+    lam_T  = LAMBDA_REL * Theta
+    lam_dp = 5.0 * vgF * dp_T            # <-- NEW dp floor in ENERGY units
+    lam_eff = max(lam_T, lam_dp, LAMBDA_MIN)
 
     if BUILD_ACTIVE_ONLY:
         Ma = np.zeros((Nactive, Nactive), dtype=np.float64)
 
         if USE_NUMBA:
-            # Convert eps_dim back to physical eps for numba function (it uses eps in energy conservation)
-            eps_phys = eps_dim * MU_BAND
             assemble_rows_numba_active(
-                Ma, nx, ny, idx_map, half, eps_phys, f,
+                Ma, nx, ny, idx_map, half, eps, f,
                 active, pos,
                 float(dp_T), float(lam_eff), float(pref), float(dimless_scale)
             )
         else:
             dp4 = dp_T ** 4
-            # Convert eps_dim back to physical eps for energy conservation
-            eps_phys = eps_dim * MU_BAND
             for a1, i1 in enumerate(active):
                 n1x, n1y = int(nx[i1]), int(ny[i1])
-                e1, f1 = float(eps_phys[i1]), float(f[i1])
+                e1, f1 = float(eps[i1]), float(f[i1])
                 for a2, i2 in enumerate(active):
                     n2x, n2y = int(nx[i2]), int(ny[i2])
-                    e2, f2 = float(eps_phys[i2]), float(f[i2])
+                    e2, f2 = float(eps[i2]), float(f[i2])
                     for a1p, i1p in enumerate(active):
                         n1px, n1py = int(nx[i1p]), int(ny[i1p])
-                        e1p, f1p = float(eps_phys[i1p]), float(f[i1p])
+                        e1p, f1p = float(eps[i1p]), float(f[i1p])
 
                         n2px = n1x + n2x - n1px
                         n2py = n1y + n2y - n1py
@@ -611,11 +531,12 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
                         i2p = int(idx_map[ix, iy])
                         if i2p < 0:
                             continue
-                        a2p = int(pos[i2p])  # may be -1 (inactive)
-                        
-                        # PATCH: allow out-scattering from active subspace (don't drop events when 2' is inactive)
-                        # Get e2p, f2p even if 2' is inactive (needed for energy conservation and Pauli factor)
-                        e2p, f2p = float(eps_phys[i2p]), float(f[i2p])
+                        a2p = int(pos[i2p])
+                        # Require 2' active => closed operator on active subspace
+                        if a2p < 0:
+                            continue
+
+                        e2p, f2p = float(eps[i2p]), float(f[i2p])
                         dE = e1 + e2 - e1p - e2p
                         delta_eps = (1.0 / math.pi) * lam_eff / (dE * dE + lam_eff * lam_eff)
 
@@ -625,13 +546,8 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
                         F = 0.5 * (F_fwd + F_bwd)
                         W = pref * dimless_scale * F * delta_eps * dp4
 
-                        # (eta_{1'} + eta_{2'} - eta_1 - eta_2)
-                        # Keep loss terms always (out-scattering contributes to relaxation)
-                        # Keep gain term for 1' (always active by construction)
-                        # Keep gain term for 2' only if active
                         Ma[a1, a1p] += W
-                        if a2p >= 0:
-                            Ma[a1, a2p] += W
+                        Ma[a1, a2p] += W
                         Ma[a1, a1]  -= W
                         Ma[a1, a2]  -= W
 
@@ -654,8 +570,7 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
         "half": int(half),
         "dp": float(dp_T),
         "pmax": float(pmax),
-        "lambda": float(lam_eff),              # physical energy units
-        "lambda_dim": float(lam_eff_dim),      # dimensionless (eps_dim units)
+        "lambda": float(lam_eff),
         "V2": float(V2),
         "hbar": float(HBAR),
         "include_dimless_pref": bool(INCLUDE_DIMLESS_PREF),
@@ -663,12 +578,14 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
         "active_only": bool(BUILD_ACTIVE_ONLY),
         "shift_x": float(SHIFT_X),
         "shift_y": float(SHIFT_Y),
-        # Band parameters for bilayer dispersion
-        "U_band": float(U_BAND),
+        "band": "bilayer_sqrt_vk_U",
         "v_band": float(V_BAND),
-        "mu_band": float(MU_BAND),
-        "kF": float(kF),
-        "vF": float(vF),
+        "U_band": float(U_BAND),
+        "mu_phys": float(MU_PHYS),
+        "mu_bar": float(mu_bar),
+        "kF0": float(K_F0),
+        "U_bar": float(U_BAR),
+        "V_bar": float(V_BAR),
         # Store only what eigen solver needs (active-only arrays):
         "active": active.astype(np.int32),
         "w_active": w_full[active].astype(np.float64),
