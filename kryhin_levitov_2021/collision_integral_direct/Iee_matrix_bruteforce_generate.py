@@ -238,6 +238,14 @@ ACTIVE_CUTOFF = 1e-8
 INCLUDE_DIMLESS_PREF = True
 DIMLESS_CONST = 1.0 / ((2.0 * math.pi) ** 4)
 
+# ----------------------------------------------------------------------
+# Target Nactive control at very low T (explicit energy window for shell)
+# These knobs control the active shell width and minimum ring thickness.
+# For dp ≈ 1e-3, PRAD_FLOOR_DP=0.5 gives Nactive ~ 2π/dp ≈ 5e3 at ultra-low T.
+EWIN_THETA_MULT = 5.0    # energy window in units of Theta (smaller for tighter shell at low T)
+EWIN_DP_MULT    = 0.5    # energy window floor in units of vgF*dp  (≈ one radial pixel)
+PRAD_FLOOR_DP   = 0.5    # ring thickness floor in units of dp (≈ one radial pixel)
+
 OUT_DIR = "Matrixes_bruteforce"
 # ----------------------------------------------------------------------
 
@@ -362,39 +370,32 @@ def precompute(nx, ny, dp: float, Theta: float, mu_bar: float,
 
 
 def active_indices(f: np.ndarray, P: np.ndarray, eps: np.ndarray,
-                   Theta: float, cutoff: float, dp: float, mu_bar: float, lam_eff: float = None) -> np.ndarray:
+                   Theta: float, cutoff: float, dp: float, mu_bar: float) -> np.ndarray:
     """
-    Active shell around eps ≈ mu_bar, with a radial ring around P≈1.
-    Use linearized conversion δε ≈ v_g δP at the FS.
-    
-    OPTIMIZED: shell width based on max(Theta, lam_eff) for energy-aware reduction of Nactive.
+    Active shell around eps ≈ mu_bar with a *contiguous* radial window.
+    Window is explicitly controlled to keep Nactive reasonable at tiny Theta.
     """
     w = f * (1.0 - f)
 
     # group velocity at FS (P=1) in dimensionless units:
-    vgF = vgroup_scalar(1.0)
+    vgF = vgroup_scalar(1.0)  # d eps / dP at FS
 
-    # OPTIMIZED: energy shell width proportional to max(Theta, lam_eff)
-    # States outside ~few×max(Theta,lam_eff) don't contribute much.
-    if lam_eff is None:
-        # fallback: compute approximate lam_eff
-        lam_T = LAMBDA_REL * Theta
-        lam_dp = 5.0 * vgF * dp
-        lam_eff = max(lam_T, lam_dp, LAMBDA_MIN)
-    
-    # Use tighter shell: 8×max(Theta, lam_eff) instead of 20×Theta
-    base_width = 8.0 * max(Theta, lam_eff)
-    shell_width = float(RING_SHELL_TIGHTEN) * base_width
+    # Explicit energy window:
+    # |eps - mu| < max(A*Theta, B*vgF*dp)
+    ewin = max(EWIN_THETA_MULT * Theta, EWIN_DP_MULT * vgF * dp)
 
-    # convert energy shell to radial thickness using vgF: δP ~ δε/vg
-    p_rad = shell_width / max(vgF, 1e-12)
-    # OPTIMIZED: reduce floor from 2.5*dp to 1.5*dp for performance (still ensures multiple points)
-    p_rad = max(p_rad, 1.5 * dp)  # ensure multiple lattice points across ring
+    # Convert energy window to radial thickness using vgF: d eps ≈ vgF dP
+    p_rad = ewin / max(vgF, 1e-12)
 
-    ring = np.abs(P - 1.0) < p_rad
-    shell = np.abs(eps - mu_bar) < shell_width
+    # Crucial: minimum ring thickness in units of dp.
+    # Controls Nmin ~ 2π * PRAD_FLOOR_DP / dp at ultra-low T.
+    p_rad = max(p_rad, PRAD_FLOOR_DP * dp)
 
-    return np.where((w > cutoff) & shell & ring)[0].astype(np.int32)
+    ring  = np.abs(P - 1.0) < p_rad
+    shell = np.abs(eps - mu_bar) < ewin
+
+    # Keep w-cutoff only as a weak safeguard
+    return np.where(ring & shell & (w > cutoff))[0].astype(np.int32)
 
 
 if USE_NUMBA:
@@ -483,14 +484,14 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
     px, py, P, eps, f = precompute(nx, ny, dp_T, Theta, mu_bar, float(SHIFT_X), float(SHIFT_Y))
     Nstates = nx.size
 
-    # Compute lam_eff first (needed for optimized active shell)
+    # Compute lam_eff (energy broadening for δ_ε)
     vgF = vgroup_scalar(1.0)
     lam_T  = LAMBDA_REL * Theta
-    lam_dp = 5.0 * vgF * dp_T            # <-- NEW dp floor in ENERGY units
+    lam_dp = 5.0 * vgF * dp_T            # dp floor in ENERGY units
     lam_eff = max(lam_T, lam_dp, LAMBDA_MIN)
 
-    # OPTIMIZED: Active shell with lam_eff for tighter selection
-    active = active_indices(f, P, eps, Theta, ACTIVE_CUTOFF, dp_T, mu_bar, lam_eff)
+    # Active shell: explicit energy window + controlled ring thickness
+    active = active_indices(f, P, eps, Theta, ACTIVE_CUTOFF, dp_T, mu_bar)
     Nactive = int(active.size)
     
     # Diagnostic: actual pmax reached by the grid (account for half-step)
