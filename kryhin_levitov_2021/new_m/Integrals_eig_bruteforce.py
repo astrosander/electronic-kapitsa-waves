@@ -415,6 +415,13 @@ def main():
             eigs[Theta]["m1r"] = ext.get("m1r", np.nan)
             eigs[Theta]["gamma_vx"] = ext.get("gamma_vx", np.nan)
             eigs[Theta]["gamma_vy"] = ext.get("gamma_vy", np.nan)
+            eigs[Theta]["gamma_vx_perp"] = ext.get("gamma_vx_perp", np.nan)
+            eigs[Theta]["gamma_vy_perp"] = ext.get("gamma_vy_perp", np.nan)
+            eigs[Theta]["gamma_current_dipole"] = ext.get("gamma_current_dipole", np.nan)
+            eigs[Theta]["frac_protected_x"] = ext.get("frac_protected_x", np.nan)
+            eigs[Theta]["frac_protected_y"] = ext.get("frac_protected_y", np.nan)
+            eigs[Theta]["overlap_vx_m1r"] = ext.get("overlap_vx_m1r", np.nan)
+            eigs[Theta]["overlap_vy_m1r"] = ext.get("overlap_vy_m1r", np.nan)
     
     # ---- Verify asymptotic scaling ----
     # Use m0r and m1r (relaxing modes) instead of m=0 and m=1 (conserved)
@@ -431,17 +438,51 @@ def main():
     # ---- Plot eigenvalues as in original script (Figure-1 style) ----
     f10, ax10 = plt.subplots(figsize=(8*0.9, 6*0.9))
     
+    # Plot relaxing modes: use m0r, m1r instead of m=0, m=1 (which are conserved)
+    for mode_name in ["m0r", "m1r"]:
+        if any(mode_name in eigs[t] for t in Thetas):
+            y = []
+            y0 = []
+            for Theta in Thetas:
+                y.append(eigs[Theta].get(mode_name, np.nan))
+                y0.append(0.0)  # baseline is conserved mode (=0)
+            
+            power = 2
+            log_thetas = np.array([])
+            log_vals = np.array([])
+            
+            if k == 0:
+                y_arr = np.array(y, dtype=float)
+                y0_arr = np.array(y0, dtype=float)
+                Thetas_arr = np.array(Thetas, dtype=float)
+                valid = np.isfinite(y_arr) & np.isfinite(y0_arr) & ((y_arr - y0_arr) > 0)
+                if np.any(valid):
+                    log_thetas = np.log(Thetas_arr[valid])
+                    log_vals = 3*np.log(2*np.pi) + np.log((y_arr[valid] - y0_arr[valid])/(Thetas_arr[valid]**power))
+                    if log_vals.size > 6:
+                        ls = ":" if mode_name == "m0r" else "-"
+                        label = mode_name.replace("m0r", "m=0 (relax)").replace("m1r", "m=1 (relax)")
+                        ax10.plot(log_thetas[6:], log_vals[6:], label=label, linewidth=1.5, linestyle=ls)
+            
+            if log_vals.size > 0:
+                print(f"{mode_name}", log_thetas[6:] if log_vals.size > 6 else log_thetas,
+                      log_vals[6:] if log_vals.size > 6 else log_vals)
+            else:
+                print(f"{mode_name}: no positive points to plot")
+    
+    # Plot modes m>=2 (these are regular angular harmonics, not conserved)
     for m in ms:
+        if m < 2:  # Skip m=0, m=1 (they're conserved, use m0r/m1r instead)
+            continue
+            
         y = []
         y0 = []
         for Theta in Thetas:
-            y.append(eigs[Theta][m])
+            y.append(eigs[Theta].get(m, 0.0))
             if k == 0:
-                # IMPORTANT: keep baseline as conserved density (=0),
-                # even if we repurpose m0 to be an isotropic relaxation mode.
                 y0.append(0.0)
             else:
-                y0.append(eigs[Theta][1])
+                y0.append(eigs[Theta].get(1, 0.0))
         
         power = 2  # same choices as original
         
@@ -449,8 +490,8 @@ def main():
         log_thetas = np.array([])
         log_vals = np.array([])
         
-        # Plot all modes except m=1 (momentum conserved => zero line is boring)
-        if k == 0 and m != 1:
+        # Plot all modes m>=2
+        if k == 0:
             # Filter out invalid values
             y_arr = np.array(y, dtype=float)
             y0_arr = np.array(y0, dtype=float)
@@ -461,46 +502,14 @@ def main():
                 log_vals = 3*np.log(2*np.pi) + np.log((y_arr[valid] - y0_arr[valid])/(Thetas_arr[valid]**power))
                 # Only plot if we have enough points
                 if log_vals.size > 6:
-                    # Use dotted line for m=0 to make it stand out visually
-                    ls = ":" if m == 0 else "-"
                     ax10.plot(log_thetas[6:], log_vals[6:],
-                              label=f"m = {m}", linewidth=1.5, linestyle=ls)
+                              label=f"m = {m}", linewidth=1.5, linestyle="-")
         
         if log_vals.size > 0:
             print(f"m={m}", log_thetas[6:] if log_vals.size > 6 else log_thetas,
                   log_vals[6:] if log_vals.size > 6 else log_vals)
         else:
             print(f"m={m}: no positive points to plot")
-    
-    # m=1 dashed special line (as in original)
-    if k == 0:
-        m = 1
-        y = []
-        y0 = []
-        for Theta in Thetas:
-            y.append(eigs[Theta][m])
-            # IMPORTANT: keep baseline as conserved density (=0),
-            # even if we repurpose m0 to be an isotropic relaxation mode.
-            y0.append(0.0)
-        power = 2
-        y_arr = np.array(y, dtype=float)
-        y0_arr = np.array(y0, dtype=float)
-        Thetas_arr = np.array(Thetas, dtype=float)
-        
-        # Initialize arrays (fixes UnboundLocalError)
-        log_thetas = np.array([])
-        log_vals = np.array([])
-        
-        valid = np.isfinite(y_arr) & np.isfinite(y0_arr) & ((y_arr - y0_arr) > 0)
-        if np.any(valid):
-            log_thetas = np.log(Thetas_arr[valid])
-            log_vals = 3*np.log(2*np.pi) + np.log((y_arr[valid] - y0_arr[valid])/(Thetas_arr[valid]**power))
-            if log_vals.size > 5:
-                ax10.plot(log_thetas[5:], log_vals[5:],
-                          label="m = 1", linestyle="--", linewidth=1.5, color="gray")
-                print("m=1", log_thetas[5:], log_vals[5:])
-        else:
-            print("m=1: no positive points to plot")
     
     # Reference lines (same as original)
     x_ref = np.linspace(-4.7, -3.0, 100)
@@ -542,13 +551,21 @@ def main():
     with open(csv_filename, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
         
-        # Header: T, m0, m1, m2, ..., dens, px, py, eps, m0r, m1r, gamma_vx, gamma_vy
-        header = ['T'] + [f'm{m}' for m in ms] + ['dens', 'px', 'py', 'eps', 'm0r', 'm1r', 'gamma_vx', 'gamma_vy']
+        # Header: T, m0c, m1c, m2, ..., dens, px, py, eps, m0r, m1r, gamma_vx, gamma_vy, gamma_vx_perp, gamma_vy_perp, gamma_current_dipole, frac_protected_x, frac_protected_y, overlap_vx_m1r, overlap_vy_m1r
+        # m0c, m1c are conserved modes (always 0), m0r, m1r are relaxing modes
+        header = ['T', 'm0c', 'm1c'] + [f'm{m}' for m in ms if m >= 2] + ['dens', 'px', 'py', 'eps', 'm0r', 'm1r', 
+                                                   'gamma_vx', 'gamma_vy', 'gamma_vx_perp', 'gamma_vy_perp', 'gamma_current_dipole',
+                                                   'frac_protected_x', 'frac_protected_y', 'overlap_vx_m1r', 'overlap_vy_m1r']
         writer.writerow(header)
         
         # Write data rows
         for Theta in Thetas:
-            row = [Theta] + [eigs[Theta].get(m, 0.0) for m in ms]
+            row = [Theta]
+            # Write conserved modes (always 0)
+            row.append(0.0)  # m0c (density conserved)
+            row.append(0.0)  # m1c (momentum conserved)
+            # Write relaxing modes m>=2
+            row.extend([eigs[Theta].get(m, 0.0) for m in ms if m >= 2])
             # Add invariants (computed via Rayleigh quotient)
             row.append(eigs[Theta].get("dens", np.nan))
             row.append(eigs[Theta].get("px", np.nan))
@@ -559,6 +576,13 @@ def main():
             row.append(eigs[Theta].get("m1r", np.nan))
             row.append(eigs[Theta].get("gamma_vx", np.nan))
             row.append(eigs[Theta].get("gamma_vy", np.nan))
+            row.append(eigs[Theta].get("gamma_vx_perp", np.nan))
+            row.append(eigs[Theta].get("gamma_vy_perp", np.nan))
+            row.append(eigs[Theta].get("gamma_current_dipole", np.nan))
+            row.append(eigs[Theta].get("frac_protected_x", np.nan))
+            row.append(eigs[Theta].get("frac_protected_y", np.nan))
+            row.append(eigs[Theta].get("overlap_vx_m1r", np.nan))
+            row.append(eigs[Theta].get("overlap_vy_m1r", np.nan))
             writer.writerow(row)
     
     print(f"Saved: {csv_filename}", flush=True)
@@ -758,6 +782,27 @@ def rayleigh_gamma(A, w_safe, v):
         return np.nan
     return num / den
 
+def inner(u, v, w):
+    """Weighted inner product: u^T W v"""
+    return float(np.dot(u, w * v))
+
+def norm(u, w):
+    """Weighted norm: sqrt(u^T W u)"""
+    return np.sqrt(max(inner(u, u, w), 0.0))
+
+def project_out(u, basis, w):
+    """
+    Project vector u orthogonal to a list of basis vectors.
+    Returns u_perp such that u_perp is orthogonal to all vectors in basis.
+    """
+    u = u.copy().astype(np.float64)
+    for b in basis:
+        bb = inner(b, b, w)
+        if bb <= 1e-300:
+            continue
+        u -= (inner(u, b, w) / bb) * b
+    return u
+
 
 def w_orthonormalize(vecs, w, remove_basis=None):
     """
@@ -923,6 +968,41 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     gamma_vx = rayleigh_gamma(A, w_safe, vx)
     gamma_vy = rayleigh_gamma(A, w_safe, vy)
     
+    # Compute momentum-projected currents (orthogonal to conserved modes)
+    # Use W-orthonormalized conserved basis for robust projection
+    cons_basis = w_orthonormalize(
+        [np.ones(n, dtype=np.float64), px.copy(), py.copy()],
+        w_safe
+    )
+    
+    # Project currents orthogonal to conserved modes (density + momentum)
+    vx_perp = project_out(vx, cons_basis, w_safe)
+    vy_perp = project_out(vy, cons_basis, w_safe)
+    
+    gamma_vx_perp = rayleigh_gamma(A, w_safe, vx_perp)
+    gamma_vy_perp = rayleigh_gamma(A, w_safe, vy_perp)
+    
+    # Compute protected fraction: how much of vx is "protected" by momentum conservation
+    vx_norm_sq = norm(vx, w_safe)**2
+    vy_norm_sq = norm(vy, w_safe)**2
+    vx_perp_norm_sq = norm(vx_perp, w_safe)**2
+    vy_perp_norm_sq = norm(vy_perp, w_safe)**2
+    
+    frac_protected_x = 1.0 - (vx_perp_norm_sq / max(vx_norm_sq, 1e-300))
+    frac_protected_y = 1.0 - (vy_perp_norm_sq / max(vy_norm_sq, 1e-300))
+    
+    # Compute dipole relaxation rate from 2D span of {vx_perp, vy_perp}
+    # This should track m1r better than individual components
+    U_list = w_orthonormalize([vx_perp, vy_perp], w_safe)
+    if len(U_list) > 0:
+        U = np.column_stack(U_list)
+        C = U.T @ (A.dot(U))
+        C = 0.5 * (C + C.T)
+        lam = np.linalg.eigvalsh(C)
+        gamma_current_dipole = float(np.min(np.maximum(lam, 0.0)))
+    else:
+        gamma_current_dipole = np.nan
+    
     invariants = {
         "dens": gamma_dens,
         "px": gamma_px,
@@ -932,6 +1012,8 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     
     print(f"  [invariants] gamma_dens={gamma_dens:.6e}  gamma_px={gamma_px:.6e}  gamma_py={gamma_py:.6e}  gamma_eps={gamma_eps:.6e}", flush=True)
     print(f"  [current] gamma_vx={gamma_vx:.6e}  gamma_vy={gamma_vy:.6e}", flush=True)
+    print(f"  [current⊥] gamma_vx_perp={gamma_vx_perp:.6e}  gamma_vy_perp={gamma_vy_perp:.6e}  gamma_dipole={gamma_current_dipole:.6e}", flush=True)
+    print(f"  [current⊥] protected_frac_x={frac_protected_x:.6f}  protected_frac_y={frac_protected_y:.6f}", flush=True)
     
     # Invariants: density and momentum should be treated carefully.
     # Density is always conserved; momentum corresponds to the m=1 sector.
@@ -1153,12 +1235,32 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
         
         print(f"  [m={m}] gamma={gamma:.6e}")
     
+    # Compute overlaps between current-perp and m1r eigenmode
+    overlap_vx_m1r = np.nan
+    overlap_vy_m1r = np.nan
+    if m1r_vec is not None:
+        vxpn = norm(vx_perp, w_safe)
+        vypn = norm(vy_perp, w_safe)
+        m1rn = norm(m1r_vec, w_safe)
+        if vxpn > 1e-300 and m1rn > 1e-300:
+            overlap_vx_m1r = inner(vx_perp / vxpn, m1r_vec / m1rn, w_safe)
+        if vypn > 1e-300 and m1rn > 1e-300:
+            overlap_vy_m1r = inner(vy_perp / vypn, m1r_vec / m1rn, w_safe)
+        print(f"  [overlap] vx_perp·m1r={overlap_vx_m1r:.6f}  vy_perp·m1r={overlap_vy_m1r:.6f}", flush=True)
+    
     # Store relaxing modes in extra dict
     extra = {
         "m0r": m0r_gamma,
         "m1r": m1r_gamma,
         "gamma_vx": gamma_vx,
         "gamma_vy": gamma_vy,
+        "gamma_vx_perp": gamma_vx_perp,
+        "gamma_vy_perp": gamma_vy_perp,
+        "frac_protected_x": frac_protected_x,
+        "frac_protected_y": frac_protected_y,
+        "gamma_current_dipole": gamma_current_dipole,
+        "overlap_vx_m1r": overlap_vx_m1r,
+        "overlap_vy_m1r": overlap_vy_m1r,
     }
     
     return eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra, invariants, extra

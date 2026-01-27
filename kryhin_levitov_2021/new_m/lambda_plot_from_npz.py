@@ -53,15 +53,26 @@ def load_data(csv_path: str):
         if fieldnames is None:
             raise ValueError("CSV file has no headers")
         
-        # Check for both formats: "m0, m1, ..." (new format) and "gamma_0, gamma_1, ..." (old format)
+        # Check for formats: "m0c, m1c" (conserved), "m0r, m1r" (relaxing), "m2, m3, ..." (regular), 
+        # and old formats: "m0, m1, ..." and "gamma_0, gamma_1, ..."
         for field in fieldnames:
             field_stripped = field.strip()
-            # New format: m0, m1, m2, ...
-            if field_stripped.startswith('m') and len(field_stripped) > 1:
+            # New format: m0r, m1r (relaxing modes) - treat as m=0, m=1 for plotting
+            if field_stripped in ['m0r', 'm1r']:
+                m = 0 if field_stripped == 'm0r' else 1
+                modes_set.add(m)
+                gammas[m] = []
+            # New format: m0c, m1c (conserved) - skip these (always 0)
+            elif field_stripped in ['m0c', 'm1c']:
+                continue  # Skip conserved modes
+            # New format: m2, m3, ... (regular modes)
+            elif field_stripped.startswith('m') and len(field_stripped) > 1:
                 try:
                     m = int(field_stripped[1:])  # Extract number after 'm'
-                    modes_set.add(m)
-                    gammas[m] = []
+                    # Skip m0, m1 if they exist (use m0r, m1r instead)
+                    if m >= 2:
+                        modes_set.add(m)
+                        gammas[m] = []
                 except (ValueError, IndexError):
                     pass
             # Old format: gamma_0, gamma_1, ...
@@ -96,16 +107,34 @@ def load_data(csv_path: str):
             else:
                 T_requested.append(T[-1])  # Use T as fallback
             
-            # Read gammas for each mode (try both formats)
+            # Read gammas for each mode
             for m in modes_set:
-                # Try new format first: m0, m1, ...
-                gamma_key = f'm{m}'
-                if gamma_key in row and row[gamma_key].strip():
-                    try:
-                        gammas[m].append(float(row[gamma_key]))
-                        continue
-                    except (ValueError, TypeError):
-                        pass
+                # For m=0, m=1: try m0r, m1r first (relaxing modes)
+                if m in [0, 1]:
+                    gamma_key = f'm{m}r'  # m0r, m1r
+                    if gamma_key in row and row[gamma_key].strip():
+                        try:
+                            gammas[m].append(float(row[gamma_key]))
+                            continue
+                        except (ValueError, TypeError):
+                            pass
+                    # Fallback to old format: m0, m1
+                    gamma_key = f'm{m}'
+                    if gamma_key in row and row[gamma_key].strip():
+                        try:
+                            gammas[m].append(float(row[gamma_key]))
+                            continue
+                        except (ValueError, TypeError):
+                            pass
+                else:
+                    # For m>=2: try m2, m3, ...
+                    gamma_key = f'm{m}'
+                    if gamma_key in row and row[gamma_key].strip():
+                        try:
+                            gammas[m].append(float(row[gamma_key]))
+                            continue
+                        except (ValueError, TypeError):
+                            pass
                 
                 # Try old format: gamma_0, gamma_1, ...
                 gamma_key = f'gamma_{m}'
@@ -116,7 +145,7 @@ def load_data(csv_path: str):
                     except (ValueError, TypeError):
                         pass
                 
-                # If neither format worked, append NaN
+                # If none of the formats worked, append NaN
                 gammas[m].append(np.nan)
     
     # Convert to numpy arrays
@@ -241,8 +270,10 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
                     linewidth = 1.3  # Thinner for red (even) modes
                 else:
                     linewidth = 2.0  # Thicker for blue (odd) modes
-                if m<=1:
-                    ax.loglog(T_plot, gm_plot, label=fr"$m={m_int}$", 
+                if m_int <= 1:
+                    # For m=0, m=1: label as relaxing modes
+                    label = fr"$m={m_int}$ (relax)" if m_int in [0, 1] else fr"$m={m_int}$"
+                    ax.loglog(T_plot, gm_plot, label=label, 
                              linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
                 else:
                     ax.loglog(T_plot, gm_plot, #label=fr"$m={m_int}$", 
