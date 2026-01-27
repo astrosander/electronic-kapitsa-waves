@@ -41,6 +41,15 @@ except ImportError as e:
     print("Numba import failed:", e)
 
 if USE_NUMBA:
+    # Set numba threads from environment (important for Slurm)
+    try:
+        import os
+        num_threads = int(os.environ.get("NUMBA_NUM_THREADS", os.environ.get("SLURM_CPUS_PER_TASK", "1")))
+        if num_threads > 1:
+            numba.set_num_threads(num_threads)
+    except Exception:
+        pass
+    
     # Optional diagnostics: NEVER disable numba if these fail
     try:
         print("cpu_count:", os.cpu_count())
@@ -353,25 +362,34 @@ def precompute(nx, ny, dp: float, Theta: float, mu_bar: float,
 
 
 def active_indices(f: np.ndarray, P: np.ndarray, eps: np.ndarray,
-                   Theta: float, cutoff: float, dp: float, mu_bar: float) -> np.ndarray:
+                   Theta: float, cutoff: float, dp: float, mu_bar: float, lam_eff: float = None) -> np.ndarray:
     """
     Active shell around eps ≈ mu_bar, with a radial ring around P≈1.
     Use linearized conversion δε ≈ v_g δP at the FS.
+    
+    OPTIMIZED: shell width based on max(Theta, lam_eff) for energy-aware reduction of Nactive.
     """
     w = f * (1.0 - f)
 
     # group velocity at FS (P=1) in dimensionless units:
     vgF = vgroup_scalar(1.0)
 
-    # energy shell width: thermal + discretization floor (dp converted to energy via vgF)
-    SHELL_REL      = 20.0
-    SHELL_DPE_REL  = 12.0   # dp floor in ENERGY units (important in linear regime)
-    base_width = max(SHELL_REL * Theta, SHELL_DPE_REL * vgF * dp)
+    # OPTIMIZED: energy shell width proportional to max(Theta, lam_eff)
+    # States outside ~few×max(Theta,lam_eff) don't contribute much.
+    if lam_eff is None:
+        # fallback: compute approximate lam_eff
+        lam_T = LAMBDA_REL * Theta
+        lam_dp = 5.0 * vgF * dp
+        lam_eff = max(lam_T, lam_dp, LAMBDA_MIN)
+    
+    # Use tighter shell: 8×max(Theta, lam_eff) instead of 20×Theta
+    base_width = 8.0 * max(Theta, lam_eff)
     shell_width = float(RING_SHELL_TIGHTEN) * base_width
 
     # convert energy shell to radial thickness using vgF: δP ~ δε/vg
     p_rad = shell_width / max(vgF, 1e-12)
-    p_rad = max(p_rad, 2.5 * dp)  # ensure multiple lattice points across ring
+    # OPTIMIZED: reduce floor from 2.5*dp to 1.5*dp for performance (still ensures multiple points)
+    p_rad = max(p_rad, 1.5 * dp)  # ensure multiple lattice points across ring
 
     ring = np.abs(P - 1.0) < p_rad
     shell = np.abs(eps - mu_bar) < shell_width
@@ -463,10 +481,16 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
     mu_bar = solve_mu_bar_for_density(Theta) if FIX_DENSITY else 1.0
     
     px, py, P, eps, f = precompute(nx, ny, dp_T, Theta, mu_bar, float(SHIFT_X), float(SHIFT_Y))
-
-    # Temperature-following active shell (now uses P and mu_bar)
-    active = active_indices(f, P, eps, Theta, ACTIVE_CUTOFF, dp_T, mu_bar)
     Nstates = nx.size
+
+    # Compute lam_eff first (needed for optimized active shell)
+    vgF = vgroup_scalar(1.0)
+    lam_T  = LAMBDA_REL * Theta
+    lam_dp = 5.0 * vgF * dp_T            # <-- NEW dp floor in ENERGY units
+    lam_eff = max(lam_T, lam_dp, LAMBDA_MIN)
+
+    # OPTIMIZED: Active shell with lam_eff for tighter selection
+    active = active_indices(f, P, eps, Theta, ACTIVE_CUTOFF, dp_T, mu_bar, lam_eff)
     Nactive = int(active.size)
     
     # Diagnostic: actual pmax reached by the grid (account for half-step)
@@ -494,17 +518,13 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
         # keep ONLY constant (2π)^-4, NOT 1/Theta
         dimless_scale = DIMLESS_CONST
 
-    # Temperature-scaled Lorentzian width to avoid T->0 floor
-    # energy-resolution floors:
-    # for bilayer/Dirac-like parts, the natural energy spacing is ~ v_g * dp (NOT dp^2)
-    vgF = vgroup_scalar(1.0)
-    lam_T  = LAMBDA_REL * Theta
-    lam_dp = 5.0 * vgF * dp_T            # <-- NEW dp floor in ENERGY units
-    lam_eff = max(lam_T, lam_dp, LAMBDA_MIN)
-
     if BUILD_ACTIVE_ONLY:
-        Ma = np.zeros((Nactive, Nactive), dtype=np.float64)
-
+        # FAST PATH: Use numba kernel with dense matrix (parallel & fast)
+        # Use float32 to halve memory bandwidth and file size
+        from scipy.sparse import csr_matrix
+        
+        Ma = np.zeros((Nactive, Nactive), dtype=np.float32)
+        
         if USE_NUMBA:
             assemble_rows_numba_active(
                 Ma, nx, ny, idx_map, half, eps, f,
@@ -512,47 +532,13 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
                 float(dp_T), float(lam_eff), float(pref), float(dimless_scale)
             )
         else:
-            dp4 = dp_T ** 4
-            for a1, i1 in enumerate(active):
-                n1x, n1y = int(nx[i1]), int(ny[i1])
-                e1, f1 = float(eps[i1]), float(f[i1])
-                for a2, i2 in enumerate(active):
-                    n2x, n2y = int(nx[i2]), int(ny[i2])
-                    e2, f2 = float(eps[i2]), float(f[i2])
-                    for a1p, i1p in enumerate(active):
-                        n1px, n1py = int(nx[i1p]), int(ny[i1p])
-                        e1p, f1p = float(eps[i1p]), float(f[i1p])
-
-                        n2px = n1x + n2x - n1px
-                        n2py = n1y + n2y - n1py
-                        ix, iy = n2px + half, n2py + half
-                        if ix < 0 or ix >= Nmax_T or iy < 0 or iy >= Nmax_T:
-                            continue
-                        i2p = int(idx_map[ix, iy])
-                        if i2p < 0:
-                            continue
-                        a2p = int(pos[i2p])
-                        # Require 2' active => closed operator on active subspace
-                        if a2p < 0:
-                            continue
-
-                        e2p, f2p = float(eps[i2p]), float(f[i2p])
-                        dE = e1 + e2 - e1p - e2p
-                        delta_eps = (1.0 / math.pi) * lam_eff / (dE * dE + lam_eff * lam_eff)
-
-                        # Symmetrized Pauli factor
-                        F_fwd = f1 * f2 * (1.0 - f1p) * (1.0 - f2p)
-                        F_bwd = f1p * f2p * (1.0 - f1) * (1.0 - f2)
-                        F = 0.5 * (F_fwd + F_bwd)
-                        W = pref * dimless_scale * F * delta_eps * dp4
-
-                        Ma[a1, a1p] += W
-                        Ma[a1, a2p] += W
-                        Ma[a1, a1]  -= W
-                        Ma[a1, a2]  -= W
-
-        # save sparse to disk
-        from scipy.sparse import csr_matrix
+            raise RuntimeError("No numba: this will be extremely slow; install numba.")
+        
+        # Optional: threshold tiny entries before converting to sparse (only helps if matrix is truly sparse)
+        # Uncomment if you want smaller files and most entries are near-zero:
+        # thr = 1e-18
+        # Ma[np.abs(Ma) < thr] = 0.0
+        
         M_to_save = csr_matrix(Ma)
     else:
         # legacy full matrix mode (very large for big Nmax)

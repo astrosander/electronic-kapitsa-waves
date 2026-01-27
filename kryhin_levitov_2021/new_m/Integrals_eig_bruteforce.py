@@ -11,7 +11,7 @@ from matplotlib import pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
 
 # Configuration
-ms = [0, 1, 2, 3, 4, 5, 6, 7, 8]#,9,10,11,12,13,14,15,16,18,19,20]#[0, 1, 2, 3, 4, 5, 6, 7, 8]
+ms = [0, 1, 2, 3, 4, 5, 6, 7, 8,9,10,11,12,13,14,15,16,18,19,20]#[0, 1, 2, 3, 4, 5, 6, 7, 8]
 k = 0  # Figure-1 style (no "-a2" files)
 
 # PATCH: allow radial structure in each angular mode (critical for T^4 odd-m asymptotics)
@@ -22,22 +22,12 @@ RADIAL_SIGMA_P_MULT = 3.0   # sets Gaussian envelope width in p around p=1
 # If you need stabilization, use a RELATIVE regularization tied to matrix scale.
 REG_ABS = 0.0
 
-# --- Mode reporting flags ---
-# Report conserved modes as m=0 (density) and m=1 (momentum)
-REPORT_CONSERVED_M0_M1 = True
-# Compute relaxing modes separately as m0r and m1r
-COMPUTE_M0_RELAX = True
-COMPUTE_M1_RELAX = True
-M0_BASIS_ORDER = 8          # number of radial basis polynomials (increase for accuracy)
-M0_PROJECT_OUT_ENERGY = True  # recommended: remove energy-like invariant too
-M1_PROJECT_OUT_DENS = True    # recommended: remove density when computing m1r
-
 plt.rcParams['text.usetex'] = False
 plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
 
 # Directory where bruteforce matrices are stored
-MATRIX_DIR = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce"#"collision_integral_direct/Matrixes_bruteforce"
+MATRIX_DIR = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce"#"collision_integral_direct/Matrixes_bruteforce"
 
 
 def _theta_str(theta: float) -> str:
@@ -264,83 +254,6 @@ def compute_eigenvalue_from_eigenfunction(Ma, meta, eigenfunction, m):
     return float(gamma)
 
 
-def verify_asymptotics(Thetas, eigs, modes=(2, 3, 4, 0), low_max=0.07, high_min=1.5):
-    """
-    Verify asymptotic scaling behavior of eigenvalues.
-    
-    For Gurzhi / Fermi-liquid (Θ ≪ 1): γ(Θ) ∝ Θ²  =>  γ(Θ)/Θ² plateaus
-    For Planckian / Sachdev (Θ ≫ 1):   γ(Θ) ∝ Θ   =>  γ(Θ)/Θ plateaus
-    
-    Args:
-        Thetas: list of temperatures
-        eigs: dict mapping Theta -> dict mapping m -> eigenvalue
-        modes: modes to verify (default: 2,3,4,0 - skip m=1 which is conserved momentum)
-        low_max: maximum Theta for low-T window (default: 5e-2)
-        high_min: minimum Theta for high-T window (default: 1.5)
-    """
-    Thetas = np.array(sorted(Thetas), dtype=float)
-    
-    def fit_slope(theta_mask, y):
-        """Fit log(y) = a * log(Theta) + b, return slope a."""
-        x = np.log(Thetas[theta_mask])
-        z = np.log(y[theta_mask])
-        a, b = np.polyfit(x, z, 1)  # z ~ a x + b
-        return a, b
-    
-    print("\n" + "="*70)
-    print("=== Asymptotic Scaling Verification ===")
-    print("="*70)
-    
-    for m in modes:
-        # Handle both integer modes (m=0,1,2,3,4,...) and string modes (dens, px, py)
-        if isinstance(m, str):
-            # String mode like "dens", "px", "py" (invariants)
-            y = np.array([eigs[t].get(m, np.nan) for t in Thetas], dtype=float)
-        else:
-            # Integer mode
-            y = np.array([eigs[t].get(m, np.nan) for t in Thetas], dtype=float)
-        good = np.isfinite(y) & (y > 0)
-        
-        if good.sum() < 6:
-            print(f"\n[m={m}] not enough positive points ({good.sum()} valid)")
-            continue
-        
-        # local slope (central diff)
-        tt = np.log(Thetas[good])
-        yy = np.log(y[good])
-        alpha = np.gradient(yy, tt)
-        
-        low = good & (Thetas <= low_max)
-        high = good & (Thetas >= high_min)
-        
-        print(f"\n[m={m}]")
-        if low.sum() >= 4:
-            aL, _ = fit_slope(low, y)
-            print(f"  low-T fit  (Theta <= {low_max:g}): slope a = {aL:.3f}  (target ~2)")
-            # plateau check
-            gamma_over_theta2 = y[low] / (Thetas[low]**2)
-            print(f"  low-T plateau check: median(gamma/Theta^2) = {np.median(gamma_over_theta2):.3e}")
-            print(f"                         std(gamma/Theta^2) = {np.std(gamma_over_theta2):.3e}")
-        else:
-            print(f"  low-T: not enough points ({low.sum()} points)")
-        
-        if high.sum() >= 4:
-            aH, _ = fit_slope(high, y)
-            print(f"  high-T fit (Theta >= {high_min:g}): slope a = {aH:.3f} (target ~1)")
-            # plateau check
-            gamma_over_theta = y[high] / Thetas[high]
-            print(f"  high-T plateau check: median(gamma/Theta) = {np.median(gamma_over_theta):.3e}")
-            print(f"                        std(gamma/Theta) = {np.std(gamma_over_theta):.3e}")
-        else:
-            print(f"  high-T: not enough points ({high.sum()} points)")
-        
-        # quick diagnostic: where alpha is near 2 or near 1
-        print(f"  alpha(theta) range: [{alpha.min():.2f}, {alpha.max():.2f}]")
-        print(f"  valid points: {good.sum()}/{len(Thetas)}")
-    
-    print("\n" + "="*70)
-
-
 def main():
     print("=== Eigenvalue / angular-distribution postprocessing (bruteforce) ===", flush=True)
     
@@ -355,8 +268,6 @@ def main():
     print("=== Step 1: Computing eigenfunctions for each temperature ===", flush=True)
     all_eigenfunctions = {}
     all_eigenvalues_from_funcs = {}
-    all_invariants = {}
-    all_extra = {}
     
     for Theta, fname in files_with_theta:
         print(f"\n[compute eigenfunctions] Theta={Theta:.6g}", flush=True)
@@ -367,14 +278,11 @@ def main():
         print(f"  Matrix shape: {Ma.shape}, type: {type(Ma).__name__}", flush=True)
         
         # Compute eigenfunctions for angular modes
-        eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra, invariants, extra = compute_eigenfunctions_by_mode(Ma, meta, ms=ms)
+        eigenfunctions, eigenvalues, px, py = compute_eigenfunctions_by_mode(Ma, meta, ms=ms)
         
         # Store results (these are small compared to matrices)
         all_eigenfunctions[Theta] = eigenfunctions
         all_eigenvalues_from_funcs[Theta] = eigenvalues
-        # Store invariants and extra modes separately
-        all_invariants[Theta] = invariants
-        all_extra[Theta] = extra
         
         # Skip eigenfunction plotting to save time - only compute eigenvalues
         # plot_eigenfunctions_by_mode(eigenfunctions, eigenvalues, px, py, Theta, ms=ms,
@@ -401,115 +309,60 @@ def main():
                 eigs[Theta][m] = all_eigenvalues_from_funcs[Theta][m]
             else:
                 eigs[Theta][m] = 0.0
-        
-        # Add invariants and extra modes from separate storage
-        if Theta in all_invariants:
-            inv = all_invariants[Theta]
-            eigs[Theta]["dens"] = inv.get("dens", np.nan)
-            eigs[Theta]["px"] = inv.get("px", np.nan)
-            eigs[Theta]["py"] = inv.get("py", np.nan)
-            eigs[Theta]["eps"] = inv.get("eps", np.nan)
-        if Theta in all_extra:
-            ext = all_extra[Theta]
-            eigs[Theta]["m0r"] = ext.get("m0r", np.nan)
-            eigs[Theta]["m1r"] = ext.get("m1r", np.nan)
-            eigs[Theta]["gamma_vx"] = ext.get("gamma_vx", np.nan)
-            eigs[Theta]["gamma_vy"] = ext.get("gamma_vy", np.nan)
-            eigs[Theta]["gamma_vx_perp"] = ext.get("gamma_vx_perp", np.nan)
-            eigs[Theta]["gamma_vy_perp"] = ext.get("gamma_vy_perp", np.nan)
-            eigs[Theta]["gamma_current_dipole"] = ext.get("gamma_current_dipole", np.nan)
-            eigs[Theta]["frac_protected_x"] = ext.get("frac_protected_x", np.nan)
-            eigs[Theta]["frac_protected_y"] = ext.get("frac_protected_y", np.nan)
-            eigs[Theta]["overlap_vx_m1r"] = ext.get("overlap_vx_m1r", np.nan)
-            eigs[Theta]["overlap_vy_m1r"] = ext.get("overlap_vy_m1r", np.nan)
-    
-    # ---- Verify asymptotic scaling ----
-    # Use m0r and m1r (relaxing modes) instead of m=0 and m=1 (conserved)
-    verify_modes = [2, 3, 4]
-    # Add m0r and m1r if they exist
-    has_m0r = any("m0r" in eigs[t] for t in Thetas)
-    has_m1r = any("m1r" in eigs[t] for t in Thetas)
-    if has_m0r:
-        verify_modes.append("m0r")
-    if has_m1r:
-        verify_modes.append("m1r")
-    verify_asymptotics(Thetas, eigs, modes=verify_modes, low_max=0.07, high_min=1.5)
     
     # ---- Plot eigenvalues as in original script (Figure-1 style) ----
     f10, ax10 = plt.subplots(figsize=(8*0.9, 6*0.9))
     
-    # Plot relaxing modes: use m0r, m1r instead of m=0, m=1 (which are conserved)
-    for mode_name in ["m0r", "m1r"]:
-        if any(mode_name in eigs[t] for t in Thetas):
-            y = []
-            y0 = []
-            for Theta in Thetas:
-                y.append(eigs[Theta].get(mode_name, np.nan))
-                y0.append(0.0)  # baseline is conserved mode (=0)
-            
-            power = 2
-            log_thetas = np.array([])
-            log_vals = np.array([])
-            
-            if k == 0:
-                y_arr = np.array(y, dtype=float)
-                y0_arr = np.array(y0, dtype=float)
-                Thetas_arr = np.array(Thetas, dtype=float)
-                valid = np.isfinite(y_arr) & np.isfinite(y0_arr) & ((y_arr - y0_arr) > 0)
-                if np.any(valid):
-                    log_thetas = np.log(Thetas_arr[valid])
-                    log_vals = 3*np.log(2*np.pi) + np.log((y_arr[valid] - y0_arr[valid])/(Thetas_arr[valid]**power))
-                    if log_vals.size > 6:
-                        ls = ":" if mode_name == "m0r" else "-"
-                        label = mode_name.replace("m0r", "m=0 (relax)").replace("m1r", "m=1 (relax)")
-                        ax10.plot(log_thetas[6:], log_vals[6:], label=label, linewidth=1.5, linestyle=ls)
-            
-            if log_vals.size > 0:
-                print(f"{mode_name}", log_thetas[6:] if log_vals.size > 6 else log_thetas,
-                      log_vals[6:] if log_vals.size > 6 else log_vals)
-            else:
-                print(f"{mode_name}: no positive points to plot")
-    
-    # Plot modes m>=2 (these are regular angular harmonics, not conserved)
     for m in ms:
-        if m < 2:  # Skip m=0, m=1 (they're conserved, use m0r/m1r instead)
-            continue
-            
         y = []
         y0 = []
         for Theta in Thetas:
-            y.append(eigs[Theta].get(m, 0.0))
+            y.append(eigs[Theta][m])
             if k == 0:
-                y0.append(0.0)
+                y0.append(eigs[Theta][0])
             else:
-                y0.append(eigs[Theta].get(1, 0.0))
+                y0.append(eigs[Theta][1])
         
         power = 2  # same choices as original
         
-        # Initialize arrays (fixes UnboundLocalError)
-        log_thetas = np.array([])
-        log_vals = np.array([])
-        
-        # Plot all modes m>=2
-        if k == 0:
+        # Only plot m != 0,1 prominently (same logic as original code)
+        if k == 0 and m != 0 and m != 1:
             # Filter out invalid values
-            y_arr = np.array(y, dtype=float)
-            y0_arr = np.array(y0, dtype=float)
-            Thetas_arr = np.array(Thetas, dtype=float)
-            valid = np.isfinite(y_arr) & np.isfinite(y0_arr) & ((y_arr - y0_arr) > 0)
+            y_arr = np.array(y)
+            y0_arr = np.array(y0)
+            Thetas_arr = np.array(Thetas)
+            valid = (y_arr - y0_arr) > 0
             if np.any(valid):
                 log_thetas = np.log(Thetas_arr[valid])
                 log_vals = 3*np.log(2*np.pi) + np.log((y_arr[valid] - y0_arr[valid])/(Thetas_arr[valid]**power))
                 # Only plot if we have enough points
-                if log_vals.size > 6:
+                if len(log_vals) > 6:
                     ax10.plot(log_thetas[6:], log_vals[6:],
-                              label=f"m = {m}", linewidth=1.5, linestyle="-")
-        
-        if log_vals.size > 0:
-            print(f"m={m}", log_thetas[6:] if log_vals.size > 6 else log_thetas,
-                  log_vals[6:] if log_vals.size > 6 else log_vals)
-        else:
-            print(f"m={m}: no positive points to plot")
+                              label=f"m = {m}", linewidth=1.5)
+            
+            print(f"m={m}", log_thetas[6:] if len(log_vals) > 6 else [], 
+                  log_vals[6:] if len(log_vals) > 6 else [])
+    
+    # m=1 dashed special line (as in original)
+    if k == 0:
+        m = 1
+        y = []
+        y0 = []
+        for Theta in Thetas:
+            y.append(eigs[Theta][m])
+            y0.append(eigs[Theta][0])
+        power = 2
+        y_arr = np.array(y)
+        y0_arr = np.array(y0)
+        Thetas_arr = np.array(Thetas)
+        valid = (y_arr - y0_arr) > 0
+        if np.any(valid):
+            log_thetas = np.log(Thetas_arr[valid])
+            log_vals = 3*np.log(2*np.pi) + np.log((y_arr[valid] - y0_arr[valid])/(Thetas_arr[valid]**power))
+            if len(log_vals) > 5:
+                ax10.plot(log_thetas[5:], log_vals[5:],
+                          label="m = 1", linestyle="--", linewidth=1.5, color="gray")
+                print("m=1", log_thetas[5:], log_vals[5:])
     
     # Reference lines (same as original)
     x_ref = np.linspace(-4.7, -3.0, 100)
@@ -551,38 +404,13 @@ def main():
     with open(csv_filename, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
         
-        # Header: T, m0c, m1c, m2, ..., dens, px, py, eps, m0r, m1r, gamma_vx, gamma_vy, gamma_vx_perp, gamma_vy_perp, gamma_current_dipole, frac_protected_x, frac_protected_y, overlap_vx_m1r, overlap_vy_m1r
-        # m0c, m1c are conserved modes (always 0), m0r, m1r are relaxing modes
-        header = ['T', 'm0c', 'm1c'] + [f'm{m}' for m in ms if m >= 2] + ['dens', 'px', 'py', 'eps', 'm0r', 'm1r', 
-                                                   'gamma_vx', 'gamma_vy', 'gamma_vx_perp', 'gamma_vy_perp', 'gamma_current_dipole',
-                                                   'frac_protected_x', 'frac_protected_y', 'overlap_vx_m1r', 'overlap_vy_m1r']
+        # Write header: T, m0, m1, m2, ...
+        header = ['T'] + [f'm{m}' for m in ms]
         writer.writerow(header)
         
         # Write data rows
         for Theta in Thetas:
-            row = [Theta]
-            # Write conserved modes (always 0)
-            row.append(0.0)  # m0c (density conserved)
-            row.append(0.0)  # m1c (momentum conserved)
-            # Write relaxing modes m>=2
-            row.extend([eigs[Theta].get(m, 0.0) for m in ms if m >= 2])
-            # Add invariants (computed via Rayleigh quotient)
-            row.append(eigs[Theta].get("dens", np.nan))
-            row.append(eigs[Theta].get("px", np.nan))
-            row.append(eigs[Theta].get("py", np.nan))
-            row.append(eigs[Theta].get("eps", np.nan))
-            # Add relaxing modes and current diagnostics
-            row.append(eigs[Theta].get("m0r", np.nan))
-            row.append(eigs[Theta].get("m1r", np.nan))
-            row.append(eigs[Theta].get("gamma_vx", np.nan))
-            row.append(eigs[Theta].get("gamma_vy", np.nan))
-            row.append(eigs[Theta].get("gamma_vx_perp", np.nan))
-            row.append(eigs[Theta].get("gamma_vy_perp", np.nan))
-            row.append(eigs[Theta].get("gamma_current_dipole", np.nan))
-            row.append(eigs[Theta].get("frac_protected_x", np.nan))
-            row.append(eigs[Theta].get("frac_protected_y", np.nan))
-            row.append(eigs[Theta].get("overlap_vx_m1r", np.nan))
-            row.append(eigs[Theta].get("overlap_vy_m1r", np.nan))
+            row = [Theta] + [eigs[Theta][m] for m in ms]
             writer.writerow(row)
     
     print(f"Saved: {csv_filename}", flush=True)
@@ -769,68 +597,6 @@ def wdot(u, v, w):
     """Weighted inner product: u^T W v"""
     return float(np.dot(u, w * v))
 
-def rayleigh_gamma(A, w_safe, v):
-    """
-    Compute generalized decay rate: gamma = (v^T A v)/(v^T W v)
-    for generalized eigenproblem A v = gamma W v.
-    """
-    v = v.astype(np.float64, copy=False)
-    Av = A.dot(v)
-    num = float(np.dot(v, Av))
-    den = float(np.dot(v, w_safe * v))
-    if den <= 1e-300:
-        return np.nan
-    return num / den
-
-def inner(u, v, w):
-    """Weighted inner product: u^T W v"""
-    return float(np.dot(u, w * v))
-
-def norm(u, w):
-    """Weighted norm: sqrt(u^T W u)"""
-    return np.sqrt(max(inner(u, u, w), 0.0))
-
-def project_out(u, basis, w):
-    """
-    Project vector u orthogonal to a list of basis vectors.
-    Returns u_perp such that u_perp is orthogonal to all vectors in basis.
-    """
-    u = u.copy().astype(np.float64)
-    for b in basis:
-        bb = inner(b, b, w)
-        if bb <= 1e-300:
-            continue
-        u -= (inner(u, b, w) / bb) * b
-    return u
-
-
-def apply_W_projector(v, Q, w):
-    """
-    Project v to the W-orthogonal complement of columns of Q.
-    Q: (n,r) matrix, w: (n,) weights
-    Returns v_perp such that v_perp is W-orthogonal to all columns of Q.
-    """
-    v = v.astype(np.float64, copy=False)
-    w = w.astype(np.float64, copy=False)
-    # Gram G = Q^T W Q
-    WQ = w[:, None] * Q
-    G = Q.T @ WQ
-    # Solve G a = Q^T W v
-    rhs = Q.T @ (w * v)
-    try:
-        a = np.linalg.solve(G, rhs)
-        return v - Q @ a
-    except np.linalg.LinAlgError:
-        # If G is singular, fall back to iterative projection
-        v_perp = v.copy()
-        for i in range(Q.shape[1]):
-            q = Q[:, i]
-            qw = w * q
-            qnorm_sq = np.dot(q, qw)
-            if qnorm_sq > 1e-300:
-                v_perp -= (np.dot(v_perp, qw) / qnorm_sq) * q
-        return v_perp
-
 
 def w_orthonormalize(vecs, w, remove_basis=None):
     """
@@ -861,29 +627,6 @@ def w_orthonormalize(vecs, w, remove_basis=None):
     return basis
 
 
-def band_velocity(px, py, meta):
-    """
-    Compute band velocity v = dε/dk for bilayer dispersion.
-    Returns velocity components vx, vy in dimensionless units (scaled by 1/mu).
-    """
-    U_BAND = float(meta.get("U_band", meta.get("band_u", 10.0)))
-    V_BAND = float(meta.get("v_band", meta.get("band_v", 1.0)))
-    MU_BAND = float(meta.get("mu_band", meta.get("mu_f", 1.0)))
-    
-    k = np.sqrt(px*px + py*py)
-    k_safe = np.maximum(k, 1e-300)
-    
-    denom = np.sqrt((V_BAND*k)**2 + U_BAND*U_BAND)
-    dEdk = (V_BAND*V_BAND * k) / denom  # dε/dk (in energy units)
-    
-    # Velocity in dimensionless form: dEdk/mu
-    dEdk_dim = dEdk / MU_BAND
-    
-    vx = dEdk_dim * px / k_safe
-    vy = dEdk_dim * py / k_safe
-    return vx, vy
-
-
 def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     """
     Compute eigenfunctions for specific angular modes m on the Fermi ring.
@@ -902,26 +645,9 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     # Reconstruct px, py, and angles
     px, py = reconstruct_px_py(meta)
     theta = np.arctan2(py, px)
-    P = np.sqrt(px * px + py * py)   # this is k
-    
-    # --- bilayer dispersion: ε(k) = √(v²k² + U²) - U ---
-    # Use same naming as generator
-    U_BAND = float(meta.get("U_band", meta.get("band_u", 10.0)))
-    V_BAND = float(meta.get("v_band", meta.get("band_v", 1.0)))
-    MU_BAND = float(meta.get("mu_band", meta.get("mu_f", 1.0)))
-    kF = float(meta.get("kF", meta.get("p_f", np.sqrt(MU_BAND*(MU_BAND + 2.0*U_BAND))/max(V_BAND, 1e-12))))
-    vF = float(meta.get("vF", meta.get("v_f", (V_BAND*V_BAND*kF)/max(MU_BAND+U_BAND, 1e-12))))
-    
-    # dimensionless energy: eps_dim = eps(k) / mu, so Fermi level is at eps_dim = 1
-    eps = np.sqrt((V_BAND * P)**2 + U_BAND * U_BAND) - U_BAND
-    eps_dim = eps / MU_BAND
-    
+    P = np.sqrt(px * px + py * py)
     Theta = float(meta.get("Theta", 0.0))
-    Theta_val = float(meta.get("Theta", 1.0))  # Use 1.0 as default for scaling
     dp = float(meta.get("dp", 0.0))
-    
-    # Print band parameters for diagnostics
-    print(f"  [band] U={U_BAND} v={V_BAND} μ={MU_BAND}  kF={kF:.6f}  vF={vF:.6f}", flush=True)
     
     # Collision operator: -M v = gamma W v
     # Handle matrix conversion carefully to avoid memory issues
@@ -951,128 +677,12 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
         A = A + diags([REG_ABS] * n, 0, format="csr")
     
     # Sanity check: verify momentum conservation
-    # Also check energy conservation quality (optional but informative)
-    if n > 0:
-        # Use physical eps for energy conservation check
-        eps_phys = eps_dim * MU_BAND
-        eps_norm = np.linalg.norm(eps_phys)
-        if eps_norm > 1e-30:
-            A_eps = A.dot(eps_phys)
-            Ae = np.linalg.norm(A_eps) / eps_norm
-            print(f"  [sanity] ||A eps||/||eps|| = {Ae:.6e}", flush=True)
-        
-        # Check current/velocity conservation (should be ~0 for parabolic, nonzero for non-parabolic)
-        vx, vy = band_velocity(px, py, meta)
-        vx_norm = np.linalg.norm(vx)
-        vy_norm = np.linalg.norm(vy)
-        if vx_norm > 1e-30:
-            A_vx = A.dot(vx)
-            Avx = np.linalg.norm(A_vx) / vx_norm
-            print(f"  [sanity] ||A vx||/||vx|| = {Avx:.6e}", flush=True)
-        if vy_norm > 1e-30:
-            A_vy = A.dot(vy)
-            Avy = np.linalg.norm(A_vy) / vy_norm
-            print(f"  [sanity] ||A vy||/||vy|| = {Avy:.6e}", flush=True)
-    
-    # Sanity check: verify momentum conservation
     Apx_norm = np.linalg.norm(A.dot(px))
     px_norm = np.linalg.norm(px)
     Apy_norm = np.linalg.norm(A.dot(py))
     py_norm = np.linalg.norm(py)
-    print(f"  [sanity] ||A px||/||px|| = {Apx_norm/(px_norm + 1e-30):.3e}")
-    print(f"  [sanity] ||A py||/||py|| = {Apy_norm/(py_norm + 1e-30):.3e}")
-    
-    # --- Compute invariants using Rayleigh quotient ---
-    # FIX C: With out-scattering, invariants are not exactly conserved in the truncated operator.
-    # Project each invariant vector out of the OTHER invariants before computing Rayleigh quotients.
-    # This gives the "true conservation rate" (should be ~0 if operator is closed).
-    dens_vec = np.ones(n, dtype=np.float64)
-    eps_phys = eps_dim * MU_BAND  # physical energy
-    
-    # Project each invariant out of the others:
-    # dens_vec_p: density projected out of [px, py, eps_phys]
-    # px_vec_p: px projected out of [dens_vec, py, eps_phys]
-    # etc.
-    Q_dens = np.column_stack([px.copy(), py.copy()])
-    eps_mean = wdot(dens_vec, eps_phys, w_safe) / max(wdot(dens_vec, dens_vec, w_safe), 1e-300)
-    eps_centered = (eps_phys - eps_mean).astype(np.float64)
-    eps_norm_sq = wdot(eps_centered, eps_centered, w_safe)
-    if eps_norm_sq > 1e-20:
-        Q_dens = np.column_stack([Q_dens, eps_centered])
-    
-    Q_px = np.column_stack([dens_vec, py.copy()])
-    if eps_norm_sq > 1e-20:
-        Q_px = np.column_stack([Q_px, eps_centered])
-    
-    Q_py = np.column_stack([dens_vec, px.copy()])
-    if eps_norm_sq > 1e-20:
-        Q_py = np.column_stack([Q_py, eps_centered])
-    
-    Q_eps = np.column_stack([dens_vec, px.copy(), py.copy()])
-    
-    # Project out other invariants
-    dens_vec_p = apply_W_projector(dens_vec, Q_dens, w_safe) if Q_dens.shape[1] > 0 else dens_vec
-    px_vec_p   = apply_W_projector(px, Q_px, w_safe) if Q_px.shape[1] > 0 else px
-    py_vec_p   = apply_W_projector(py, Q_py, w_safe) if Q_py.shape[1] > 0 else py
-    eps_vec_p  = apply_W_projector(eps_phys, Q_eps, w_safe) if Q_eps.shape[1] > 0 else eps_phys
-    
-    # These should now be ~0 if the operator is closed (true conservation rates)
-    gamma_dens = rayleigh_gamma(A, w_safe, dens_vec_p)
-    gamma_px   = rayleigh_gamma(A, w_safe, px_vec_p)
-    gamma_py   = rayleigh_gamma(A, w_safe, py_vec_p)
-    gamma_eps  = rayleigh_gamma(A, w_safe, eps_vec_p)
-    
-    # Compute velocity/current decay rates (diagnostics for non-parabolic bands)
-    vx, vy = band_velocity(px, py, meta)
-    gamma_vx = rayleigh_gamma(A, w_safe, vx)
-    gamma_vy = rayleigh_gamma(A, w_safe, vy)
-    
-    # Compute momentum-projected currents (orthogonal to conserved modes)
-    # Use W-orthonormalized conserved basis for robust projection
-    cons_basis = w_orthonormalize(
-        [np.ones(n, dtype=np.float64), px.copy(), py.copy()],
-        w_safe
-    )
-    
-    # Project currents orthogonal to conserved modes (density + momentum)
-    vx_perp = project_out(vx, cons_basis, w_safe)
-    vy_perp = project_out(vy, cons_basis, w_safe)
-    
-    gamma_vx_perp = rayleigh_gamma(A, w_safe, vx_perp)
-    gamma_vy_perp = rayleigh_gamma(A, w_safe, vy_perp)
-    
-    # Compute protected fraction: how much of vx is "protected" by momentum conservation
-    vx_norm_sq = norm(vx, w_safe)**2
-    vy_norm_sq = norm(vy, w_safe)**2
-    vx_perp_norm_sq = norm(vx_perp, w_safe)**2
-    vy_perp_norm_sq = norm(vy_perp, w_safe)**2
-    
-    frac_protected_x = 1.0 - (vx_perp_norm_sq / max(vx_norm_sq, 1e-300))
-    frac_protected_y = 1.0 - (vy_perp_norm_sq / max(vy_norm_sq, 1e-300))
-    
-    # Compute dipole relaxation rate from 2D span of {vx_perp, vy_perp}
-    # This should track m1r better than individual components
-    U_list = w_orthonormalize([vx_perp, vy_perp], w_safe)
-    if len(U_list) > 0:
-        U = np.column_stack(U_list)
-        C = U.T @ (A.dot(U))
-        C = 0.5 * (C + C.T)
-        lam = np.linalg.eigvalsh(C)
-        gamma_current_dipole = float(np.min(np.maximum(lam, 0.0)))
-    else:
-        gamma_current_dipole = np.nan
-    
-    invariants = {
-        "dens": gamma_dens,
-        "px": gamma_px,
-        "py": gamma_py,
-        "eps": gamma_eps,
-    }
-    
-    print(f"  [invariants] gamma_dens={gamma_dens:.6e}  gamma_px={gamma_px:.6e}  gamma_py={gamma_py:.6e}  gamma_eps={gamma_eps:.6e}", flush=True)
-    print(f"  [current] gamma_vx={gamma_vx:.6e}  gamma_vy={gamma_vy:.6e}", flush=True)
-    print(f"  [current⊥] gamma_vx_perp={gamma_vx_perp:.6e}  gamma_vy_perp={gamma_vy_perp:.6e}  gamma_dipole={gamma_current_dipole:.6e}", flush=True)
-    print(f"  [current⊥] protected_frac_x={frac_protected_x:.6f}  protected_frac_y={frac_protected_y:.6f}", flush=True)
+    print(f"  [sanity] ||A px||/||px|| = {Apx_norm/(px_norm + 1e-30):.6e}")
+    print(f"  [sanity] ||A py||/||py|| = {Apy_norm/(py_norm + 1e-30):.6e}")
     
     # Invariants: density and momentum should be treated carefully.
     # Density is always conserved; momentum corresponds to the m=1 sector.
@@ -1094,160 +704,37 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     
     eigenfunctions = {}
     eigenvalues = {}
-    eigenfunctions_extra = {}
-    eigenvalues_extra = {}
-    
-    # Store conserved modes for later use
-    dens_u = inv_orth[0] if len(inv_orth) > 0 else None
-    px_u   = inv_orth[1] if len(inv_orth) > 1 else None
-    py_u   = inv_orth[2] if len(inv_orth) > 2 else None
-    
-    # Initialize relaxing mode storage
-    m0r_gamma = np.nan
-    m0r_vec = None
-    m1r_gamma = np.nan
-    m1r_vec = None
     
     for m in ms:
         if m == 0:
-            # --- (A) Compute relaxing isotropic mode (m0r) first ---
-            if COMPUTE_M0_RELAX:
-                # 1) build "remove" basis: density, and optionally energy-like mode
-                remove = inv_orth[:1] if len(inv_orth) > 0 else None
-                if M0_PROJECT_OUT_ENERGY:
-                    ones = np.ones(n, dtype=np.float64)
-                    # Use physical eps for energy projection
-                    eps_phys = eps_dim * MU_BAND
-                    mean_eps = wdot(ones, eps_phys, w_safe) / max(wdot(ones, ones, w_safe), 1e-300)
-                    e_mode = (eps_phys - mean_eps).astype(np.float64)
-                    e_orth = w_orthonormalize([e_mode], w_safe, remove_basis=remove)
-                    if remove is None:
-                        remove = e_orth
-                    else:
-                        remove = remove + e_orth
-
-                # 2) build a radial (angle-independent) basis around the Fermi surface
-                # Scale by Theta so basis stays O(1) across temperatures
-                # Use dimensionless energy: eps_dim - 1 (Fermi level is at eps_dim = 1)
-                Tscale = max(Theta_val, 1e-12)
-                x = (eps_dim - 1.0) / Tscale
-                basis_raw = [(x ** k).astype(np.float64) for k in range(1, int(M0_BASIS_ORDER) + 1)]
-
-                U_list = w_orthonormalize(basis_raw, w_safe, remove_basis=remove)
-                print(f"  [m0r] basis kept: {len(U_list)} out of {len(basis_raw)}")
-                if len(U_list) > 0:
-                    # 3) project operator and solve small eigenproblem
-                    U = np.column_stack(U_list)
-                    AU = A.dot(U)
-                    C = U.T @ AU
-                    C = 0.5 * (C + C.T)
-
-                    evals, evecs = np.linalg.eigh(C)
-                    evals = np.real(evals)
-                    evals = evals[np.isfinite(evals)]
-                    evals = evals[evals >= -1e-12]
-                    if len(evals) > 0:
-                        j = np.argmin(np.maximum(evals, 0.0))
-                        m0r_gamma = float(max(evals[j], 0.0))
-                        m0r_vec = U @ evecs[:, j]
-
-                        # normalize in W-norm
-                        nrm = np.sqrt(max(wdot(m0r_vec, m0r_vec, w_safe), 0.0))
-                        if nrm > 1e-30:
-                            m0r_vec = m0r_vec / nrm
-
-                        print(f"  [m0r] isotropic relax: gamma={m0r_gamma:.6e}")
-                    else:
-                        print(f"  [m0r] No valid eigenvalues in radial subspace")
-                else:
-                    print(f"  [m0r] basis empty -> cannot compute relaxing mode")
-            
-            # --- (B) Report conserved mode as m=0 ---
-            if REPORT_CONSERVED_M0_M1:
-                eigenfunctions[m] = np.ones(n, dtype=np.float64)  # density
-                eigenvalues[m] = 0.0
-                print(f"  [m=0] density conserved: gamma=0")
+            # m=0: constant mode (conserved density)
+            u0 = inv_orth[0] if len(inv_orth) > 0 else np.ones(n, dtype=np.float64) / np.sqrt(n)
+            eigenfunctions[m] = u0
+            eigenvalues[m] = 0.0
+            print(f"  [m={m}] density mode: gamma=0.0 (conserved)")
             continue
         
         if m == 1:
-            # --- (A) Compute relaxing dipole mode (m1r) first ---
-            if COMPUTE_M1_RELAX:
-                # Build remove basis: density (optional) + momentum (px, py)
-                remove = []
-                if M1_PROJECT_OUT_DENS:
-                    remove.append(np.ones(n, dtype=np.float64))
-                remove.append(px.copy())
-                remove.append(py.copy())
-                remove = w_orthonormalize(remove, w_safe)
-                
-                # Build m=1 radial basis with proper angular structure
-                # Use radial envelope around kF with m=1 angular harmonics
-                depsdk_dim = max(vF / MU_BAND, 1e-12)
-                dk_th = Theta_val / depsdk_dim
-                sigma_k = max(RADIAL_SIGMA_P_MULT * dk_th, 4.0 * dp, 1e-12)
-                
-                z = (P - kF) / sigma_k
-                g = np.exp(-0.5 * z * z)
-                
-                basis = []
-                for kk in range(int(RADIAL_BASIS_K)):
-                    rk = z ** kk
-                    basis.append(g * rk * np.cos(1 * theta))
-                    basis.append(g * rk * np.sin(1 * theta))
-                
-                U_list = w_orthonormalize(basis, w_safe, remove_basis=remove if len(remove) > 0 else None)
-                print(f"  [m1r] basis kept: {len(U_list)} out of {len(basis)}")
-                
-                if len(U_list) > 0:
-                    # Project operator and solve
-                    U = np.column_stack(U_list)
-                    AU = A.dot(U)
-                    C = U.T @ AU
-                    C = 0.5 * (C + C.T)
-                    
-                    evals, evecs = np.linalg.eigh(C)
-                    evals = np.real(evals)
-                    evals = evals[np.isfinite(evals) & (evals >= -1e-12)]
-                    
-                    if len(evals) > 0:
-                        j = np.argmin(np.maximum(evals, 0.0))
-                        m1r_gamma = float(max(evals[j], 0.0))
-                        m1r_vec = U @ evecs[:, j]
-                        
-                        nrm = np.sqrt(max(wdot(m1r_vec, m1r_vec, w_safe), 0.0))
-                        if nrm > 1e-30:
-                            m1r_vec /= nrm
-                        
-                        print(f"  [m1r] dipole relax: gamma={m1r_gamma:.6e}")
-                    else:
-                        print("  [m1r] dipole relax: No valid eigenvalues")
-                else:
-                    print("  [m1r] dipole relax: basis empty")
-            
-            # --- (B) Report conserved mode as m=1 ---
-            if REPORT_CONSERVED_M0_M1:
-                # Use px as representative conserved momentum direction
-                eigenfunctions[m] = px.copy()
-                eigenvalues[m] = 0.0
-                print(f"  [m=1] momentum conserved: gamma=0")
-            continue
+            # IMPORTANT: m=1 *is* momentum conservation.
+            # Use px, py as basis and do NOT project them out.
+            # Remove only density for m=1, because px/py *are* the m=1 conserved modes
+            remove = inv_orth[:1] if len(inv_orth) > 0 else None
+            U_list = w_orthonormalize([px.copy(), py.copy()], w_safe, remove_basis=remove)
         else:
-            # PATCH: for m>=2, allow radial structure (P-k_F)^k * cos/sin(mθ).
+            # PATCH: for m>=2, allow radial structure (P-1)^k * cos/sin(mθ).
             # This is crucial: odd-m T^4 asymptotics typically requires cancellations
             # that a pure angular harmonic (2D basis) cannot represent.
             remove = inv_orth[:1] if len(inv_orth) > 0 else None  # remove density only
 
-            # Choose a radial envelope width in k around k_F.
-            # Thermal radial width in k: dk_th = (Theta / depsdk_dim) where depsdk_dim = vF/mu
+            # Choose a radial envelope width in p around p=1.
+            # Thermal radial width in p is ~Theta/2 (since eps=p^2).
             # Also include dp so we don't make the envelope narrower than grid resolution.
-            depsdk_dim = max(vF / MU_BAND, 1e-12)
-            dk_th = (Theta / depsdk_dim)  # k-width corresponding to energy width Theta
-            sigma_k = max(RADIAL_SIGMA_P_MULT * dk_th, 4.0 * dp, 1e-12)
-            z = (P - kF) / sigma_k
+            sigma_p = max(RADIAL_SIGMA_P_MULT * (0.5 * Theta), 4.0 * dp, 1e-12)
+            z = (P - 1.0) / sigma_p
             g = np.exp(-0.5 * z * z)
 
             basis = []
-            # Use powers of (P-k_F) (scaled by sigma_p) for numerical conditioning
+            # Use powers of (P-1) (scaled by sigma_p) for numerical conditioning
             for kk in range(int(RADIAL_BASIS_K)):
                 rk = (z ** kk)
                 basis.append(g * rk * np.cos(m * theta))
@@ -1289,40 +776,20 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
             u = u / nrm
         
         # Optional: make m=1 plot stable by aligning with +px if it's that mode
+        if m == 1:
+            px_proj = abs(wdot(u, px, w_safe))
+            py_proj = abs(wdot(u, py, w_safe))
+            if px_proj >= py_proj:
+                u *= np.sign(wdot(u, px, w_safe) + 1e-300)
+            else:
+                u *= np.sign(wdot(u, py, w_safe) + 1e-300)
+        
         eigenfunctions[m] = u
         eigenvalues[m] = gamma
         
         print(f"  [m={m}] gamma={gamma:.6e}")
     
-    # Compute overlaps between current-perp and m1r eigenmode
-    overlap_vx_m1r = np.nan
-    overlap_vy_m1r = np.nan
-    if m1r_vec is not None:
-        vxpn = norm(vx_perp, w_safe)
-        vypn = norm(vy_perp, w_safe)
-        m1rn = norm(m1r_vec, w_safe)
-        if vxpn > 1e-300 and m1rn > 1e-300:
-            overlap_vx_m1r = inner(vx_perp / vxpn, m1r_vec / m1rn, w_safe)
-        if vypn > 1e-300 and m1rn > 1e-300:
-            overlap_vy_m1r = inner(vy_perp / vypn, m1r_vec / m1rn, w_safe)
-        print(f"  [overlap] vx_perp·m1r={overlap_vx_m1r:.6f}  vy_perp·m1r={overlap_vy_m1r:.6f}", flush=True)
-    
-    # Store relaxing modes in extra dict
-    extra = {
-        "m0r": m0r_gamma,
-        "m1r": m1r_gamma,
-        "gamma_vx": gamma_vx,
-        "gamma_vy": gamma_vy,
-        "gamma_vx_perp": gamma_vx_perp,
-        "gamma_vy_perp": gamma_vy_perp,
-        "frac_protected_x": frac_protected_x,
-        "frac_protected_y": frac_protected_y,
-        "gamma_current_dipole": gamma_current_dipole,
-        "overlap_vx_m1r": overlap_vx_m1r,
-        "overlap_vy_m1r": overlap_vy_m1r,
-    }
-    
-    return eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra, invariants, extra
+    return eigenfunctions, eigenvalues, px, py
 
 
 def plot_eigenfunctions_main(Theta=None, n_eigs=10, n_plot=6, use_angular_modes=True):
@@ -1356,13 +823,12 @@ def plot_eigenfunctions_main(Theta=None, n_eigs=10, n_plot=6, use_angular_modes=
     if use_angular_modes:
         # Compute eigenfunctions for specific angular modes
         ms = [0, 1, 2, 3, 4, 5, 6, 7, 8]
-        eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra, invariants, extra = compute_eigenfunctions_by_mode(Ma, meta, ms=ms)
+        eigenfunctions, eigenvalues, px, py = compute_eigenfunctions_by_mode(Ma, meta, ms=ms)
         
         # Plot eigenfunctions for each mode
         plot_eigenfunctions_by_mode(eigenfunctions, eigenvalues, px, py, Theta, ms=ms)
         
-        # Return results (extra dict already created in compute_eigenfunctions_by_mode)
-        return eigenfunctions, eigenvalues, px, py, eigenfunctions_extra, eigenvalues_extra, invariants, extra
+        return eigenfunctions, eigenvalues, px, py
     else:
         # Compute general eigenfunctions
         vals, vecs, px, py = compute_eigenfunctions(Ma, meta, n_eigs=n_eigs)
@@ -1457,4 +923,3 @@ if __name__ == "__main__":
     # 1. Plot eigenfunctions for each temperature
     # 2. Extract eigenvalues from eigenfunctions and plot vs temperature
     main()
-
