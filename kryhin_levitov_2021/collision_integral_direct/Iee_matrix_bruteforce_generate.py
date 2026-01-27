@@ -228,9 +228,11 @@ def solve_mu_bar_for_density(Theta: float) -> float:
 # print(Thetas)
 # PATCH: include the asymptotic window (1e-4 to 1e-3) where T^4 scaling should appear
 # Also include overlap with higher temperatures for continuity
-Thetas = (np.geomspace(1e-4, 1e-3, 12).tolist()
-          + [0.0012, 0.0016, 0.002, 0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
-             0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28])
+# Thetas = (np.geomspace(1e-4, 1e-3, 12).tolist()
+#           + [0.0012, 0.0016, 0.002, 0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
+#              0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28])
+
+Thetas = [1e-2, 1e-1]#np.geomspace(1e-4, 1e-3, 12)
 
 # active-shell cutoff: only include states where f(1-f) > cutoff
 ACTIVE_CUTOFF = 1e-8

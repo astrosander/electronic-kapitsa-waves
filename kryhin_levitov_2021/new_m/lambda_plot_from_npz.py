@@ -58,12 +58,12 @@ def load_data(csv_path: str):
         for field in fieldnames:
             field_stripped = field.strip()
             # New format: m0r, m1r (relaxing modes) - treat as m=0, m=1 for plotting
-            if field_stripped in ['m0r', 'm1r']:
+            if field_stripped in ['m0r', 'm1r', 'm0']:
                 m = 0 if field_stripped == 'm0r' else 1
                 modes_set.add(m)
                 gammas[m] = []
             # New format: m0c, m1c (conserved) - skip these (always 0)
-            elif field_stripped in ['m0c', 'm1c']:
+            elif field_stripped in ['m0c', 'm1c', 'm1']:
                 continue  # Skip conserved modes
             # New format: m2, m3, ... (regular modes)
             elif field_stripped.startswith('m') and len(field_stripped) > 1:

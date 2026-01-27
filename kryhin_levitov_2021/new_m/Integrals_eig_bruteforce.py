@@ -6,12 +6,13 @@ import numpy as np
 import pickle
 import math
 from scipy.sparse import csr_matrix, diags
-from scipy.sparse.linalg import eigsh, eigs
+from scipy.sparse.linalg import eigsh, eigs, lobpcg
 from matplotlib import pyplot as plt
 from matplotlib.colors import TwoSlopeNorm
+from numpy.polynomial.hermite import hermval
 
 # Configuration
-ms = [0, 1, 2, 3, 4, 5, 6, 7, 8,9,10,11,12,13,14,15,16,18,19,20]#[0, 1, 2, 3, 4, 5, 6, 7, 8]
+ms = [0, 1, 2, 3, 4]#, 5, 6]#, 7, 8,9,10,11,12,13,14,15,16,18,19,20]#[0, 1, 2, 3, 4, 5, 6, 7, 8]
 k = 0  # Figure-1 style (no "-a2" files)
 
 # PATCH: allow radial structure in each angular mode (critical for T^4 odd-m asymptotics)
@@ -126,6 +127,26 @@ def reconstruct_momentum_grid(meta):
     dV_th = counts * dV_p
     
     return p_i, th_i, dV_p, dV_th, th_centers, th_indices
+
+
+def eps_from_meta(P, meta):
+    """
+    Single-particle energy for a Dirac-like spectrum with gap U_bar and velocity V_bar:
+        eps(p) = sqrt((V_bar * p)^2 + U_bar^2) - U_bar
+    """
+    U_bar = float(meta.get("U_bar", 0.0))
+    V_bar = float(meta.get("V_bar", 1.0))
+    return np.sqrt((V_bar * P) ** 2 + U_bar ** 2) - U_bar
+
+
+def vg_from_meta(P, meta):
+    """
+    Group velocity magnitude v_g(p) = d eps / d p for the same dispersion.
+    """
+    U_bar = float(meta.get("U_bar", 0.0))
+    V_bar = float(meta.get("V_bar", 1.0))
+    denom = np.sqrt((V_bar * P) ** 2 + U_bar ** 2)
+    return (V_bar ** 2 * P) / np.maximum(denom, 1e-30)
 
 
 def compute_angular_distribution(Ma, meta, p_i, th_i, th_indices, dV_p, dV_th, th_centers):
@@ -332,6 +353,8 @@ def main():
             y0_arr = np.array(y0)
             Thetas_arr = np.array(Thetas)
             valid = (y_arr - y0_arr) > 0
+            log_thetas = np.array([])
+            log_vals = np.array([])
             if np.any(valid):
                 log_thetas = np.log(Thetas_arr[valid])
                 log_vals = 3*np.log(2*np.pi) + np.log((y_arr[valid] - y0_arr[valid])/(Thetas_arr[valid]**power))
@@ -340,8 +363,10 @@ def main():
                     ax10.plot(log_thetas[6:], log_vals[6:],
                               label=f"m = {m}", linewidth=1.5)
             
-            print(f"m={m}", log_thetas[6:] if len(log_vals) > 6 else [], 
-                  log_vals[6:] if len(log_vals) > 6 else [])
+            if len(log_vals) > 6:
+                print(f"m={m}", log_thetas[6:], log_vals[6:])
+            else:
+                print(f"m={m} [] []")
     
     # m=1 dashed special line (as in original)
     if k == 0:
@@ -598,7 +623,88 @@ def wdot(u, v, w):
     return float(np.dot(u, w * v))
 
 
-def w_orthonormalize(vecs, w, remove_basis=None):
+def residual_B_from_u(A, w_safe, u, gamma):
+    """Residual in B y = gamma y, where y = sqrt(W) u, B = W^{-1/2} A W^{-1/2}."""
+    w_sqrt = np.sqrt(np.maximum(w_safe, 1e-300))
+    w_inv_sqrt = 1.0 / w_sqrt
+
+    y = w_sqrt * u
+    Au = A.dot(u)
+    By = w_inv_sqrt * Au
+
+    num = np.linalg.norm(By - gamma * y)
+    den = np.linalg.norm(By) + abs(gamma) * np.linalg.norm(y) + 1e-30
+    return num / den
+
+
+def build_constraints_y(w_safe, vecs_vspace):
+    """
+    Build constraint matrix Qy in y-space (columns orthonormal),
+    where y = sqrt(W) v.
+    """
+    w_sqrt = np.sqrt(np.maximum(w_safe, 1e-300))
+    Qy = w_sqrt[:, None] * np.column_stack(vecs_vspace)  # y-space constraints
+    Qy, _ = np.linalg.qr(Qy)  # orthonormalize columns
+    return Qy
+
+
+def solve_smallest_mode_constrained(A, w_safe, y0, Qy, maxiter=8000, tol=1e-11):
+    """
+    Solve B y = gamma y for smallest gamma with constraints Qy,
+    where B = W^{-1/2} A W^{-1/2}. Returns (gamma, u) with u in v-space.
+    """
+    w_safe = np.maximum(w_safe.astype(np.float64), 1e-30)
+    w_inv_sqrt = 1.0 / np.sqrt(w_safe)
+
+    D = diags(w_inv_sqrt, 0, format="csr")
+    B = D @ A @ D
+    B = 0.5 * (B + B.T)  # enforce symmetry numerically
+
+    X = y0.reshape(-1, 1).astype(np.float64)
+    if Qy is not None and Qy.size > 0:
+        X = X - Qy @ (Qy.T @ X)
+
+    # LOBPCG: smallest eigenpair under constraints
+    vals, vecs = lobpcg(B, X, Y=Qy, largest=False, maxiter=maxiter, tol=tol)
+
+    gamma = float(np.real(vals[0]))
+    y = np.real(vecs[:, 0])
+
+    # back to v-space: u = W^{-1/2} y
+    u = w_inv_sqrt * y
+    return gamma, u
+
+
+def check_W_symmetry(A, w_safe, ntest=4, seed=0):
+    """
+    Cheap stochastic test of W-selfadjointness:
+      <u, Av>_W = <Au, v>_W  <=>  B = W^{-1/2} A W^{-1/2} is symmetric.
+    Returns (max_relative_asymmetry, mean_relative_asymmetry).
+    """
+    rng = np.random.default_rng(seed)
+    w_sqrt = np.sqrt(w_safe)
+    w_inv_sqrt = 1.0 / np.maximum(w_sqrt, 1e-300)
+
+    def B_dot(y):
+        # B y = W^{-1/2} A (W^{-1/2} y)
+        u = w_inv_sqrt * y
+        Au = A.dot(u)
+        return w_inv_sqrt * Au
+
+    rels = []
+    for _ in range(ntest):
+        x = rng.standard_normal(A.shape[0])
+        y = rng.standard_normal(A.shape[0])
+        Bx = B_dot(x)
+        By = B_dot(y)
+        lhs = float(np.dot(x, By))
+        rhs = float(np.dot(Bx, y))
+        denom = max(abs(lhs), abs(rhs), 1e-30)
+        rels.append(abs(lhs - rhs) / denom)
+    return max(rels), float(np.mean(rels))
+
+
+def w_orthonormalize(vecs, w, remove_basis=None, drop_rel=1e-10):
     """
     W-orthonormalize a list of vectors, optionally removing projection onto a basis.
     
@@ -606,6 +712,9 @@ def w_orthonormalize(vecs, w, remove_basis=None):
         vecs: list of vectors to orthonormalize
         w: weight array (diagonal of weight matrix)
         remove_basis: optional list of vectors to remove projection onto
+        drop_rel: relative threshold; vectors whose norm after projection
+                  is <= drop_rel * original_norm are dropped instead of
+                  being renormalized (prevents reinjecting invariants).
     
     Returns:
         list of W-orthonormal vectors
@@ -613,6 +722,8 @@ def w_orthonormalize(vecs, w, remove_basis=None):
     basis = []
     for v in vecs:
         u = v.astype(np.float64).copy()
+        # Original norm before projections
+        vnorm = np.sqrt(max(wdot(u, u, w), 0.0))
         # Remove projection onto remove_basis if provided
         if remove_basis is not None:
             for q in remove_basis:
@@ -620,11 +731,238 @@ def w_orthonormalize(vecs, w, remove_basis=None):
         # Remove projection onto previous basis vectors
         for q in basis:
             u -= wdot(q, u, w) * q
-        # Normalize
+        # Normalize if not almost killed by projections
         nrm = np.sqrt(max(wdot(u, u, w), 0.0))
-        if nrm > 1e-30:
+        if nrm > 1e-30 and nrm > drop_rel * (vnorm + 1e-300):
             basis.append(u / nrm)
     return basis
+
+
+def wproj(u, v, w):
+    """Projection coefficient of u onto v in W-inner product."""
+    den = wdot(v, v, w) + 1e-300
+    return wdot(v, u, w) / den
+
+
+def wremove_span(u, span, w):
+    """Remove W-orthogonal projection of u onto the span of vectors in span."""
+    if span is None:
+        return u
+    out = u.astype(np.float64).copy()
+    for q in span:
+        out -= wproj(out, q, w) * q
+    return out
+
+
+def project_out(u, basis, w):
+    """Project u orthogonal to a W-orthonormal basis (list of vectors)."""
+    if basis is None:
+        return u
+    uu = u.astype(np.float64).copy()
+    for q in basis:
+        uu -= wdot(q, uu, w) * q
+    return uu
+
+
+def reconstruct_eps_and_vg(P, theta, meta):
+    """
+    Reconstruct single-particle energy eps(P) and group velocity magnitude v_g(P)
+    in the same units used by the generator.
+    """
+    band = meta.get("band", "")
+    if band == "bilayer_sqrt_vk_U":
+        V_bar = float(meta["V_bar"])
+        U_bar = float(meta["U_bar"])
+        eps = np.sqrt((V_bar * P) ** 2 + (U_bar ** 2)) - U_bar
+        denom = np.sqrt((V_bar * P) ** 2 + (U_bar ** 2))
+        vg = (V_bar ** 2) * P / np.maximum(denom, 1e-30)
+    else:
+        # Fallback: simple parabolic spectrum eps = P^2
+        eps = P * P
+        vg = 2.0 * P
+    vx = vg * np.cos(theta)
+    vy = vg * np.sin(theta)
+    return eps, vg, vx, vy
+
+
+def wmean(x, w):
+    """Weighted mean with respect to diagonal weight w."""
+    num = float(np.dot(w * x, np.ones_like(x)))
+    den = float(np.dot(w, np.ones_like(w))) + 1e-300
+    return num / den
+
+
+def build_hg_basis(z, m, theta, K, wtype="both"):
+    """
+    Hermite-Gauss radial basis:
+      phi_k(z) = H_k(z) * exp(-z^2/2)
+    multiplied by cos(m theta), sin(m theta).
+    This captures sign-changing radial structure efficiently around the Fermi shell,
+    which is crucial for odd-m modes at low T.
+    """
+    g = np.exp(-0.5 * z * z)
+    basis = []
+    for k in range(K):
+        coeff = np.zeros(k + 1)
+        coeff[-1] = 1.0
+        Hk = hermval(z, coeff)
+        rk = Hk * g
+        if wtype in ("cos", "both"):
+            basis.append(rk * np.cos(m * theta))
+        if wtype in ("sin", "both"):
+            basis.append(rk * np.sin(m * theta))
+    return basis
+
+
+def build_invariants(px, py, eps, w):
+    """
+    Build invariant constraint matrix in y-space (for B = W^{-1/2} A W^{-1/2}):
+      Qy has columns corresponding to density, centered energy, px, py.
+    Returns (Qy, eps_c) where eps_c is the centered energy in W-weight.
+    """
+    n = len(w)
+    ones = np.ones(n, dtype=np.float64)
+
+    w_safe = np.clip(w.astype(np.float64), 1e-30, None)
+    # Center energy in W-weight
+    ebar = float(np.dot(w_safe, eps)) / (float(np.dot(w_safe, ones)) + 1e-30)
+    eps_c = (eps - ebar).astype(np.float64)
+
+    Q = np.column_stack(
+        [ones, eps_c, px.astype(np.float64), py.astype(np.float64)]
+    )
+
+    sw = np.sqrt(w_safe)
+    Qy = sw[:, None] * Q
+
+    # Orthonormalize constraints
+    Qy, _ = np.linalg.qr(Qy)
+    return Qy, eps_c
+
+
+def low_modes_constrained(A, w, k=24, Qy=None, maxiter=3000, tol=1e-10, seed=0):
+    """
+    Solve B y = lambda y for the smallest lambdas with constraints Qy:
+      B = W^{-1/2} A W^{-1/2}, A symmetric (or symmetrized) collision operator.
+    Returns eigenvalues (lambda) and eigenvectors v in the original v-space
+    related by v = W^{-1/2} y.
+    """
+    n = A.shape[0]
+    w_safe = np.clip(w.astype(np.float64), 1e-30, None)
+
+    winv_sqrt = 1.0 / np.sqrt(w_safe)
+    D = diags(winv_sqrt, 0, format="csr")
+    B = D @ A @ D
+    # Explicit symmetrization helps lobpcg robustness
+    B = 0.5 * (B + B.T)
+
+    rng = np.random.default_rng(seed)
+    X = rng.standard_normal((n, k)).astype(np.float64)
+
+    # Project initial guess orthogonal to constraints
+    if Qy is not None and Qy.size > 0:
+        X = X - Qy @ (Qy.T @ X)
+
+    vals, vecs = lobpcg(
+        B,
+        X,
+        Y=Qy if (Qy is not None and Qy.size > 0) else None,
+        tol=tol,
+        maxiter=maxiter,
+        largest=False,
+    )
+
+    idx = np.argsort(vals)
+    vals = np.real(vals[idx])
+    vecs = np.real(vecs[:, idx])
+
+    # Back to v-space: v = W^{-1/2} y
+    v = (winv_sqrt[:, None] * vecs).astype(np.float64)
+    return vals, v
+
+def angular_power(u, theta, w_safe, m_max=10):
+    """Return normalized angular power spectrum P[m] for u (W-weighted)."""
+    w_safe = np.maximum(w_safe.astype(np.float64), 1e-30)
+    Pm = np.zeros(m_max + 1, dtype=np.float64)
+    # complex Fourier coefficient for each m
+    for m in range(m_max + 1):
+        c = np.sum(w_safe * u * np.exp(-1j * m * theta))
+        Pm[m] = (c.real * c.real + c.imag * c.imag)
+    s = Pm.sum() + 1e-300
+    return Pm / s
+
+
+def classify_by_m(v, theta, w, m_max=12):
+    """
+    Classify each eigenvector v[:, j] by dominant angular harmonic m using
+    weighted Fourier power in the W-inner product.
+    Returns list of (m_dom, power) for each column of v.
+    """
+    w_safe = np.clip(w.astype(np.float64), 1e-30, None)
+    out = []
+    for j in range(v.shape[1]):
+        u = v[:, j]
+        best_m = 0
+        best_pow = -1.0
+        for m in range(m_max + 1):
+            c = np.sum(w_safe * u * np.exp(-1j * m * theta))
+            p = (c.real * c.real + c.imag * c.imag)
+            if p > best_pow:
+                best_pow = p
+                best_m = m
+        out.append((best_m, best_pow))
+    return out
+
+
+def diagnose_low_modes(Ma, meta, k=30, m_max=10, maxiter=5000, tol=1e-10, seed=0):
+    """
+    Diagnostic helper: compute constrained low-lying modes of the full operator
+    and classify them by dominant angular harmonic m.
+    Prints gamma, residual, and dominant m for the first few modes.
+    """
+    w = meta["w_active"].astype(np.float64)
+    w_safe = np.clip(w, 1e-30, None)
+
+    px, py = reconstruct_px_py(meta)
+    theta = np.arctan2(py, px)
+    P = np.sqrt(px * px + py * py)
+
+    # Reconstruct eps using the same bilayer dispersion as the generator
+    eps = eps_from_meta(P, meta)
+
+    Qy, eps_c = build_invariants(px, py, eps, w_safe)
+
+    # Build A in active space
+    if isinstance(Ma, csr_matrix):
+        A = -Ma
+    else:
+        A = csr_matrix(-Ma)
+
+    vals, vecs = low_modes_constrained(A, w_safe, k=k, Qy=Qy, maxiter=maxiter, tol=tol, seed=seed)
+
+    # Residuals in generalized eigenform A v = gamma W v
+    residuals = []
+    for i in range(len(vals)):
+        v = vecs[:, i]
+        Av = A.dot(v)
+        Wv = w_safe * v
+        gamma = vals[i]
+        num = np.linalg.norm(Av - gamma * Wv)
+        den = np.linalg.norm(Av) + abs(gamma) * np.linalg.norm(Wv) + 1e-30
+        residuals.append(num / den)
+
+    classes = classify_by_m(vecs, theta, w_safe, m_max=m_max)
+
+    n_print = min(12, len(vals))
+    for i in range(n_print):
+        m_dom, pow_m = classes[i]
+        print(
+            f"  [low-mode {i:02d}] gamma={vals[i]:.3e}  res={residuals[i]:.2e}  "
+            f"m≈{m_dom}  pow={pow_m:.3e}",
+            flush=True,
+        )
+
+    return vals, vecs, residuals, classes
 
 
 def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
@@ -648,6 +986,14 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     P = np.sqrt(px * px + py * py)
     Theta = float(meta.get("Theta", 0.0))
     dp = float(meta.get("dp", 0.0))
+    # --- Consistent energy & velocity (use meta keys U_bar,V_bar as generator does) ---
+    eps_raw = eps_from_meta(P, meta)
+    vg = vg_from_meta(P, meta)
+    vx = vg * np.cos(theta)
+    vy = vg * np.sin(theta)
+    # W-centered energy (critical!)
+    ebar = float(np.dot(w_safe, eps_raw)) / (float(np.dot(w_safe, np.ones_like(eps_raw))) + 1e-30)
+    eps_c = (eps_raw - ebar).astype(np.float64)
     
     # Collision operator: -M v = gamma W v
     # Handle matrix conversion carefully to avoid memory issues
@@ -668,6 +1014,9 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     else:
         # Try to convert to sparse
         A = csr_matrix(-Ma)
+
+    # Enforce symmetric operator for Ritz + residual (in weighted sense)
+    A = 0.5 * (A + A.T)
     
     W = diags(w_safe, 0, format="csr")
     
@@ -676,6 +1025,10 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     if REG_ABS > 0.0:
         A = A + diags([REG_ABS] * n, 0, format="csr")
     
+    # W-selfadjointness sanity check in B-space
+    sym_max, sym_mean = check_W_symmetry(A, w_safe, ntest=6, seed=1)
+    print(f"  [sanity] W-selfadjoint test: max={sym_max:.2e} mean={sym_mean:.2e}", flush=True)
+
     # Sanity check: verify momentum conservation
     Apx_norm = np.linalg.norm(A.dot(px))
     px_norm = np.linalg.norm(px)
@@ -683,111 +1036,247 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     py_norm = np.linalg.norm(py)
     print(f"  [sanity] ||A px||/||px|| = {Apx_norm/(px_norm + 1e-30):.6e}")
     print(f"  [sanity] ||A py||/||py|| = {Apy_norm/(py_norm + 1e-30):.6e}")
-    
-    # Invariants: density and momentum should be treated carefully.
-    # Density is always conserved; momentum corresponds to the m=1 sector.
-    inv_vecs = [np.ones(n, dtype=np.float64), px.copy(), py.copy()]
-    
-    # W-orthonormalize invariants (density + px + py)
-    inv_orth = []
-    for v in inv_vecs:
-        v_norm = v.copy()
-        # Remove projection onto previous invariants
-        for q in inv_orth:
-            proj = wdot(q, v_norm, w_safe)
-            v_norm = v_norm - proj * q
-        # Normalize
-        nrm = np.sqrt(max(wdot(v_norm, v_norm, w_safe), 0.0))
-        if nrm > 1e-30:
-            v_norm = v_norm / nrm
-            inv_orth.append(v_norm)
+    # Sanity check: density and centered energy conservation quality
+    ones_vec = np.ones_like(px, dtype=np.float64)
+    Aones_rel = np.linalg.norm(A.dot(ones_vec)) / (np.linalg.norm(ones_vec) + 1e-30)
+    Aeps_rel = np.linalg.norm(A.dot(eps_c)) / (np.linalg.norm(eps_c) + 1e-30)
+    print(f"  [sanity] ||A 1||/||1||   = {Aones_rel:.6e}")
+    print(f"  [sanity] ||A eps_c||/||eps_c|| = {Aeps_rel:.6e}")
+
+    # --- Invariants: density and momentum always. Energy only if well conserved. ---
+    ENERGY_LEAK_THR = 1e-10
+    use_energy = (Aeps_rel < ENERGY_LEAK_THR)
+    if not use_energy:
+        print("  [sanity] energy NOT treated as invariant (too leaky)", flush=True)
+    else:
+        print("  [sanity] energy treated as invariant", flush=True)
+
+    inv_vecs = [ones_vec, px.astype(np.float64).copy(), py.astype(np.float64).copy()]
+    if use_energy:
+        inv_vecs.insert(1, eps_c.astype(np.float64).copy())  # [1, eps_c, px, py]
+
+    # W-orthonormalize invariants once
+    inv_orth = w_orthonormalize(inv_vecs, w_safe, remove_basis=None)
     
     eigenfunctions = {}
     eigenvalues = {}
     
+    # Helper for W-inner product / correlations (diagnostics)
+    def wdot_loc(u, v, w):
+        return float(np.dot(u, w * v))
+
+    def wcorr(u, v, w):
+        nu = math.sqrt(max(wdot_loc(u, u, w), 0.0))
+        nv = math.sqrt(max(wdot_loc(v, v, w), 0.0))
+        if nu * nv < 1e-300:
+            return 0.0
+        return wdot_loc(u, v, w) / (nu * nv)
+
+    def gen_residual(A_loc, w_loc, u_loc, gamma_loc):
+        Au_loc = A_loc.dot(u_loc)
+        Wu_loc = w_loc * u_loc
+        num_loc = np.linalg.norm(Au_loc - gamma_loc * Wu_loc)
+        den_loc = np.linalg.norm(Au_loc) + abs(gamma_loc) * np.linalg.norm(Wu_loc) + 1e-30
+        return num_loc / den_loc
+
+    # m=1 tuning constants
+    M1_OVERLAP_MIN = 0.25      # require current-like character
+    M1_TARGET_RES  = 5e-2      # target residual for acceptable eigenpair
+
     for m in ms:
         if m == 0:
-            # m=0: constant mode (conserved density)
-            u0 = inv_orth[0] if len(inv_orth) > 0 else np.ones(n, dtype=np.float64) / np.sqrt(n)
+            # m=0: density zero mode (always conserved)
+            u0 = inv_orth[0].copy() if len(inv_orth) > 0 else np.ones(n, dtype=np.float64)
+            u0 /= math.sqrt(max(wdot_loc(u0, u0, w_safe), 1e-30))
             eigenfunctions[m] = u0
             eigenvalues[m] = 0.0
-            print(f"  [m={m}] density mode: gamma=0.0 (conserved)")
+            print("  [m=0] gamma=0 (density invariant)")
             continue
-        
-        if m == 1:
-            # IMPORTANT: m=1 *is* momentum conservation.
-            # Use px, py as basis and do NOT project them out.
-            # Remove only density for m=1, because px/py *are* the m=1 conserved modes
-            remove = inv_orth[:1] if len(inv_orth) > 0 else None
-            U_list = w_orthonormalize([px.copy(), py.copy()], w_safe, remove_basis=remove)
+        elif m == 1:
+            ones = np.ones(n, dtype=np.float64)
+
+            # Constraints: density + momentum (and energy only if you decide it’s “good enough”)
+            cons_v = [ones, px.astype(np.float64), py.astype(np.float64)]
+            Qy = build_constraints_y(w_safe, cons_v)
+
+            # Build an initial block X with strong m=1 content (in y-space)
+            # Use both current and pure angular m=1 shapes to avoid degeneracy issues.
+            w_sqrt = np.sqrt(w_safe)
+            X = np.column_stack([
+                w_sqrt * vx,                 # current-like
+                w_sqrt * vy,
+                w_sqrt * np.cos(theta),      # pure m=1 angular
+                w_sqrt * np.sin(theta),
+                w_sqrt * (P - 1.0) * np.cos(theta),  # add some radial structure
+                w_sqrt * (P - 1.0) * np.sin(theta),
+            ]).astype(np.float64)
+
+            # Project away constraints
+            X = X - Qy @ (Qy.T @ X)
+
+            # Drop nearly zero / linearly dependent columns and orthonormalize
+            col_norms = np.linalg.norm(X, axis=0)
+            max_norm = np.max(col_norms) if col_norms.size > 0 else 0.0
+            if max_norm > 0.0:
+                mask = col_norms > 1e-12 * max_norm
+                X = X[:, mask]
+
+            # If all columns were projected away, fall back to a random y0 orthogonal to Qy
+            if X.shape[1] == 0:
+                rng = np.random.default_rng(0)
+                y0 = rng.standard_normal(w_safe.shape[0])
+                y0 = y0 - Qy @ (Qy.T @ y0)
+                y0_norm = np.linalg.norm(y0)
+                if y0_norm < 1e-30:
+                    # as a last resort, use vx
+                    y0 = w_sqrt * vx
+                    y0 = y0 - Qy @ (Qy.T @ y0)
+                    y0_norm = np.linalg.norm(y0)
+                if y0_norm > 0.0:
+                    y0 /= y0_norm
+                X = y0.reshape(-1, 1)
+
+            # Orthonormalize initial block
+            X, _ = np.linalg.qr(X)
+
+            # Solve for a small batch of lowest modes
+            w_inv_sqrt = 1.0 / np.sqrt(w_safe)
+            D = diags(w_inv_sqrt, 0, format="csr")
+            B = D @ A @ D
+            B = 0.5 * (B + B.T)
+
+            vals, vecs = lobpcg(
+                B, X, Y=Qy, largest=False,
+                maxiter=20000, tol=1e-12
+            )
+
+            # Back to v-space
+            order = np.argsort(vals)
+            vals = np.real(vals[order])
+            vecs = np.real(vecs[:, order])
+            U = (w_inv_sqrt[:, None] * vecs).astype(np.float64)  # columns are candidates u_i
+
+            # Pick the first mode with dominant m=1 angular power
+            best_i = None
+            best_score = -1.0
+            for i in range(min(U.shape[1], 12)):
+                ui = U[:, i]
+                # normalize
+                ui /= math.sqrt(max(wdot_loc(ui, ui, w_safe), 1e-30))
+
+                Pm = angular_power(ui, theta, w_safe, m_max=8)
+                score = Pm[1]  # how “m=1” it is
+                # also require it's not basically m=3 etc
+                if score > best_score:
+                    best_score = score
+                    best_i = i
+
+            gamma = float(max(vals[best_i], 0.0))
+            u = U[:, best_i]
+            u /= math.sqrt(max(wdot_loc(u, u, w_safe), 1e-30))
+
+            print(f"  [m=1] picked mode i={best_i} gamma={gamma:.6e}  P1={best_score:.3f}", flush=True)
+            
+            Pm = angular_power(u, theta, w_safe, m_max=8)
+            print("  [m=1] Pm[0..8] =", " ".join([f"{p:.2f}" for p in Pm]), flush=True)
+
         else:
-            # PATCH: for m>=2, allow radial structure (P-1)^k * cos/sin(mθ).
-            # This is crucial: odd-m T^4 asymptotics typically requires cancellations
-            # that a pure angular harmonic (2D basis) cannot represent.
-            remove = inv_orth[:1] if len(inv_orth) > 0 else None  # remove density only
+            # m >= 2: use Hermite-Gauss radial basis (derivative-like around FS)
+            # and adaptively grow K until the generalized residual is small.
+            remove = inv_orth[:] if len(inv_orth) > 0 else None  # remove all invariants
 
-            # Choose a radial envelope width in p around p=1.
-            # Thermal radial width in p is ~Theta/2 (since eps=p^2).
-            # Also include dp so we don't make the envelope narrower than grid resolution.
-            sigma_p = max(RADIAL_SIGMA_P_MULT * (0.5 * Theta), 4.0 * dp, 1e-12)
-            z = (P - 1.0) / sigma_p
-            g = np.exp(-0.5 * z * z)
+            TARGET_RES = 5e-2
+            K_LIST_EVEN = [6, 10, 14]
+            K_LIST_ODD = [10, 14, 18, 24, 32, 40]
 
-            basis = []
-            # Use powers of (P-1) (scaled by sigma_p) for numerical conditioning
-            for kk in range(int(RADIAL_BASIS_K)):
-                rk = (z ** kk)
-                basis.append(g * rk * np.cos(m * theta))
-                basis.append(g * rk * np.sin(m * theta))
+            best = None  # (residual, gamma, u, K_use, sigma_p)
 
-            U_list = w_orthonormalize(basis, w_safe, remove_basis=remove)
-        
-        if len(U_list) == 0:
-            print(f"  [m={m}] No valid basis, skipping")
-            eigenfunctions[m] = None
-            eigenvalues[m] = np.nan
-            continue
-        
-        # Project operator onto basis: C = U^T A U
-        U = np.column_stack(U_list)
-        AU = A.dot(U)
-        C = U.T @ AU
-        C = 0.5 * (C + C.T)  # Symmetrize
-        
-        # Solve eigenvalue problem in basis
-        evals, evecs = np.linalg.eigh(C)
-        evals = np.real(evals)
-        evals = evals[np.isfinite(evals) & (evals >= -1e-12)]
-        
-        if len(evals) == 0:
-            print(f"  [m={m}] No valid eigenvalues")
-            eigenfunctions[m] = None
-            eigenvalues[m] = np.nan
-            continue
-        
-        # Choose smallest non-negative eigenvalue (slowest decay in this subspace)
-        j = np.argmin(np.maximum(evals, 0.0))
-        gamma = float(max(evals[j], 0.0))
-        u = U @ evecs[:, j]
-        
+            for K_use in (K_LIST_ODD if (m % 2 == 1) else K_LIST_EVEN):
+                # Odd m: wider sigma_p to allow particle–hole cancellations,
+                # even m: narrower is sufficient.
+                if m % 2 == 1:
+                    sigma_p = max(20.0 * (0.5 * Theta), 3.0 * dp, 1e-12)
+                else:
+                    sigma_p = max(3.0 * (0.5 * Theta), 2.0 * dp, 1e-12)
+
+                z = (P - 1.0) / sigma_p
+                basis = build_hg_basis(z, m, theta, K_use, wtype="both")
+
+                U_list = w_orthonormalize(basis, w_safe, remove_basis=remove)
+                if len(U_list) == 0:
+                    continue
+
+                U = np.column_stack(U_list)
+                AU = A.dot(U)
+                C = U.T @ AU
+                C = 0.5 * (C + C.T)
+
+                evals, evecs = np.linalg.eigh(C)
+                evals = np.real(evals)
+                if evals.size == 0 or not np.any(np.isfinite(evals)):
+                    continue
+
+                # Choose smallest non-negative eigenvalue in this subspace
+                jloc = int(np.argmin(np.maximum(evals, 0.0)))
+                gamma_try = float(max(evals[jloc], 0.0))
+                u_try = (U @ evecs[:, jloc]).astype(np.float64)
+                nrm_try = math.sqrt(max(wdot_loc(u_try, u_try, w_safe), 1e-30))
+                u_try = u_try / nrm_try
+
+                Au = A.dot(u_try)
+                Wu = w_safe * u_try
+                num = np.linalg.norm(Au - gamma_try * Wu)
+                den = np.linalg.norm(Au) + abs(gamma_try) * np.linalg.norm(Wu) + 1e-30
+                res = num / den
+
+                best = (res, gamma_try, u_try, K_use, sigma_p)
+                if res <= TARGET_RES:
+                    break
+
+            if best is None:
+                print(f"  [m={m}] no valid basis")
+                eigenfunctions[m] = None
+                eigenvalues[m] = np.nan
+                continue
+
+            res, gamma, u, K_use, sigma_p = best
+            resB = residual_B_from_u(A, w_safe, u, gamma)
+            print(f"  [m={m}] gamma={gamma:.6e}, residual_A={res:.3e}, residual_B={resB:.3e}, K={K_use}, sigma_p={sigma_p:.3e}")
+
         # Normalize in W-norm
-        nrm = np.sqrt(max(wdot(u, u, w_safe), 0.0))
+        nrm = math.sqrt(max(wdot_loc(u, u, w_safe), 0.0))
         if nrm > 1e-30:
             u = u / nrm
-        
-        # Optional: make m=1 plot stable by aligning with +px if it's that mode
-        if m == 1:
-            px_proj = abs(wdot(u, px, w_safe))
-            py_proj = abs(wdot(u, py, w_safe))
-            if px_proj >= py_proj:
-                u *= np.sign(wdot(u, px, w_safe) + 1e-300)
-            else:
-                u *= np.sign(wdot(u, py, w_safe) + 1e-300)
-        
+
         eigenfunctions[m] = u
         eigenvalues[m] = gamma
-        
-        print(f"  [m={m}] gamma={gamma:.6e}")
+
+        # Diagnostics: normalized correlations with invariants and current-like vectors
+        ones = np.ones(n, dtype=np.float64)
+        if m == 1:
+            # For m=1, also report correlation with projected current jx,jy
+            print(
+                f"  [m={m}] corr: dens={wcorr(u, ones,w_safe):+.2e}  en={wcorr(u, eps_c,w_safe):+.2e}  "
+                f"px={wcorr(u, px,w_safe):+.2e} py={wcorr(u, py,w_safe):+.2e}  "
+                f"jx={wcorr(u, vx,w_safe):+.2e} jy={wcorr(u, vy,w_safe):+.2e}",
+                flush=True,
+            )
+        else:
+            print(
+                f"  [m={m}] corr: dens={wcorr(u, ones,w_safe):+.2e}  en={wcorr(u, eps_c,w_safe):+.2e}  "
+                f"px={wcorr(u, px,w_safe):+.2e} py={wcorr(u, py,w_safe):+.2e}  "
+                f"vx={wcorr(u, vx,w_safe):+.2e} vy={wcorr(u, vy,w_safe):+.2e}",
+                flush=True,
+            )
+
+        # Diagnostics: residuals of generalized eigenpair -M u = γ W u and symmetric B-problem
+        Au = A.dot(u)
+        Wu = w_safe * u
+        resA = np.linalg.norm(Au - gamma * Wu) / (
+            np.linalg.norm(Au) + abs(gamma) * np.linalg.norm(Wu) + 1e-30
+        )
+        resB = residual_B_from_u(A, w_safe, u, gamma)
+        print(f"  [m={m}] residual_A={resA:.3e}  residual_B={resB:.3e}", flush=True)
     
     return eigenfunctions, eigenvalues, px, py
 
