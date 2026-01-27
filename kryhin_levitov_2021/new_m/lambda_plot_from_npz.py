@@ -53,15 +53,26 @@ def load_data(csv_path: str):
         if fieldnames is None:
             raise ValueError("CSV file has no headers")
         
-        # Check for both formats: "m0, m1, ..." (new format) and "gamma_0, gamma_1, ..." (old format)
+        # Check for formats: "m0c, m1c" (conserved), "m0r, m1r" (relaxing), "m2, m3, ..." (regular), 
+        # and old formats: "m0, m1, ..." and "gamma_0, gamma_1, ..."
         for field in fieldnames:
             field_stripped = field.strip()
-            # New format: m0, m1, m2, ...
-            if field_stripped.startswith('m') and len(field_stripped) > 1:
+            # New format: m0r, m1r (relaxing modes) - treat as m=0, m=1 for plotting
+            if field_stripped in ['m0r', 'm1r']:
+                m = 0 if field_stripped == 'm0r' else 1
+                modes_set.add(m)
+                gammas[m] = []
+            # New format: m0c, m1c (conserved) - skip these (always 0)
+            elif field_stripped in ['m0c', 'm1c']:
+                continue  # Skip conserved modes
+            # New format: m2, m3, ... (regular modes)
+            elif field_stripped.startswith('m') and len(field_stripped) > 1:
                 try:
                     m = int(field_stripped[1:])  # Extract number after 'm'
-                    modes_set.add(m)
-                    gammas[m] = []
+                    # Skip m0, m1 if they exist (use m0r, m1r instead)
+                    if m >= 2:
+                        modes_set.add(m)
+                        gammas[m] = []
                 except (ValueError, IndexError):
                     pass
             # Old format: gamma_0, gamma_1, ...
@@ -96,16 +107,34 @@ def load_data(csv_path: str):
             else:
                 T_requested.append(T[-1])  # Use T as fallback
             
-            # Read gammas for each mode (try both formats)
+            # Read gammas for each mode
             for m in modes_set:
-                # Try new format first: m0, m1, ...
-                gamma_key = f'm{m}'
-                if gamma_key in row and row[gamma_key].strip():
-                    try:
-                        gammas[m].append(float(row[gamma_key]))
-                        continue
-                    except (ValueError, TypeError):
-                        pass
+                # For m=0, m=1: try m0r, m1r first (relaxing modes)
+                if m in [0, 1]:
+                    gamma_key = f'm{m}r'  # m0r, m1r
+                    if gamma_key in row and row[gamma_key].strip():
+                        try:
+                            gammas[m].append(float(row[gamma_key]))
+                            continue
+                        except (ValueError, TypeError):
+                            pass
+                    # Fallback to old format: m0, m1
+                    gamma_key = f'm{m}'
+                    if gamma_key in row and row[gamma_key].strip():
+                        try:
+                            gammas[m].append(float(row[gamma_key]))
+                            continue
+                        except (ValueError, TypeError):
+                            pass
+                else:
+                    # For m>=2: try m2, m3, ...
+                    gamma_key = f'm{m}'
+                    if gamma_key in row and row[gamma_key].strip():
+                        try:
+                            gammas[m].append(float(row[gamma_key]))
+                            continue
+                        except (ValueError, TypeError):
+                            pass
                 
                 # Try old format: gamma_0, gamma_1, ...
                 gamma_key = f'gamma_{m}'
@@ -116,7 +145,7 @@ def load_data(csv_path: str):
                     except (ValueError, TypeError):
                         pass
                 
-                # If neither format worked, append NaN
+                # If none of the formats worked, append NaN
                 gammas[m].append(np.nan)
     
     # Convert to numpy arrays
@@ -140,8 +169,8 @@ def get_color_and_alpha(m, max_m=8):
     """
     if m <= 1:
         # m=0,1: use darker gray with reduced alpha (dashed lines)
-        color = 'black' if m == 0 else '#34495E'  # Darker grays
-        return color, 0.4  # Reduced alpha for dashed lines
+        color = 'black' if m == 0 else 'violet'  # Darker grays
+        return color, 1.0  # Reduced alpha for dashed lines
     elif m % 2 == 0:
         # Even modes (2,4,6,8,10,12,14...): red to redder colors
         # Start with bright red, get darker/more saturated red as m increases
@@ -206,16 +235,16 @@ def get_color_and_alpha(m, max_m=8):
 
 def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
     """
-    Plot gamma_m(T)/T^2 from loaded data.
+    Plot gamma_m(T) from loaded data (without dividing by T^2).
     """
-    # --- plot gamma_m(T)/T^2 ---
+    # --- plot gamma_m(T) ---
     fig, ax = plt.subplots(figsize=(8 * 0.9, 6 * 0.9))
     fig.patch.set_facecolor('white')  # Ensure white background
     ax.set_facecolor('white')
 
     # Collect valid data points for setting limits (before plotting reference lines)
     T_valid = []
-    gamma_over_T2_valid = []
+    gamma_valid = []
     
     # Get max mode for colormap normalization
     max_m = int(np.max(modes)) if len(modes) > 0 else 8
@@ -228,22 +257,27 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
             if np.any(mask):
                 T_plot = T[mask]
                 gm_plot = gm[mask]
-                gm_over_T2 = gm_plot / (T_plot ** 2)
                 T_valid.extend(T_plot)
-                gamma_over_T2_valid.extend(gm_over_T2)
+                gamma_valid.extend(gm_plot)
                 
                 color, alpha = get_color_and_alpha(m_int, max_m)
                 linestyle = '-' if m_int <= 1 else '-'
                 # Use thinner lines for red (even) modes to improve separation when close
                 # Keep thicker lines for blue (odd) modes and special modes
                 if m_int <= 1:
-                    linewidth = 1.8
+                    linewidth = 3.5#1.8
                 elif m_int % 2 == 0:
                     linewidth = 1.3  # Thinner for red (even) modes
                 else:
                     linewidth = 2.0  # Thicker for blue (odd) modes
-                ax.loglog(T_plot, gm_over_T2, #label=fr"$m={m_int}$", 
-                         linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
+                if m_int <= 1:
+                    # For m=0, m=1: label as relaxing modes
+                    label = fr"$m={m_int}$ (relax)" if m_int in [0, 1] else fr"$m={m_int}$"
+                    ax.loglog(T_plot, gm_plot, label=label, 
+                             linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
+                else:
+                    ax.loglog(T_plot, gm_plot, #label=fr"$m={m_int}$", 
+                                 linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
 
     # Add T^2 and T^4 reference lines
     # Normalize to match a typical data point for visual reference
@@ -263,32 +297,33 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
                 break
         
         if gamma_ref is not None and gamma_ref > 0:
-            # Normalize so ref lines pass through (T_mid, gamma_ref/T_mid^2)
-            # For T^2: gamma = C_T2 * T^2, so gamma/T^2 = C_T2 (constant)
-            # For T^4: gamma = C_T4 * T^4, so gamma/T^2 = C_T4 * T^2
+            # For T^1: gamma = C_T1 * T^1
+            # For T^2: gamma = C_T2 * T^2
+            # For T^4: gamma = C_T4 * T^4
+            C_T1 = gamma_ref / (T_mid ** 1)
             C_T2 = gamma_ref / (T_mid ** 2)
             C_T4 = gamma_ref / (T_mid ** 4)
             
-            # T^2 reference: constant line at C_T2
-            ref_T2_normalized = np.full_like(T_ref, C_T2)*10
-            # T^4 reference: C_T4 * T^2
-            ref_T4_normalized = C_T4 * (T_ref ** 2)
+            # T^1 reference: C_T1 * T^1
+            ref_T1 = C_T1 * (T_ref ** 1)
+            # T^2 reference: C_T2 * T^2
+            ref_T2 = C_T2 * (T_ref ** 2)
+            # T^4 reference: C_T4 * T^4
+            ref_T4 = C_T4 * (T_ref ** 4)
             
-            ax.loglog(T_ref, ref_T2_normalized*0.1, '--', color='blue', linewidth=1.0, label=r"$\propto T^2$")
-            ax.loglog(T_ref, ref_T4_normalized*0.1, '-.', color='red', linewidth=1.0, label=r"$\propto T^4$")
+            ax.loglog(T_ref, ref_T1, ':', color='darkgreen', linewidth=3.5, alpha=0.8, label=r"$\propto T^1$")
+            ax.loglog(T_ref, ref_T2, '--', color='darkblue', linewidth=3.5, alpha=0.8, label=r"$\propto T^2$")
+            ax.loglog(T_ref, ref_T4, '-.', color='darkred', linewidth=3.5, alpha=0.8, label=r"$\propto T^4$")
 
     # Set limits based on data curves only (not reference lines)
-    if len(T_valid) > 0 and len(gamma_over_T2_valid) > 0:
+    if len(T_valid) > 0 and len(gamma_valid) > 0:
         T_valid = np.array(T_valid)
-        gamma_over_T2_valid = np.array(gamma_over_T2_valid)
+        gamma_valid = np.array(gamma_valid)
         ax.set_xlim([T_valid.min(), T_valid.max()])
-        ax.set_ylim([gamma_over_T2_valid.min(), gamma_over_T2_valid.max()])
-
-    # ax.set_xlim([T_valid.min(), T_valid.max()])
-    # ax.set_ylim(1e-6, 1e2)
+        ax.set_ylim([gamma_valid.min(), gamma_valid.max()])
 
     ax.set_xlabel(r"Temperature, $T/T_F$")
-    ax.set_ylabel(r"Decay rate (eigenvalue), $\gamma_m / T^2$")
+    ax.set_ylabel(r"Decay rate (eigenvalue), $\gamma_m$")
     ax.legend()
 
     fig.tight_layout()
@@ -300,7 +335,97 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
     if out_png:
         fig.savefig(out_png, dpi=300)
         print(f"Saved: {out_png}")
+    
+    # Don't show here, will show both figures together at the end
+
+
+def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None):
+    """
+    Plot logarithmic derivative of the decay rate gamma_m to extract the local scaling exponent.
+    
+    For odd m, the crossover from T^2 to T^4 scaling is clearly visible, where the crossover
+    temperature T* decreases with increasing m.
+    """
+    # Small square figure for logarithmic derivative plot
+    fig, ax = plt.subplots(figsize=(6, 6))
+    fig.patch.set_facecolor('white')
+    ax.set_facecolor('white')
+    
+    # Get max mode for colormap normalization
+    max_m = int(np.max(modes)) if len(modes) > 0 else 8
+    
+    # Reference lines for T^2 and T^4 scaling
+    T_ref = T[np.isfinite(T) & (T > 0)]
+    if len(T_ref) > 0:
+        ax.axhline(y=2.0, color='blue', linestyle='--', linewidth=1.0, alpha=0.5, label=r"$T^2$ scaling")
+        ax.axhline(y=4.0, color='red', linestyle='-.', linewidth=1.0, alpha=0.5, label=r"$T^4$ scaling")
+    
+    for m in modes:
+        m_int = int(m)
+        # Skip m=0 and m=1 for logarithmic derivative plot
+        if m_int <= 1:
+            continue
+            
+        if m_int in gammas:
+            gm = np.array(gammas[m_int], dtype=np.float64)
+            mask = np.isfinite(gm) & (gm > 0.0) & (T > 0.0)
+            if np.any(mask):
+                T_plot = T[mask]
+                gm_plot = gm[mask]
+                
+                # Compute logarithmic derivative: d(log(γ)) / d(log(T))
+                # For discrete data: log(γ_{i+1}/γ_i) / log(T_{i+1}/T_i)
+                if len(T_plot) > 1:
+                    # Compute differences
+                    log_T_diff = np.diff(np.log(T_plot))
+                    log_gamma_diff = np.diff(np.log(gm_plot))
+                    
+                    # Avoid division by zero
+                    valid = np.abs(log_T_diff) > 1e-12
+                    if np.any(valid):
+                        exponent = log_gamma_diff[valid] / log_T_diff[valid]
+                        # Use midpoints of temperature intervals for plotting
+                        T_mid = np.sqrt(T_plot[:-1] * T_plot[1:])[valid]
+                        exponent_plot = exponent
+                        
+                        # Filter out extreme outliers (likely numerical noise)
+                        exponent_median = np.median(exponent_plot)
+                        exponent_std = np.std(exponent_plot)
+                        outlier_mask = np.abs(exponent_plot - exponent_median) < 5 * exponent_std
+                        
+                        if np.any(outlier_mask):
+                            T_mid = T_mid[outlier_mask]
+                            exponent_plot = exponent_plot[outlier_mask]
+                            
+                            color, alpha = get_color_and_alpha(m_int, max_m)
+                            linestyle = '-'
+                            
+                            # Use thinner lines for red (even) modes
+                            if m_int % 2 == 0:
+                                linewidth = 1.3
+                            else:
+                                linewidth = 2.0
+                            
+                            ax.semilogx(T_mid, exponent_plot, 
+                                      linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
+    
+    ax.set_xlabel(r"Temperature, $T/T_F$")
+    ax.set_ylabel(r"Local scaling exponent, $\frac{d\log(\gamma_m)}{d\log(T)}$")
+    ax.set_ylim([0, 6])  # Reasonable range for exponents (0 to 6)
+    ax.legend(loc='best', fontsize=12)
+    ax.grid(True, alpha=0.3, linestyle='--')
+    
+    fig.tight_layout()
+    
+    if out_svg:
+        fig.savefig(out_svg)
+        print(f"Saved: {out_svg}")
+    
+    if out_png:
+        fig.savefig(out_png, dpi=300)
+        print(f"Saved: {out_png}")
     plt.show()
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -346,7 +471,20 @@ def main():
     if T_requested is not None:
         print(f"Requested temperature range: {T_requested.min():.6g} to {T_requested.max():.6g}")
     
+    # Plot main figure: gamma_m / T^2
     plot_from_data(T, modes, gammas, args.output_png, args.output_svg)
+    
+    # Plot logarithmic derivative figure
+    # Use the same base name as the main plot
+    if args.output_png is not None:
+        base = os.path.splitext(args.output_png)[0]
+    else:
+        base = os.path.splitext(args.input)[0]
+    
+    logderiv_png = f"{base}_logderiv.png"
+    logderiv_svg = f"{base}_logderiv.svg"
+    
+    plot_logarithmic_derivative(T, modes, gammas, logderiv_png, logderiv_svg)
     print("Plotting complete.")
 
 

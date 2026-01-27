@@ -141,17 +141,19 @@ HBAR = 1.0         # ħ (set 1 for dimensionless)
 
 # ------------------------ BILAYER BAND PATCH ------------------------
 # Physical band params (same units as mu_phys)
-V_BAND   = 1.0   # v
-U_BAND   = 1.0   # U
-MU_PHYS  = 10.0  # chemical potential; choose MU_PHYS >> U_BAND to be in "Dirac-like" regime
+V_BAND   = 1.0    # v
+MU_PHYS  = 1.0    # chemical potential scale (units)
+U_BAND   = 10.0 * MU_PHYS   # U = 10 * mu  (strongly gapped / U >> mu)
 
 # If you want fixed-density mu(T) instead of fixed mu, set this True.
-# Default False = keep mu fixed (as your text implies: "set U much smaller mu")
+# Default False = keep mu fixed (recommended for "U = 10 mu" regime)
 FIX_DENSITY = False
 
 # Derived scales so that your dimensionless grid momentum P has FS at P=1 at T=0
 # Solve mu = sqrt(v^2 kF^2 + U^2) - U  =>  v^2 kF^2 = mu^2 + 2 mu U
 K_F0   = math.sqrt(MU_PHYS * MU_PHYS + 2.0 * MU_PHYS * U_BAND) / max(V_BAND, 1e-30)
+if K_F0 <= 0.0 or (not math.isfinite(K_F0)):
+    raise RuntimeError(f"Bad K_F0={K_F0}. Check MU_PHYS, U_BAND, V_BAND.")
 
 U_BAR  = U_BAND / MU_PHYS
 V_BAR  = (V_BAND * K_F0) / MU_PHYS   # = sqrt(1 + 2 U_BAR)
@@ -242,9 +244,10 @@ DIMLESS_CONST = 1.0 / ((2.0 * math.pi) ** 4)
 # Target Nactive control at very low T (explicit energy window for shell)
 # These knobs control the active shell width and minimum ring thickness.
 # For dp ≈ 1e-3, PRAD_FLOOR_DP=0.5 gives Nactive ~ 2π/dp ≈ 5e3 at ultra-low T.
-EWIN_THETA_MULT = 5.0    # energy window in units of Theta (smaller for tighter shell at low T)
-EWIN_DP_MULT    = 0.5    # energy window floor in units of vgF*dp  (≈ one radial pixel)
-PRAD_FLOOR_DP   = 0.5    # ring thickness floor in units of dp (≈ one radial pixel)
+EWIN_THETA_MULT = 8.0     # energy window in units of Theta
+EWIN_DP_MULT    = 0.5     # Δε floor ≈ 0.5 * vgF * dp  -> p_rad floor ≈ dp/2
+EWIN_DP2_MULT   = 0.0     # optional dp^2 floor (keep 0 unless explicitly needed)
+PRAD_FLOOR_DP   = 0.5     # ring thickness floor in units of dp (≈ one radial pixel)
 
 OUT_DIR = "Matrixes_bruteforce"
 # ----------------------------------------------------------------------
@@ -380,9 +383,13 @@ def active_indices(f: np.ndarray, P: np.ndarray, eps: np.ndarray,
     # group velocity at FS (P=1) in dimensionless units:
     vgF = vgroup_scalar(1.0)  # d eps / dP at FS
 
-    # Explicit energy window:
-    # |eps - mu| < max(A*Theta, B*vgF*dp)
-    ewin = max(EWIN_THETA_MULT * Theta, EWIN_DP_MULT * vgF * dp)
+    # Energy window with dp floor (this is what fixes Nactive ~ 5000 at low T):
+    # |eps - mu| < max(A*Theta, B*vgF*dp, C*dp^2)
+    ewin = max(
+        EWIN_THETA_MULT * Theta,
+        EWIN_DP_MULT * vgF * dp,
+        EWIN_DP2_MULT * (dp * dp),
+    )
 
     # Convert energy window to radial thickness using vgF: d eps ≈ vgF dP
     p_rad = ewin / max(vgF, 1e-12)
@@ -486,9 +493,18 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
 
     # Compute lam_eff (energy broadening for δ_ε)
     vgF = vgroup_scalar(1.0)
-    lam_T  = LAMBDA_REL * Theta
-    lam_dp = 5.0 * vgF * dp_T            # dp floor in ENERGY units
-    lam_eff = max(lam_T, lam_dp, LAMBDA_MIN)
+    lam_T   = LAMBDA_REL * Theta
+    lam_dp  = 5.0 * vgF * dp_T                 # Dirac-like spacing ~ v_g * dp
+    lam_dp2 = LAMBDA_DP2_REL * (dp_T * dp_T)   # Parabolic-like mismatch ~ dp^2
+
+    # Blend dp and dp^2 floors based on U/μ ratio:
+    #  - U_BAR << 1  -> Dirac-like, prefer lam_dp
+    #  - U_BAR >> 1  -> parabolic near FS, prefer lam_dp2
+    U_ratio = U_BAR
+    w_par = U_ratio / (1.0 + U_ratio)          # -> 1 when U>>mu, ->0 when U<<mu
+    lam_floor = w_par * lam_dp2 + (1.0 - w_par) * lam_dp
+
+    lam_eff = max(lam_T, lam_floor, LAMBDA_MIN)
 
     # Active shell: explicit energy window + controlled ring thickness
     active = active_indices(f, P, eps, Theta, ACTIVE_CUTOFF, dp_T, mu_bar)
