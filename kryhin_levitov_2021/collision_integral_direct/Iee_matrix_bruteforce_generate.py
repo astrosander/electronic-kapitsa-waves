@@ -63,21 +63,26 @@ AUTO_DP_FROM_ANCHOR = True
 # Piecewise anchors for different temperature ranges
 # Low-T anchor (0.01 < Theta < 0.1): targets ~20MB
 THETA_ANCHOR_LOW = 0.02
-DP_ANCHOR_LOW    = 0.03
+DP_ANCHOR_LOW_BASE    = 0.03
 # High-T anchor (0.1 < Theta < 1): targets ~20MB
 # Use Theta=0.3 as anchor since it's in the middle of the range
 # Current: Theta=0.3, dp=0.116 gives 10.6MB (too small)
 # Target: ~20MB requires ~sqrt(20/10.6) ≈ 1.37x more Nactive
 # So dp should be ~0.116/1.37 ≈ 0.085 to get ~20MB
 THETA_ANCHOR_HIGH = 0.3
-DP_ANCHOR_HIGH    = 0.085        # adjusted to target ~20MB at Theta=0.3
+DP_ANCHOR_HIGH_BASE    = 0.085        # adjusted to target ~20MB at Theta=0.3
 THETA_CROSSOVER   = 0.1          # switch between anchors at this temperature
 
-DP_RING_MAX  = 0.03         # preferred cap for ring detail (only applies to low-T)
+DP_RING_MAX_BASE  = 0.03         # preferred cap for ring detail (only applies to low-T)
 DP_FLOOR     = 1e-4         # safety
 # If True: allow dp to exceed DP_RING_MAX to keep file size constant
 # If False: enforce DP_RING_MAX strictly (prioritize ring detail over size)
 PRIORITIZE_SIZE_OVER_RING = False
+
+# PATCH (recommended): keep angular sampling comparable across different kF
+# Scale dp anchors by (kF / K_F_REF). For μ=U=1 you get kF≈1.732, so dp gets ~0.378x smaller.
+SCALE_DP_WITH_KF = True
+K_F_REF = 4.582576  # reference kF from your legacy μ=1, U=10, v=1 runs
 
 # ------------------------- LOW-T BOX VALIDITY -------------------------
 # At very low Theta, your dp(theta) can become so small that Nmax hits NMAX_MAX
@@ -96,9 +101,10 @@ RING_PIXEL_BOOST = 1.5      # reduced from 3.0 to prevent Nactive explosion
 RING_SHELL_TIGHTEN = 0.45   # tighter ring (suppresses bulk contamination)
 RING_FLOOR_DP_MULT = 0.65   # ring thickness floor multiplier (was effectively 2.5; 0.6–1.0 is safe)
 
-# Compute pixel ratios for both regions
-PIXEL_RATIO_LOW  = (THETA_ANCHOR_LOW  / (DP_ANCHOR_LOW  * DP_ANCHOR_LOW )) * RING_PIXEL_BOOST
-PIXEL_RATIO_HIGH = (THETA_ANCHOR_HIGH / (DP_ANCHOR_HIGH * DP_ANCHOR_HIGH)) * (0.75 * RING_PIXEL_BOOST)
+# Compute pixel ratios for both regions (will be recomputed after kF is known if SCALE_DP_WITH_KF is True)
+# These are placeholders; actual values computed after band-init
+PIXEL_RATIO_LOW  = None  # Will be set after kF is computed
+PIXEL_RATIO_HIGH = None  # Will be set after kF is computed
 
 # Optional: choose Nmax so the momentum box isn't absurdly tiny at low T
 # pmax ~= (Nmax/2)*dp. 2.5 is usually safe for low T; use 4.0 if you want the same as your old runs.
@@ -135,7 +141,9 @@ HBAR = 1.0         # ħ (set 1 for dimensionless)
 
 # ---- BAND PARAMETERS (bilayer) ----
 MU_BAND = 1.0
-U_BAND  = 10.0 * MU_BAND
+# PATCH: run μ = U (ratio U/μ = 1)
+U_OVER_MU = 1.0
+U_BAND  = U_OVER_MU * MU_BAND
 V_BAND  = 1.0
 
 # Compute Fermi surface parameters
@@ -145,6 +153,20 @@ kF = math.sqrt(MU_BAND * (MU_BAND + 2.0 * U_BAND)) / V_BAND
 vF = (V_BAND * V_BAND * kF) / (U_BAND + MU_BAND)
 
 print(f"[band-init] U={U_BAND:.6g} v={V_BAND:.6g} mu={MU_BAND:.6g}  kF={kF:.6g}  vF={vF:.6g}")
+
+# ---- PATCH: derive dp anchors after kF is known ----
+if SCALE_DP_WITH_KF:
+    dp_scale = kF / K_F_REF
+else:
+    dp_scale = 1.0
+
+DP_ANCHOR_LOW  = DP_ANCHOR_LOW_BASE  * dp_scale
+DP_ANCHOR_HIGH = DP_ANCHOR_HIGH_BASE * dp_scale
+DP_RING_MAX    = DP_RING_MAX_BASE    * dp_scale
+
+# Recompute pixel ratios (must happen AFTER DP_ANCHOR_* are finalized)
+PIXEL_RATIO_LOW  = (THETA_ANCHOR_LOW  / (DP_ANCHOR_LOW  * DP_ANCHOR_LOW )) * RING_PIXEL_BOOST
+PIXEL_RATIO_HIGH = (THETA_ANCHOR_HIGH / (DP_ANCHOR_HIGH * DP_ANCHOR_HIGH)) * (0.75 * RING_PIXEL_BOOST)
 
 # Backward compatibility aliases (for now)
 BAND_U = U_BAND
@@ -159,9 +181,9 @@ VERIFY_ASYMPTOTICS = True#True#False  # Set to True to run only the two asymptot
 if VERIFY_ASYMPTOTICS:
     # Low-T window: Gurzhi / Fermi-liquid regime (Θ ≪ 1) where γ ∝ Θ²
     # High-T window: Planckian / Sachdev regime (Θ ≫ 1) where γ ∝ Θ
-    # Thetas=np.geomspace(1.5, 6.0, 10)
-    Thetas = (np.geomspace(2e-3, 5e-2, 10).tolist()   # Gurzhi window
-              + np.geomspace(1.5, 6.0, 10).tolist())  # Planckian window
+    Thetas=np.geomspace(5e-2, 1.5, 10)
+    # Thetas = (np.geomspace(2e-3, 5e-2, 10).tolist()   # Gurzhi window
+    #           + np.geomspace(1.5, 6.0, 10).tolist())  # Planckian window
 else:
     # Original temperature range
     # PATCH: include the asymptotic window (1e-4 to 1e-3) where T^4 scaling should appear
@@ -169,6 +191,9 @@ else:
     Thetas = (np.geomspace(1e-4, 1e-3, 12).tolist()
               + [0.0012, 0.0016, 0.002, 0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
                  0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28])
+
+# Thetas = [theta for theta in Thetas if theta > 1.0]
+# print(Thetas)
 
 # Hard cap to avoid "runs forever" - runtime scales roughly O(Nactive^3)
 NACTIVE_MAX = 4500   # try 3000–5000 on your CPU (was 6000)
@@ -540,7 +565,8 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
                         if a2p < 0:
                             continue
 
-                        e2p, f2p = float(eps[i2p]), float(f[i2p])
+                        # PATCH: eps is eps_phys in this scope (eps was undefined)
+                        e2p, f2p = float(eps_phys[i2p]), float(f[i2p])
                         dE = e1 + e2 - e1p - e2p
                         delta_eps = (1.0 / math.pi) * lam_eff / (dE * dE + lam_eff * lam_eff)
 

@@ -257,9 +257,37 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
             if np.any(mask):
                 T_plot = T[mask]
                 gm_plot = gm[mask]
-                T_valid.extend(T_plot)
-                gamma_valid.extend(gm_plot)
                 
+                # Sort by temperature to detect gaps
+                sort_idx = np.argsort(T_plot)
+                T_plot = T_plot[sort_idx]
+                gm_plot = gm_plot[sort_idx]
+                
+                # Detect gaps: break line if gap > 10^1 (i.e., ratio > 10)
+                gap_threshold = 10.0  # Break if T[i+1] / T[i] > 10
+                if len(T_plot) > 1:
+                    T_ratios = T_plot[1:] / T_plot[:-1]
+                    gap_indices = np.where(T_ratios > gap_threshold)[0]
+                    
+                    if len(gap_indices) > 0:
+                        # Split into segments at gaps
+                        segments = []
+                        start = 0
+                        for gap_idx in gap_indices:
+                            end = gap_idx + 1
+                            segments.append((T_plot[start:end], gm_plot[start:end]))
+                            start = end
+                        # Add final segment
+                        if start < len(T_plot):
+                            segments.append((T_plot[start:], gm_plot[start:]))
+                    else:
+                        # No gaps, single segment
+                        segments = [(T_plot, gm_plot)]
+                else:
+                    # Single point or empty
+                    segments = [(T_plot, gm_plot)] if len(T_plot) > 0 else []
+                
+                # Plot each segment separately
                 color, alpha = get_color_and_alpha(m_int, max_m)
                 linestyle = '-' if m_int <= 1 else '-'
                 # Use thinner lines for red (even) modes to improve separation when close
@@ -270,14 +298,22 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
                     linewidth = 1.3  # Thinner for red (even) modes
                 else:
                     linewidth = 2.0  # Thicker for blue (odd) modes
-                if m_int <= 1:
-                    # For m=0, m=1: label as relaxing modes
-                    label = fr"$m={m_int}$ (relax)" if m_int in [0, 1] else fr"$m={m_int}$"
-                    ax.loglog(T_plot, gm_plot, label=label, 
-                             linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
-                else:
-                    ax.loglog(T_plot, gm_plot, #label=fr"$m={m_int}$", 
-                                 linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
+                
+                # Plot first segment with label (if applicable), rest without
+                for seg_idx, (T_seg, gm_seg) in enumerate(segments):
+                    if len(T_seg) > 0:
+                        T_valid.extend(T_seg)
+                        gamma_valid.extend(gm_seg)
+                        
+                        if m_int <= 1 and seg_idx == 0:
+                            # For m=0, m=1: label as relaxing modes (only first segment)
+                            label = fr"$m={m_int}$" if m_int in [0, 1] else fr"$m={m_int}$"
+                            ax.loglog(T_seg, gm_seg, label=label, 
+                                     linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
+                        else:
+                            # Subsequent segments or m>=2: no label
+                            ax.loglog(T_seg, gm_seg, 
+                                     linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
 
     # Add T^2 and T^4 reference lines
     # Normalize to match a typical data point for visual reference
@@ -311,9 +347,9 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
             # T^4 reference: C_T4 * T^4
             ref_T4 = C_T4 * (T_ref ** 4)
             
-            ax.loglog(T_ref, ref_T1, ':', color='darkgreen', linewidth=1.5, alpha=0.8, label=r"$\propto T^1$")
-            ax.loglog(T_ref, ref_T2, '--', color='darkblue', linewidth=1.5, alpha=0.8, label=r"$\propto T^2$")
-            ax.loglog(T_ref, ref_T4, '-.', color='darkred', linewidth=1.5, alpha=0.8, label=r"$\propto T^4$")
+            ax.loglog(T_ref, ref_T1, ':', color='darkgreen', linewidth=3.5, alpha=0.8, label=r"$\propto T^1$")
+            ax.loglog(T_ref, ref_T2, '--', color='darkblue', linewidth=3.5, alpha=0.8, label=r"$\propto T^2$")
+            ax.loglog(T_ref, ref_T4, '-.', color='darkred', linewidth=3.5, alpha=0.8, label=r"$\propto T^4$")
 
     # Set limits based on data curves only (not reference lines)
     if len(T_valid) > 0 and len(gamma_valid) > 0:
@@ -357,8 +393,8 @@ def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None):
     # Reference lines for T^2 and T^4 scaling
     T_ref = T[np.isfinite(T) & (T > 0)]
     if len(T_ref) > 0:
-        ax.axhline(y=2.0, color='blue', linestyle='--', linewidth=1.0, alpha=0.5, label=r"$T^2$ scaling")
-        ax.axhline(y=4.0, color='red', linestyle='-.', linewidth=1.0, alpha=0.5, label=r"$T^4$ scaling")
+        ax.axhline(y=2.0, color='red', linestyle='--', linewidth=1.0, alpha=0.5, label=r"$T^2$")
+        ax.axhline(y=4.0, color='blue', linestyle='-.', linewidth=1.0, alpha=0.5, label=r"$T^4$")
     
     for m in modes:
         m_int = int(m)
@@ -411,7 +447,7 @@ def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None):
     
     ax.set_xlabel(r"Temperature, $T/T_F$")
     ax.set_ylabel(r"Local scaling exponent, $\frac{d\log(\gamma_m)}{d\log(T)}$")
-    ax.set_ylim([0, 6])  # Reasonable range for exponents (0 to 6)
+    ax.set_ylim([-1, 5])  # Reasonable range for exponents (0 to 6)
     ax.legend(loc='best', fontsize=12)
     ax.grid(True, alpha=0.3, linestyle='--')
     
