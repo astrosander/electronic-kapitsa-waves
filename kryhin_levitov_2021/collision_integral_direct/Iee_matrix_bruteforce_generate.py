@@ -181,7 +181,7 @@ VERIFY_ASYMPTOTICS = True#True#False  # Set to True to run only the two asymptot
 if VERIFY_ASYMPTOTICS:
     # Low-T window: Gurzhi / Fermi-liquid regime (Θ ≪ 1) where γ ∝ Θ²
     # High-T window: Planckian / Sachdev regime (Θ ≫ 1) where γ ∝ Θ
-    Thetas=np.geomspace(5e-2, 1.5, 10)
+    Thetas=np.geomspace(2e-2, 2e-1, 20)
     # Thetas = (np.geomspace(2e-3, 5e-2, 10).tolist()   # Gurzhi window
     #           + np.geomspace(1.5, 6.0, 10).tolist())  # Planckian window
 else:
@@ -398,11 +398,13 @@ if USE_NUMBA:
     def assemble_rows_numba_active(Ma, nx, ny, idx_map, half, eps, f,
                                    active, pos, dp, lam_eff, pref, dimless_scale):
         """
-        Assemble CLOSED active-subspace operator Ma (shape Nactive x Nactive).
-        NOTE: This implements a closed operator on the active subspace:
+        Assemble active-subspace operator Ma (shape Nactive x Nactive).
+        NOTE: This implements an operator on the active subspace with out-scattering:
           - row index i1 is active (output restricted to active)
           - columns correspond to active eta only
-          - requires i2' to be active (skip event if i2' is inactive) => closed operator
+          - allows out-scattering: if 2' is inactive, we still include loss terms (-eta_1 - eta_2)
+            but only add gain term (+eta_2') if 2' is active
+          - This is more physics-correct than dropping events entirely when 2' is inactive
 
         Parallel over active-row index a1: safe because only writes into row a1.
         """
@@ -443,11 +445,11 @@ if USE_NUMBA:
                     if i2p < 0:
                         continue
 
-                    # Require 2' active => closed operator on active subspace
-                    a2p = pos[i2p]
-                    if a2p < 0:
-                        continue
-
+                    # PATCH: allow out-scattering from active subspace (don't drop events when 2' is inactive)
+                    # This is more physics-correct: scattering out of active manifold still contributes to relaxation
+                    a2p = pos[i2p]  # may be -1 (inactive)
+                    
+                    # Get e2p, f2p even if 2' is inactive (needed for energy conservation and Pauli factor)
                     e2p = eps[i2p]
                     f2p = f[i2p]
 
@@ -463,8 +465,12 @@ if USE_NUMBA:
                     W = pref * dimless_scale * F * delta_eps * dp4
 
                     # (eta_{1'} + eta_{2'} - eta_1 - eta_2)
+                    # Keep loss terms always (out-scattering contributes to relaxation)
+                    # Keep gain term for 1' (always active by construction)
+                    # Keep gain term for 2' only if active
                     Ma[a1, a1p] += W
-                    Ma[a1, a2p] += W
+                    if a2p >= 0:
+                        Ma[a1, a2p] += W
                     Ma[a1, a1]  -= W
                     Ma[a1, a2]  -= W
 
@@ -477,12 +483,19 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
     # Temperature-following active shell
     active = active_indices(f, eps_dim, k, Theta, ACTIVE_CUTOFF, dp_T)
     Nstates = nx.size
-    Nactive = int(active.size)
+    Nactive_raw = int(active.size)
+    Nactive = Nactive_raw
     
     # Belt and suspenders: ensure Nactive <= NACTIVE_MAX (shouldn't happen after exact-topK fix)
+    active_capped = False
     if Nactive > NACTIVE_MAX:
         active = active[:NACTIVE_MAX]
         Nactive = NACTIVE_MAX
+        active_capped = True
+    
+    # Diagnostic: log active set size and capping (helps identify numerical floors)
+    print(f"  [diag-active] active_raw={Nactive_raw} active_final={Nactive} "
+          f"capped={active_capped} (NACTIVE_MAX={NACTIVE_MAX})")
     
     # Diagnostic: actual pmax reached by the grid (account for half-step)
     pmax = (float(half) - 0.5) * float(dp_T)
@@ -490,9 +503,27 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
     print(f"Theta={Theta:.6g}  Nmax={Nmax_T}  dp={dp_T:.6g}  "
           f"Nstates={Nstates}  Nactive={Nactive}  USE_NUMBA={USE_NUMBA}  ACTIVE_ONLY={BUILD_ACTIVE_ONLY}  pmax={pmax:.4f}")
     
+    # Diagnostic: check if dp hit a cap (helps identify numerical floors)
+    dp_hit_ring_cap = False
+    if THETA_CROSSOVER is not None and Theta < THETA_CROSSOVER:
+        if DP_RING_MAX is not None:
+            dp_from_pixel = math.sqrt(Theta / PIXEL_RATIO_LOW)
+            if dp_from_pixel > DP_RING_MAX and not PRIORITIZE_SIZE_OVER_RING:
+                dp_hit_ring_cap = True
+    if dp_hit_ring_cap:
+        print(f"  [diag-dp] dp hit DP_RING_MAX={DP_RING_MAX:.3e} cap")
+    
     # Info when capped
     if Nactive == NACTIVE_MAX:
         print(f"  [info] active set capped at NACTIVE_MAX={NACTIVE_MAX}")
+    
+    # Diagnostic: check if dp hit a cap (helps identify numerical floors)
+    dp_hit_ring_cap = False
+    if Theta < THETA_CROSSOVER and DP_RING_MAX is not None:
+        dp_from_pixel = math.sqrt(Theta / PIXEL_RATIO_LOW)
+        if dp_from_pixel > DP_RING_MAX and not PRIORITIZE_SIZE_OVER_RING:
+            dp_hit_ring_cap = True
+            print(f"  [diag-dp] dp hit DP_RING_MAX={DP_RING_MAX:.3e} cap (would be {dp_from_pixel:.3e} without cap)")
     
     if pmax < 1.05 * kF:
         print(f"WARNING: pmax={pmax:.4f} < {1.05*kF:.4f} (1.05*kF). Grid misses FS -> garbage.")
@@ -520,12 +551,18 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
     # dp floor should be in ENERGY units: δε ~ v_typ * dp
     # Use vF (already computed from band parameters)
     v_typ = vF / MU_BAND  # dimensionless velocity at Fermi surface
-    lam_dp = LAMBDA_DP_REL * v_typ * dp_T
+    lam_dp_raw = LAMBDA_DP_REL * v_typ * dp_T
+    lam_dp_cap = LAMBDA_DP_CAP_REL * Theta
+    lam_dp = min(lam_dp_raw, lam_dp_cap)
     
-    # Cap dp-floor so it can't dominate at high T (prevents energy nonconservation)
-    lam_dp = min(lam_dp, LAMBDA_DP_CAP_REL * Theta)
+    lam_eff_dim = max(lam_T, lam_dp, LAMBDA_MIN)
+    # PATCH: convert lambda from dimensionless (eps_dim units) to physical energy units
+    # This is critical for μ≠1 cases (e.g., μ=U with μ≠1)
+    lam_eff = lam_eff_dim * MU_BAND
     
-    lam_eff = max(lam_T, lam_dp, LAMBDA_MIN)
+    # Diagnostic: log what's driving lambda (helps identify numerical floors)
+    print(f"  [diag-lambda] lam_T={lam_T:.3e} lam_dp_raw={lam_dp_raw:.3e} "
+          f"lam_dp_cap={lam_dp_cap:.3e} lam_dp={lam_dp:.3e} lam_eff_dim={lam_eff_dim:.3e} lam_eff={lam_eff:.3e}")
 
     if BUILD_ACTIVE_ONLY:
         Ma = np.zeros((Nactive, Nactive), dtype=np.float64)
@@ -560,12 +597,10 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
                         i2p = int(idx_map[ix, iy])
                         if i2p < 0:
                             continue
-                        a2p = int(pos[i2p])
-                        # Require 2' active => closed operator on active subspace
-                        if a2p < 0:
-                            continue
-
-                        # PATCH: eps is eps_phys in this scope (eps was undefined)
+                        a2p = int(pos[i2p])  # may be -1 (inactive)
+                        
+                        # PATCH: allow out-scattering from active subspace (don't drop events when 2' is inactive)
+                        # Get e2p, f2p even if 2' is inactive (needed for energy conservation and Pauli factor)
                         e2p, f2p = float(eps_phys[i2p]), float(f[i2p])
                         dE = e1 + e2 - e1p - e2p
                         delta_eps = (1.0 / math.pi) * lam_eff / (dE * dE + lam_eff * lam_eff)
@@ -576,8 +611,13 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
                         F = 0.5 * (F_fwd + F_bwd)
                         W = pref * dimless_scale * F * delta_eps * dp4
 
+                        # (eta_{1'} + eta_{2'} - eta_1 - eta_2)
+                        # Keep loss terms always (out-scattering contributes to relaxation)
+                        # Keep gain term for 1' (always active by construction)
+                        # Keep gain term for 2' only if active
                         Ma[a1, a1p] += W
-                        Ma[a1, a2p] += W
+                        if a2p >= 0:
+                            Ma[a1, a2p] += W
                         Ma[a1, a1]  -= W
                         Ma[a1, a2]  -= W
 
@@ -600,7 +640,8 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
         "half": int(half),
         "dp": float(dp_T),
         "pmax": float(pmax),
-        "lambda": float(lam_eff),
+        "lambda": float(lam_eff),              # physical energy units
+        "lambda_dim": float(lam_eff_dim),      # dimensionless (eps_dim units)
         "V2": float(V2),
         "hbar": float(HBAR),
         "include_dimless_pref": bool(INCLUDE_DIMLESS_PREF),
