@@ -72,16 +72,20 @@ DP_ANCHOR_LOW_BASE    = 0.03
 THETA_ANCHOR_HIGH = 0.3
 DP_ANCHOR_HIGH_BASE    = 0.085        # adjusted to target ~20MB at Theta=0.3
 THETA_CROSSOVER   = 0.1          # switch between anchors at this temperature
+# FIX B3: Smooth transition width to avoid abrupt regime change
+THETA_CROSSOVER_WIDTH = 0.03     # smooth transition over ~[0.07, 0.13]
 
-DP_RING_MAX_BASE  = 0.03         # preferred cap for ring detail (only applies to low-T)
+DP_RING_MAX_BASE  = 0.06         # preferred cap for ring detail (only applies to low-T, harmless if PRIORITIZE_SIZE_OVER_RING=True)
 DP_FLOOR     = 1e-4         # safety
 # If True: allow dp to exceed DP_RING_MAX to keep file size constant
 # If False: enforce DP_RING_MAX strictly (prioritize ring detail over size)
-PRIORITIZE_SIZE_OVER_RING = False
+# FIX B2: Enable to prevent dp cap from creating regime switch in verification window
+PRIORITIZE_SIZE_OVER_RING = True
 
 # PATCH (recommended): keep angular sampling comparable across different kF
 # Scale dp anchors by (kF / K_F_REF). For μ=U=1 you get kF≈1.732, so dp gets ~0.378x smaller.
-SCALE_DP_WITH_KF = True
+# FIX B1: Disabled for now - was over-aggressive and causing NACTIVE_MAX saturation
+SCALE_DP_WITH_KF = False
 K_F_REF = 4.582576  # reference kF from your legacy μ=1, U=10, v=1 runs
 
 # ------------------------- LOW-T BOX VALIDITY -------------------------
@@ -99,7 +103,8 @@ THETA_PBOX_SWITCH = 1e-3
 # Reduced from 3.0 to 1.5 to keep Nactive manageable (runtime-safe range: 1.2–1.8)
 RING_PIXEL_BOOST = 1.5      # reduced from 3.0 to prevent Nactive explosion
 RING_SHELL_TIGHTEN = 0.45   # tighter ring (suppresses bulk contamination)
-RING_FLOOR_DP_MULT = 0.65   # ring thickness floor multiplier (was effectively 2.5; 0.6–1.0 is safe)
+# FIX B4: Reduced to help keep Nactive under control
+RING_FLOOR_DP_MULT = 0.35   # ring thickness floor multiplier (was 0.65; smaller = tighter ring = fewer active states)
 
 # Compute pixel ratios for both regions (will be recomputed after kF is known if SCALE_DP_WITH_KF is True)
 # These are placeholders; actual values computed after band-init
@@ -196,7 +201,8 @@ else:
 # print(Thetas)
 
 # Hard cap to avoid "runs forever" - runtime scales roughly O(Nactive^3)
-NACTIVE_MAX = 4500   # try 3000–5000 on your CPU (was 6000)
+# FIX B4: Raised to prevent saturation in verification window
+NACTIVE_MAX = 12000  # try 3000–5000 on your CPU (was 6000, raised to 12000 to prevent plateau)
 
 # active-shell cutoff: only include states where f(1-f) > cutoff
 # Increased slightly to help reduce Nactive at ultra-low T (optional: try 1e-7 or 3e-7 if needed)
@@ -273,28 +279,36 @@ def pbox_for_theta(theta: float) -> float:
     return max(PBOX_MIN_HIGH, kF + dk)
 
 
+def smoothstep01(t: float) -> float:
+    """Smoothstep function: maps [0,1] -> [0,1] with smooth S-curve."""
+    # clamp to [0,1] then smoothstep
+    t = 0.0 if t < 0.0 else (1.0 if t > 1.0 else t)
+    return t * t * (3.0 - 2.0 * t)
+
+
 def choose_dp(theta: float) -> float:
     """
     Choose dp to keep Theta/dp^2 constant (constant ring pixels / Nactive).
     Uses piecewise anchors: low-T (0.01-0.1) and high-T (0.1-1) regions.
+    FIX B3: Smoothly blends between anchors around THETA_CROSSOVER to avoid abrupt regime change.
     If PRIORITIZE_SIZE_OVER_RING is True, allows dp to exceed DP_RING_MAX to maintain size.
     """
     theta_val = float(theta)
     pbox = pbox_for_theta(theta_val)
     
-    # Choose anchor based on temperature range
-    if theta_val < THETA_CROSSOVER:
-        # Low-T region: use low-T anchor
-        pixel_ratio = PIXEL_RATIO_LOW
-        dp_T = math.sqrt(theta_val / pixel_ratio)
-        # Apply ring cap only if prioritizing ring detail over size
-        if DP_RING_MAX is not None and not PRIORITIZE_SIZE_OVER_RING:
-            dp_T = min(dp_T, float(DP_RING_MAX))
+    # FIX B3: Smooth blend between pixel ratios around THETA_CROSSOVER
+    if THETA_CROSSOVER_WIDTH > 0:
+        t = (theta_val - THETA_CROSSOVER) / THETA_CROSSOVER_WIDTH
+        s = smoothstep01(0.5 + 0.5 * t)  # maps theta=crossover to s=0.5
     else:
-        # High-T region: use high-T anchor
-        pixel_ratio = PIXEL_RATIO_HIGH
-        dp_T = math.sqrt(theta_val / pixel_ratio)
-        # No ring cap for high-T (dp is already large)
+        s = 0.0 if theta_val < THETA_CROSSOVER else 1.0
+    
+    pixel_ratio = (1.0 - s) * PIXEL_RATIO_LOW + s * PIXEL_RATIO_HIGH
+    dp_T = math.sqrt(theta_val / pixel_ratio)
+    
+    # Only apply ring cap if you explicitly prioritize ring detail (and in low-T region)
+    if (not PRIORITIZE_SIZE_OVER_RING) and (theta_val < THETA_CROSSOVER) and (DP_RING_MAX is not None):
+        dp_T = min(dp_T, float(DP_RING_MAX))
     
     # --- CRITICAL: ensure the box can actually contain the required momentum range ---
     # If dp is too small, choose_Nmax(dp) would demand Nmax > NMAX_MAX, then clamp happens,

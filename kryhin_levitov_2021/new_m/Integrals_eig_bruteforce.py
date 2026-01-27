@@ -264,7 +264,7 @@ def compute_eigenvalue_from_eigenfunction(Ma, meta, eigenfunction, m):
     return float(gamma)
 
 
-def verify_asymptotics(Thetas, eigs, modes=(2, 3, 4, 0), low_max=5e-2, high_min=1.5):
+def verify_asymptotics(Thetas, eigs, modes=(2, 3, 4, 0), low_max=0.07, high_min=1.5):
     """
     Verify asymptotic scaling behavior of eigenvalues.
     
@@ -433,7 +433,7 @@ def main():
         verify_modes.append("m0r")
     if has_m1r:
         verify_modes.append("m1r")
-    verify_asymptotics(Thetas, eigs, modes=verify_modes, low_max=5e-2, high_min=1.5)
+    verify_asymptotics(Thetas, eigs, modes=verify_modes, low_max=0.07, high_min=1.5)
     
     # ---- Plot eigenvalues as in original script (Figure-1 style) ----
     f10, ax10 = plt.subplots(figsize=(8*0.9, 6*0.9))
@@ -804,6 +804,34 @@ def project_out(u, basis, w):
     return u
 
 
+def apply_W_projector(v, Q, w):
+    """
+    Project v to the W-orthogonal complement of columns of Q.
+    Q: (n,r) matrix, w: (n,) weights
+    Returns v_perp such that v_perp is W-orthogonal to all columns of Q.
+    """
+    v = v.astype(np.float64, copy=False)
+    w = w.astype(np.float64, copy=False)
+    # Gram G = Q^T W Q
+    WQ = w[:, None] * Q
+    G = Q.T @ WQ
+    # Solve G a = Q^T W v
+    rhs = Q.T @ (w * v)
+    try:
+        a = np.linalg.solve(G, rhs)
+        return v - Q @ a
+    except np.linalg.LinAlgError:
+        # If G is singular, fall back to iterative projection
+        v_perp = v.copy()
+        for i in range(Q.shape[1]):
+            q = Q[:, i]
+            qw = w * q
+            qnorm_sq = np.dot(q, qw)
+            if qnorm_sq > 1e-300:
+                v_perp -= (np.dot(v_perp, qw) / qnorm_sq) * q
+        return v_perp
+
+
 def w_orthonormalize(vecs, w, remove_basis=None):
     """
     W-orthonormalize a list of vectors, optionally removing projection onto a basis.
@@ -955,13 +983,44 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     print(f"  [sanity] ||A py||/||py|| = {Apy_norm/(py_norm + 1e-30):.3e}")
     
     # --- Compute invariants using Rayleigh quotient ---
+    # FIX C: With out-scattering, invariants are not exactly conserved in the truncated operator.
+    # Project each invariant vector out of the OTHER invariants before computing Rayleigh quotients.
+    # This gives the "true conservation rate" (should be ~0 if operator is closed).
     dens_vec = np.ones(n, dtype=np.float64)
     eps_phys = eps_dim * MU_BAND  # physical energy
     
-    gamma_dens = rayleigh_gamma(A, w_safe, dens_vec)
-    gamma_px   = rayleigh_gamma(A, w_safe, px)
-    gamma_py   = rayleigh_gamma(A, w_safe, py)
-    gamma_eps  = rayleigh_gamma(A, w_safe, eps_phys)
+    # Project each invariant out of the others:
+    # dens_vec_p: density projected out of [px, py, eps_phys]
+    # px_vec_p: px projected out of [dens_vec, py, eps_phys]
+    # etc.
+    Q_dens = np.column_stack([px.copy(), py.copy()])
+    eps_mean = wdot(dens_vec, eps_phys, w_safe) / max(wdot(dens_vec, dens_vec, w_safe), 1e-300)
+    eps_centered = (eps_phys - eps_mean).astype(np.float64)
+    eps_norm_sq = wdot(eps_centered, eps_centered, w_safe)
+    if eps_norm_sq > 1e-20:
+        Q_dens = np.column_stack([Q_dens, eps_centered])
+    
+    Q_px = np.column_stack([dens_vec, py.copy()])
+    if eps_norm_sq > 1e-20:
+        Q_px = np.column_stack([Q_px, eps_centered])
+    
+    Q_py = np.column_stack([dens_vec, px.copy()])
+    if eps_norm_sq > 1e-20:
+        Q_py = np.column_stack([Q_py, eps_centered])
+    
+    Q_eps = np.column_stack([dens_vec, px.copy(), py.copy()])
+    
+    # Project out other invariants
+    dens_vec_p = apply_W_projector(dens_vec, Q_dens, w_safe) if Q_dens.shape[1] > 0 else dens_vec
+    px_vec_p   = apply_W_projector(px, Q_px, w_safe) if Q_px.shape[1] > 0 else px
+    py_vec_p   = apply_W_projector(py, Q_py, w_safe) if Q_py.shape[1] > 0 else py
+    eps_vec_p  = apply_W_projector(eps_phys, Q_eps, w_safe) if Q_eps.shape[1] > 0 else eps_phys
+    
+    # These should now be ~0 if the operator is closed (true conservation rates)
+    gamma_dens = rayleigh_gamma(A, w_safe, dens_vec_p)
+    gamma_px   = rayleigh_gamma(A, w_safe, px_vec_p)
+    gamma_py   = rayleigh_gamma(A, w_safe, py_vec_p)
+    gamma_eps  = rayleigh_gamma(A, w_safe, eps_vec_p)
     
     # Compute velocity/current decay rates (diagnostics for non-parabolic bands)
     vx, vy = band_velocity(px, py, meta)

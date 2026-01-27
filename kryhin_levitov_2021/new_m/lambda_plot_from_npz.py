@@ -293,7 +293,7 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
                 # Use thinner lines for red (even) modes to improve separation when close
                 # Keep thicker lines for blue (odd) modes and special modes
                 if m_int <= 1:
-                    linewidth = 3.5#1.8
+                    linewidth = 1.5#1.8
                 elif m_int % 2 == 0:
                     linewidth = 1.3  # Thinner for red (even) modes
                 else:
