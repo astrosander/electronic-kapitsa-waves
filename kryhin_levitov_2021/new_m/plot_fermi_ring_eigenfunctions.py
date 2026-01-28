@@ -120,41 +120,62 @@ def active_px_py(meta: dict):
 
 # ----------------------- weighted inner product and projections -----------------------
 
-def wdot(w: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
-    return float(np.sum(w * a * b))
+def wdot(w: np.ndarray, a: np.ndarray, b: np.ndarray):
+    """Complex-safe W-weighted inner product: <a, b>_W = a^H (W b)"""
+    return np.vdot(a, w * b)
 
 
 def wnorm(w: np.ndarray, a: np.ndarray) -> float:
-    return float(np.sqrt(max(wdot(w, a, a), 0.0)))
+    """W-norm: sqrt(<a, a>_W)"""
+    return float(np.sqrt(max(wdot(w, a, a).real, 0.0)))
+
+
+def normalize_w(w: np.ndarray, v: np.ndarray) -> np.ndarray:
+    """Normalize v in W-norm"""
+    n = np.sqrt(wdot(w, v, v).real) + 1e-300
+    return v / n
+
+
+def wortho_columns(w: np.ndarray, B: np.ndarray, eps: float = 1e-14):
+    """
+    W-orthonormalize columns of B using modified Gram-Schmidt.
+    Returns Q such that Q^H W Q = I (columns are W-orthonormal).
+    """
+    if B is None or B.size == 0:
+        return np.zeros((B.shape[0] if B is not None else 0, 0), dtype=np.complex128)
+    
+    Q = []
+    for i in range(B.shape[1]):
+        v = B[:, i].astype(np.complex128, copy=True)
+        # Project out previous columns
+        for q in Q:
+            v -= wdot(w, q, v) * q  # since q is W-orthonormal
+        n = np.sqrt(wdot(w, v, v).real)
+        if n > eps:
+            Q.append(v / n)
+    return np.column_stack(Q) if Q else np.zeros((B.shape[0], 0), dtype=np.complex128)
+
+
+def project_out_w_orthonormal(w: np.ndarray, v: np.ndarray, Q: Optional[np.ndarray]) -> np.ndarray:
+    """
+    Project v to be W-orthogonal to columns of Q (which are W-orthonormal).
+    If Q^H W Q = I, then projection is: v <- v - Q (Q^H (W v))
+    """
+    if Q is None or Q.size == 0:
+        return v
+    return v - Q @ (Q.conj().T @ (w * v))
 
 
 def project_out_subspace(w: np.ndarray, v: np.ndarray, B: np.ndarray) -> np.ndarray:
     """
     Project v to be W-orthogonal to columns of B (N x k).
-    Uses normal equations: c = (B^T W B)^{-1} (B^T W v), then v <- v - B c.
+    DEPRECATED: Use wortho_columns + project_out_w_orthonormal for stability.
+    Kept for backward compatibility.
     """
     if B is None or B.size == 0:
         return v
-
-    k = B.shape[1]
-    G = np.zeros((k, k), dtype=np.float64)
-    rhs = np.zeros((k,), dtype=np.float64)
-
-    for i in range(k):
-        rhs[i] = wdot(w, B[:, i], v)
-        for j in range(k):
-            G[i, j] = wdot(w, B[:, i], B[:, j])
-
-    G = G + 1e-14 * np.eye(k)
-    c = np.linalg.solve(G, rhs)
-    return v - B @ c
-
-
-def normalize_w(w: np.ndarray, v: np.ndarray) -> np.ndarray:
-    n = wnorm(w, v)
-    if n <= 0:
-        return v
-    return v / n
+    Q = wortho_columns(w, B)
+    return project_out_w_orthonormal(w, v, Q)
 
 
 # ----------------------- decay-rate diagnostics (Rayleigh quotient) -----------------------
@@ -162,15 +183,16 @@ def normalize_w(w: np.ndarray, v: np.ndarray) -> np.ndarray:
 def gamma_rayleigh(A: csr_matrix, w: np.ndarray, eta: np.ndarray) -> float:
     """
     For the generalized problem A v = gamma W v, with W=diag(w),
-    Rayleigh quotient gamma(eta) = (eta^T A eta) / (eta^T W eta).
-    Here A = (-Iee).
+    Rayleigh quotient gamma(eta) = (eta^H A eta) / (eta^H W eta).
+    Here A = (-Iee). Uses complex-safe vdot.
     """
-    num = float(np.real(np.dot(eta, A @ eta)))
-    den = float(np.real(np.dot(eta, w * eta)))
+    num = np.vdot(eta, A @ eta).real
+    den = np.vdot(eta, w * eta).real
     return num / (den + 1e-300)
 
 
 def residual_rel(A: csr_matrix, w: np.ndarray, v: np.ndarray, gamma: float) -> float:
+    """Relative residual for eigenpair: ||A v - gamma W v|| / ||A v||"""
     r = (A @ v) - gamma * (w * v)
     denom = np.linalg.norm(A @ v) + 1e-300
     return float(np.linalg.norm(r) / denom)
@@ -189,25 +211,47 @@ def solve_generalized_eigs(Iee: csr_matrix,
     No symmetry assumptions; uses ARPACK via scipy.sparse.linalg.eigs.
 
     Shift-invert with sigma=0.0 typically returns eigenvalues closest to 0 (long-lived).
+    Handles complex eigenvalues properly and sorts by distance to sigma.
     """
     A = (-Iee).astype(np.float64).tocsr()
     w = w_active.astype(np.float64)
 
-    if np.any(w <= 0):
-        raise ValueError("w_active must be strictly positive for a valid mass matrix W.")
+    # Mask out very small weights to avoid numerical issues
+    wmin = 1e-18
+    keep = w > wmin
+    if not np.all(keep):
+        print(f"Warning: masking {np.sum(~keep)} points with w <= {wmin}")
+        A = A[keep][:, keep]
+        w = w[keep]
 
     W = diags(w, 0, format="csr")
 
     k = int(min(max(2, nev), A.shape[0] - 2))
     vals, vecs = eigs(A, M=W, k=k, sigma=sigma, which="LM", tol=tol, maxiter=maxiter)
 
-    gam = np.real(vals)
-    vecs = np.real(vecs)
+    # Check if imaginary parts are negligible
+    max_imag_gam = np.max(np.abs(np.imag(vals)))
+    max_imag_vecs = np.max([np.linalg.norm(np.imag(vecs[:, j])) for j in range(vecs.shape[1])])
+    
+    if max_imag_gam < 1e-12 and max_imag_vecs < 1e-10:
+        gam = np.real(vals)
+        vecs = np.real(vecs)
+    else:
+        print(f"Warning: non-negligible imaginary parts: max|imag(gam)|={max_imag_gam:.2e}, max|imag(vecs)|={max_imag_vecs:.2e}")
+        gam = vals
+        # Keep vecs complex
 
-    order = np.argsort(gam)
+    # Sort by distance to sigma (not by real part)
+    order = np.argsort(np.abs(vals - sigma))
     gam = gam[order]
     vecs = vecs[:, order]
-    return gam, vecs, A
+    
+    # Normalize eigenvectors once in W-norm
+    for j in range(vecs.shape[1]):
+        n = np.sqrt(wdot(w, vecs[:, j], vecs[:, j]).real) + 1e-300
+        vecs[:, j] = vecs[:, j] / n
+    
+    return gam, vecs, A, keep
 
 
 # ----------------------- targets: conserved and current -----------------------
@@ -257,23 +301,40 @@ def build_targets(meta: dict, px, py, P, theta):
 
 # ----------------------- mode labeling by angular harmonics -----------------------
 
-def harmonic_score(w: np.ndarray, v: np.ndarray, theta: np.ndarray, m: int) -> float:
+def harmonic_score(w: np.ndarray, v: np.ndarray, theta: np.ndarray, P: np.ndarray, m: int, 
+                   ring_width: Optional[float] = None) -> float:
     """
     Score overlap with cos(mθ) and sin(mθ) under W-inner product.
     Returns max(|<v,cos>|, |<v,sin>|) normalized by norms.
     For m=0 uses only cos(0)=1.
+    
+    If ring_width is provided, restricts scoring to points with |P-1| < ring_width
+    to focus on the Fermi ring and avoid radial structure contamination.
     """
+    if ring_width is not None:
+        mask_ring = np.abs(P - 1.0) < ring_width
+        if np.sum(mask_ring) == 0:
+            # Fallback if mask is empty
+            mask_ring = np.ones_like(P, dtype=bool)
+        w_ring = w[mask_ring]
+        v_ring = v[mask_ring]
+        theta_ring = theta[mask_ring]
+    else:
+        w_ring = w
+        v_ring = v
+        theta_ring = theta
+    
     if m == 0:
-        b = np.ones_like(theta, dtype=np.float64)
-        return abs(wdot(w, v, b)) / (wnorm(w, v) * wnorm(w, b) + 1e-300)
+        b = np.ones_like(theta_ring, dtype=np.complex128)
+        return abs(wdot(w_ring, v_ring, b)) / (wnorm(w_ring, v_ring) * wnorm(w_ring, b) + 1e-300)
 
-    c = np.cos(m * theta)
-    s = np.sin(m * theta)
-    nv = wnorm(w, v)
-    nc = wnorm(w, c)
-    ns = wnorm(w, s)
-    sc = abs(wdot(w, v, c)) / (nv * nc + 1e-300)
-    ss = abs(wdot(w, v, s)) / (nv * ns + 1e-300)
+    c = np.cos(m * theta_ring).astype(np.complex128)
+    s = np.sin(m * theta_ring).astype(np.complex128)
+    nv = wnorm(w_ring, v_ring)
+    nc = wnorm(w_ring, c)
+    ns = wnorm(w_ring, s)
+    sc = abs(wdot(w_ring, v_ring, c)) / (nv * nc + 1e-300)
+    ss = abs(wdot(w_ring, v_ring, s)) / (nv * ns + 1e-300)
     return float(max(sc, ss))
 
 
@@ -282,58 +343,70 @@ def pick_mode_for_m(gam: np.ndarray,
                     A: csr_matrix,
                     w: np.ndarray,
                     theta: np.ndarray,
+                    P: np.ndarray,
                     m: int,
-                    Bproj: Optional[np.ndarray],
-                    score_min: float = 0.35):
+                    Qproj: Optional[np.ndarray],
+                    score_min: float = 0.35,
+                    ring_width: Optional[float] = None):
     """
     Pick the smallest-gamma mode with good harmonic score at this m,
-    after projecting candidates to be W-orthogonal to Bproj (optional).
+    after projecting candidates to be W-orthogonal to Qproj (optional, W-orthonormal).
 
-    Returns: (gamma_est, vec, score, resid)
-    gamma_est is recomputed via Rayleigh quotient for stability.
+    Returns: (gamma, vec, score, resid)
+    gamma is the actual eigenvalue (not Rayleigh quotient).
+    resid is computed on the original eigenvector (not projected).
     """
     best_j = None
     best_gamma = None
     best_score = -1.0
     best_v = None
 
-    # rank candidates by increasing gamma, try those first
-    order = np.argsort(gam)
+    # rank candidates by increasing gamma (real part if complex)
+    gam_real = np.real(gam)
+    order = np.argsort(gam_real)
 
     for j in order:
-        v = vecs[:, j].copy()
-        if Bproj is not None:
-            v = project_out_subspace(w, v, Bproj)
+        v_orig = vecs[:, j]  # original eigenvector
+        v = v_orig.copy()
+        
+        # Project for scoring only (don't modify original)
+        if Qproj is not None:
+            v = project_out_w_orthonormal(w, v, Qproj)
         v = normalize_w(w, v)
 
-        sc = harmonic_score(w, v, theta, m)
+        sc = harmonic_score(w, v, theta, P, m, ring_width=ring_width)
         if sc < score_min:
             continue
 
-        g_est = gamma_rayleigh(A, w, v)
+        # Use actual eigenvalue, not Rayleigh quotient
+        g_j = float(np.real(gam[j]))
+        
         # We want the smallest positive decay (closest to 0 but >=0).
         # However allow tiny negative numerical noise.
-        if best_j is None or g_est < best_gamma:
+        if best_j is None or g_j < best_gamma:
             best_j = j
-            best_gamma = g_est
+            best_gamma = g_j
             best_score = sc
-            best_v = v
+            best_v = v_orig  # Keep original for residual check
 
     if best_j is None:
         # fallback: pick by max score regardless of gamma
         for j in range(vecs.shape[1]):
-            v = vecs[:, j].copy()
-            if Bproj is not None:
-                v = project_out_subspace(w, v, Bproj)
+            v_orig = vecs[:, j]
+            v = v_orig.copy()
+            if Qproj is not None:
+                v = project_out_w_orthonormal(w, v, Qproj)
             v = normalize_w(w, v)
-            sc = harmonic_score(w, v, theta, m)
+            sc = harmonic_score(w, v, theta, P, m, ring_width=ring_width)
             if sc > best_score:
                 best_score = sc
-                best_v = v
-                best_gamma = gamma_rayleigh(A, w, v)
+                best_v = v_orig
+                best_gamma = float(np.real(gam[j]))
+        # Compute residual on original eigenvector
         resid = residual_rel(A, w, best_v, best_gamma)
         return best_gamma, best_v, best_score, resid
 
+    # Compute residual on original eigenvector (not projected)
     resid = residual_rel(A, w, best_v, best_gamma)
     return best_gamma, best_v, best_score, resid
 
@@ -343,52 +416,87 @@ def pick_mode_by_target(gam: np.ndarray,
                        A: csr_matrix,
                        w: np.ndarray,
                        target: np.ndarray,
-                       Bproj: Optional[np.ndarray] = None,
+                       Qproj: Optional[np.ndarray] = None,
                        score_min: float = 0.5):
     """
     Choose the smallest-gamma eigenvector that has large W-overlap with 'target'
-    (after optional projection out of Bproj).
+    (after optional projection out of Qproj, which is W-orthonormal).
 
-    Returns: (gamma_est, vec, score, resid)
-    gamma_est is recomputed via Rayleigh quotient for stability.
+    Returns: (gamma, vec, score, resid)
+    gamma is the actual eigenvalue (not Rayleigh quotient).
+    resid is computed on the original eigenvector (not projected).
     """
     t = normalize_w(w, target.copy())
     best = None
+    gam_real = np.real(gam)
 
-    for j in np.argsort(gam):
-        v = vecs[:, j].copy()
-        if Bproj is not None:
-            v = project_out_subspace(w, v, Bproj)
+    for j in np.argsort(gam_real):
+        v_orig = vecs[:, j]  # original eigenvector
+        v = v_orig.copy()
+        
+        # Project for scoring only
+        if Qproj is not None:
+            v = project_out_w_orthonormal(w, v, Qproj)
         v = normalize_w(w, v)
 
         sc = abs(wdot(w, v, t))  # since both W-normalized
         if sc < score_min:
             continue
 
-        g_est = gamma_rayleigh(A, w, v)
-        res = residual_rel(A, w, v, g_est)
+        g_j = float(np.real(gam[j]))  # use actual eigenvalue
+        res = residual_rel(A, w, v_orig, g_j)  # residual on original
 
-        if best is None or g_est < best[0]:
-            best = (g_est, v, sc, res)
+        if best is None or g_j < best[0]:
+            best = (g_j, v_orig, sc, res)  # return original eigenvector
 
     if best is None:
         # fallback: maximum overlap
         best_sc = -1.0
         best_tuple = None
         for j in range(vecs.shape[1]):
-            v = vecs[:, j].copy()
-            if Bproj is not None:
-                v = project_out_subspace(w, v, Bproj)
+            v_orig = vecs[:, j]
+            v = v_orig.copy()
+            if Qproj is not None:
+                v = project_out_w_orthonormal(w, v, Qproj)
             v = normalize_w(w, v)
             sc = abs(wdot(w, v, t))
             if sc > best_sc:
-                g_est = gamma_rayleigh(A, w, v)
-                res = residual_rel(A, w, v, g_est)
+                g_j = float(np.real(gam[j]))
+                res = residual_rel(A, w, v_orig, g_j)
                 best_sc = sc
-                best_tuple = (g_est, v, sc, res)
+                best_tuple = (g_j, v_orig, sc, res)
         return best_tuple
 
     return best
+
+
+def pick_eigenmode_matching_target(gam: np.ndarray,
+                                   vecs: np.ndarray,
+                                   w: np.ndarray,
+                                   target: np.ndarray,
+                                   gamma_min: float = 1e-5):
+    """
+    Choose the eigenvector v_j (UNMODIFIED) that best matches 'target' in W-inner product,
+    skipping near-zero modes with gamma < gamma_min.
+    Returns (j, score).
+    """
+    t = target.copy()
+    t /= (np.sqrt(np.sum(w * t * t)) + 1e-300)
+
+    best_j = None
+    best_sc = -1.0
+
+    for j in range(vecs.shape[1]):
+        if gam[j] < gamma_min:
+            continue
+        v = vecs[:, j]
+        nv = np.sqrt(np.sum(w * v * v)) + 1e-300
+        sc = abs(np.sum(w * v * t)) / nv  # since t is W-normalized
+        if sc > best_sc:
+            best_sc = sc
+            best_j = j
+
+    return best_j, best_sc
 
 
 # ----------------------- plotting -----------------------
@@ -414,8 +522,12 @@ def plot_modes(px, py, modes, Theta, outpath):
     last_sc = None
     for ax, item in zip(axes, modes):
         v = item["vec"]
+        # Take real part for display (imag should be negligible if checked)
+        v = np.real(v)
         v_disp = v / (np.max(np.abs(v)) + 1e-30)
-        norm = TwoSlopeNorm(vcenter=0.0, vmin=float(np.min(v_disp)), vmax=float(np.max(v_disp)))
+        # Use symmetric percentile-based clipping for stability
+        vmax = np.percentile(np.abs(v_disp), 99)
+        norm = TwoSlopeNorm(vcenter=0.0, vmin=-vmax, vmax=vmax)
 
         sc = ax.scatter(px, py, c=v_disp, s=8, cmap="RdBu_r", norm=norm, linewidths=0)
         last_sc = sc
@@ -453,8 +565,8 @@ def main():
     file_path = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_N320_dp0.032716515_T0.1.pkl"#None  # Path to a single M_Iee_*.pkl, or None to auto-select
     indir = "Matrixes_bruteforce"  # Directory with M_Iee_*.pkl files
     theta = None  # Pick the file closest to this Theta (if file_path not set)
-    nev = 200  # Number of generalized eigenpairs to compute (increased to capture J_perp modes)
-    sigma = 0.0  # Shift-invert target gamma (0 targets longest-lived, or use 0.004 to target J_perp band)
+    nev = 120   # Number of generalized eigenpairs to compute (increased to capture J_perp modes)
+    sigma = 0.0#0.0043#0.0  # Shift-invert target gamma (0 targets longest-lived, or use 0.004 to target J_perp band)
     tol = 1e-10  # ARPACK tolerance
     maxiter = 200000  # ARPACK max iterations
     mmax = 8  # Plot m=0..mmax
@@ -479,11 +591,22 @@ def main():
 
     # reconstruct geometry
     px, py, P, th = active_px_py(meta)
+    
+    # Sanity check: P should be near 1 for active points
+    assert np.median(P) > 0.8 and np.median(P) < 1.2, f"Unexpected P range: median={np.median(P)}"
 
-    # solve generalized eigenproblem
-    gam, vecs, A = solve_generalized_eigs(Iee, w, nev=nev, sigma=sigma, tol=tol, maxiter=maxiter)
+    # solve generalized eigenproblem (may mask out small weights)
+    gam, vecs, A, keep = solve_generalized_eigs(Iee, w, nev=nev, sigma=sigma, tol=tol, maxiter=maxiter)
+    
+    # Apply mask to geometry and targets if weights were masked
+    if not np.all(keep):
+        px = px[keep]
+        py = py[keep]
+        P = P[keep]
+        th = th[keep]
+        w = w[keep]
 
-    # build targets
+    # build targets (after masking)
     t = build_targets(meta, px, py, P, th)
     etaN = t["N"]
     etaPx = t["Px"]
@@ -491,6 +614,11 @@ def main():
     etaE = t["E"]
     etaJx = t["Jx"]
     etaJy = t["Jy"]
+    
+    # Orthogonalize energy against number if both exist
+    if etaE is not None:
+        etaE = etaE - (wdot(w, etaN, etaE) / (wdot(w, etaN, etaN).real + 1e-300)) * etaN
+        etaE = normalize_w(w, etaE)
 
     # Build momentum projection basis and J_perp (always needed for m=1 selection)
     etaPx_n = None
@@ -529,32 +657,85 @@ def main():
         print("overlap |<Px,Jx>| =", abs(ax))
         print("overlap |<Py,Jy>| =", abs(ay))
 
-    # Build conserved projection basis if requested
-    Bproj = None
+    # Spectral decomposition of J_perp onto computed eigenspace
+    if etaJx_perp is not None:
+        # Eigenvectors are already W-normalized from solve_generalized_eigs
+        V = vecs
+        t = normalize_w(w, etaJx_perp.copy())  # your current-perp target
+
+        # coefficients c_j = <v_j, t>_W
+        c = np.array([wdot(w, V[:, j], t) for j in range(V.shape[1])], dtype=np.complex128)
+
+        # sort by |c| descending
+        idx = np.argsort(np.abs(c))[::-1]
+
+        print("\n--- J_perp spectral decomposition (top 10) ---")
+        for r in range(min(10, len(idx))):
+            j = idx[r]
+            print(f"rank {r:2d}: gamma={np.real(gam[j]):.6e}  |c|={abs(c[j]):.3f}")
+
+        # "reconstructed" Rayleigh from the subspace (if eigenvectors were complete and W-orthonormal)
+        # not exact in non-Hermitian case, but still a useful summary:
+        print("sum |c|^2 over computed eigs =", float(np.sum(np.abs(c)**2)))
+
+    # Build conserved projection basis if requested (W-orthonormalized)
+    Qproj = None
     if project_conserved:
         cols = [normalize_w(w, etaN), normalize_w(w, etaPx), normalize_w(w, etaPy)]
         if etaE is not None:
-            cols.append(normalize_w(w, etaE))
+            cols.append(etaE)  # already normalized and orthogonalized
         Bproj = np.column_stack(cols)
+        Qproj = wortho_columns(w, Bproj)
+    
+    # Build momentum projection basis (W-orthonormalized)
+    Qmom = None
+    if (etaJx is not None) and (etaJy is not None):
+        Bmom = np.column_stack([etaPx_n, etaPy_n])
+        Qmom = wortho_columns(w, Bmom)
+
+    # Pre-select m=1 current-like eigenmode using unmodified eigenvectors
+    v1_eigen = None
+    g1_eigen = None
+    sc1_eigen = None
+    res1_eigen = None
+    if etaJx_perp is not None:
+        # combine x/y dipoles to avoid choosing the wrong orientation
+        tJ = etaJx_perp  # or use both: choose max over (Jx_perp, Jy_perp)
+        j1, sc1 = pick_eigenmode_matching_target(gam, vecs, w, tJ, gamma_min=1e-5)
+        if j1 is not None:
+            v1_eigen = vecs[:, j1]  # IMPORTANT: NOT projected!
+            g1_eigen = float(np.real(gam[j1]))
+            sc1_eigen = sc1
+            # check eigen-residual of the true eigenpair
+            res1_eigen = residual_rel(A, w, v1_eigen, g1_eigen)
+            print("m=1 current-like eigenmode:",
+                  f"gamma={g1_eigen:.6e}, score={sc1_eigen:.2f}, resid={res1_eigen:.2e}")
 
     # pick modes for m=0..mmax
+    # Use ring_width = 2*dp for harmonic scoring to focus on Fermi ring
+    dp = float(meta.get("dp", 0.01))
+    ring_width = 2.0 * dp
+    
     modes = []
     for m in range(mmax + 1):
         if m == 0:
             # number-like scalar (or use energy target if you want)
-            g_m, v_m, sc_m, res_m = pick_mode_by_target(gam, vecs, A, w, etaN, Bproj=None, score_min=0.7)
+            g_m, v_m, sc_m, res_m = pick_mode_by_target(gam, vecs, A, w, etaN, Qproj=None, score_min=0.7)
         elif m == 1:
             # THIS is the non-parabolic current-relaxing dipole:
-            # pick the smallest-gamma mode overlapping with J_perp, after projecting out momentum
-            if etaJx_perp is not None and Bmom is not None:
-                g_m, v_m, sc_m, res_m = pick_mode_by_target(gam, vecs, A, w, etaJx_perp, Bproj=Bmom, score_min=0.5)
+            # use the pre-selected eigenmode if available, otherwise fallback
+            if v1_eigen is not None:
+                g_m, v_m, sc_m, res_m = g1_eigen, v1_eigen, sc1_eigen, res1_eigen
+            elif etaJx_perp is not None and Qmom is not None:
+                # fallback to target-based selection with projection
+                g_m, v_m, sc_m, res_m = pick_mode_by_target(gam, vecs, A, w, etaJx_perp, Qproj=Qmom, score_min=0.5)
             else:
                 # fallback to harmonic-based selection if J_perp not available
-                g_m, v_m, sc_m, res_m = pick_mode_for_m(gam, vecs, A, w, th, m, Bproj=None)
+                g_m, v_m, sc_m, res_m = pick_mode_for_m(gam, vecs, A, w, th, P, m, Qproj=None, ring_width=ring_width)
         else:
             # harmonic-like modes (optionally project out conserved subspace for m>=2)
-            Bm = Bproj if (project_conserved and m >= 2) else None
-            g_m, v_m, sc_m, res_m = pick_mode_for_m(gam, vecs, A, w, th, m, Bm)
+            Qm = Qproj if (project_conserved and m >= 2) else None
+            g_m, v_m, sc_m, res_m = pick_mode_for_m(gam, vecs, A, w, th, P, m, Qm, ring_width=ring_width)
         modes.append({"m": m, "gamma": g_m, "score": sc_m, "resid": res_m, "vec": v_m})
 
     # print summary
