@@ -159,98 +159,155 @@ def norm_w(a, w):
 
 def overlap(a, t, w):
     return w_inner(a, t, w) / (norm_w(a, w) * norm_w(t, w))
+def eps_bar_from_meta(P: np.ndarray, meta: dict) -> np.ndarray:
+    """Dimensionless ε(P) in units of MU_PHYS (same as generator)."""
+    U_bar = float(meta.get("U_bar", meta.get("U_BAND", 1.0) / meta.get("mu_phys", 1.0)))
+    V_bar = float(meta.get("V_bar", 1.0))
+    return np.sqrt((V_bar * P) ** 2 + U_bar * U_bar) - U_bar
 
-def pick_modes_by_overlap(gammas, eta, w, theta, px, py, vg_phys, mmax=8):
+def vgroup_bar_from_meta(P: np.ndarray, meta: dict) -> np.ndarray:
+    """Dimensionless group velocity dε/dP (same as generator's vgroup_scalar but vectorized)."""
+    U_bar = float(meta.get("U_bar", meta.get("U_BAND", 1.0) / meta.get("mu_phys", 1.0)))
+    V_bar = float(meta.get("V_bar", 1.0))
+    denom = np.sqrt((V_bar * P) ** 2 + U_bar * U_bar)
+    denom = np.maximum(denom, 1e-30)
+    return (V_bar * V_bar * P) / denom
+
+def orthogonalize_to_basis(t: np.ndarray, basis: list[np.ndarray], w: np.ndarray) -> np.ndarray:
+    """Gram-Schmidt t ⟂ span(basis) under <.,.>_w."""
+    out = t.astype(np.float64).copy()
+    for b in basis:
+        nb2 = w_inner(b, b, w)
+        if nb2 <= 1e-300:
+            continue
+        out -= (w_inner(out, b, w) / nb2) * b
+    return out
+
+def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, include_energy_invariant=True):
     """
-    Returns dict m -> chosen eigen-index, plus diagnostics overlaps.
-    Special handling for m=1: CURRENT templates vx,vy (not momentum).
+    Identify:
+      m=0: density invariant
+      inv_px, inv_py: momentum invariants (exact zero modes)
+      inv_E: energy invariant (optional; often ~zero too)
+      m=1: DECAYING current mode via j_perp = v - alpha p (orthogonal to momentum)
+      m>=2: angular harmonics (cos mθ / sin mθ), after removing invariant subspace
     """
     k = eta.shape[1]
     used = set()
 
-    # Templates
-    t_density = np.ones_like(theta)
+    # ---------- Invariants ----------
+    t_den = np.ones_like(theta)
 
-    # Momentum templates (for diagnostics / paper comparison)
-    t_momx = px.copy()
-    t_momy = py.copy()
+    # momentum in these coordinates (proportional to physical momentum)
+    t_px = px.copy()
+    t_py = py.copy()
 
-    # Current templates (requested definition)
-    t_curx = vg_phys * np.cos(theta)
-    t_cury = vg_phys * np.sin(theta)
+    # energy invariant (dimensionless)
+    eps_bar = eps_bar_from_meta(P, meta)
+    t_E = eps_bar.copy()
 
-    # Precompute cos/sin templates for m>=2 (and for diagnostics m=1 as angular)
-    t_cos = {}
-    t_sin = {}
-    for m in range(1, mmax + 1):
-        t_cos[m] = np.cos(m * theta)
-        t_sin[m] = np.sin(m * theta)
+    invariants = [t_den, t_px, t_py]
+    inv_names  = ["den", "px", "py"]
+    if include_energy_invariant:
+        invariants.append(t_E)
+        inv_names.append("E")
 
     chosen = {}
     diag = {}
 
-    # m=0: density/constant
-    best_i, best_s = None, -1.0
-    for i in range(k):
-        s = abs(overlap(eta[:, i], t_density, w))
-        if s > best_s and i not in used:
-            best_s, best_i = s, i
-    chosen[0] = best_i
-    used.add(best_i)
-
-    diag[0] = {
-        "gamma": gammas[best_i],
-        "ov_density": overlap(eta[:, best_i], t_density, w),
-        "ov_momx": overlap(eta[:, best_i], t_momx, w),
-        "ov_curx": overlap(eta[:, best_i], t_curx, w),
-    }
-
-    # m=1: CURRENT harmonic (vx/vy)
-    best_i, best_s = None, -1.0
-    for i in range(k):
-        if i in used:
-            continue
-        ovx = overlap(eta[:, i], t_curx, w)
-        ovy = overlap(eta[:, i], t_cury, w)
-        s = np.sqrt(ovx * ovx + ovy * ovy)
-        if s > best_s:
-            best_s, best_i = s, i
-
-    chosen[1] = best_i
-    used.add(best_i)
-
-    # diagnostics: also show momentum overlap for the chosen current mode
-    diag[1] = {
-        "gamma": gammas[best_i],
-        "ov_cur_amp": best_s,
-        "ov_curx": overlap(eta[:, best_i], t_curx, w),
-        "ov_cury": overlap(eta[:, best_i], t_cury, w),
-        "ov_momx": overlap(eta[:, best_i], t_momx, w),
-        "ov_momy": overlap(eta[:, best_i], t_momy, w),
-        "ov_ang_amp": np.sqrt(overlap(eta[:, best_i], t_cos[1], w)**2 + overlap(eta[:, best_i], t_sin[1], w)**2),
-    }
-
-    # m>=2: angular harmonics
-    for m in range(2, mmax + 1):
+    # pick best eigenvector for each invariant by overlap, and mark as used
+    for name, templ in zip(inv_names, invariants):
         best_i, best_s = None, -1.0
         for i in range(k):
             if i in used:
                 continue
-            ovc = overlap(eta[:, i], t_cos[m], w)
-            ovs = overlap(eta[:, i], t_sin[m], w)
-            s = np.sqrt(ovc * ovc + ovs * ovs)
+            s = abs(overlap(eta[:, i], templ, w))
+            if s > best_s:
+                best_s, best_i = s, i
+        chosen[f"inv_{name}"] = best_i
+        used.add(best_i)
+        diag[f"inv_{name}"] = {"gamma": float(gammas[best_i]), "overlap": float(overlap(eta[:, best_i], templ, w))}
+
+    # Define "m=0" as density invariant’s eigenvector
+    chosen[0] = chosen["inv_den"]
+    diag[0] = {
+        "gamma": float(gammas[chosen[0]]),
+        "ov_density": float(overlap(eta[:, chosen[0]], t_den, w)),
+    }
+
+    # ---------- Current templates ----------
+    # Use dimensionless v(P)=dε/dP; physical prefactors don’t affect overlaps
+    vg_bar = vgroup_bar_from_meta(P, meta)
+    v_x = vg_bar * np.cos(theta)
+    v_y = vg_bar * np.sin(theta)
+
+    # Build j_perp = v - alpha p (orthogonalize current against momentum invariants)
+    # alpha chosen separately for x and y in w-metric
+    ax = w_inner(v_x, t_px, w) / max(w_inner(t_px, t_px, w), 1e-300)
+    ay = w_inner(v_y, t_py, w) / max(w_inner(t_py, t_py, w), 1e-300)
+    jperp_x = v_x - ax * t_px
+    jperp_y = v_y - ay * t_py
+
+    # If band is (nearly) parabolic on the active shell, jperp ~ 0: no distinct decaying current mode
+    jperp_norm = np.sqrt(max(w_inner(jperp_x, jperp_x, w) + w_inner(jperp_y, jperp_y, w), 0.0))
+    diag["jperp_norm"] = float(jperp_norm)
+
+    # m=1 decaying current mode: maximize overlap with (jperp_x, jperp_y)
+    if jperp_norm < 1e-10:
+        # fallback: treat momentum invariant as “current” (Galilean/parabolic case)
+        chosen[1] = chosen["inv_px"]  # either px or py; degeneracy
+        diag[1] = {
+            "gamma": float(gammas[chosen[1]]),
+            "note": "j_perp ~ 0 => current proportional to momentum on shell; using momentum invariant",
+        }
+    else:
+        best_i, best_s = None, -1.0
+        for i in range(k):
+            if i in used:
+                continue
+            ovx = overlap(eta[:, i], jperp_x, w)
+            ovy = overlap(eta[:, i], jperp_y, w)
+            s = float(np.sqrt(ovx * ovx + ovy * ovy))
+            if s > best_s:
+                best_s, best_i = s, i
+        chosen[1] = best_i
+        used.add(best_i)
+
+        # diagnostics: also show overlap with raw current and momentum amplitudes
+        ov_cur = np.sqrt(overlap(eta[:, best_i], v_x, w) ** 2 + overlap(eta[:, best_i], v_y, w) ** 2)
+        ov_mom = np.sqrt(overlap(eta[:, best_i], t_px, w) ** 2 + overlap(eta[:, best_i], t_py, w) ** 2)
+        diag[1] = {
+            "gamma": float(gammas[best_i]),
+            "ov_jperp_amp": float(best_s),
+            "ov_current_amp": float(ov_cur),
+            "ov_momentum_amp": float(ov_mom),
+            "ax": float(ax),
+            "ay": float(ay),
+        }
+
+    # ---------- Angular harmonics m>=2 ----------
+    # Remove invariant subspace from angular templates to avoid accidentally selecting conserved modes
+    inv_basis = [t_den, t_px, t_py]
+    if include_energy_invariant:
+        inv_basis.append(t_E)
+
+    for m in range(2, mmax + 1):
+        tc = orthogonalize_to_basis(np.cos(m * theta), inv_basis, w)
+        ts = orthogonalize_to_basis(np.sin(m * theta), inv_basis, w)
+
+        best_i, best_s = None, -1.0
+        for i in range(k):
+            if i in used:
+                continue
+            ovc = overlap(eta[:, i], tc, w)
+            ovs = overlap(eta[:, i], ts, w)
+            s = float(np.sqrt(ovc * ovc + ovs * ovs))
             if s > best_s:
                 best_s, best_i = s, i
 
         chosen[m] = best_i
         used.add(best_i)
-
-        diag[m] = {
-            "gamma": gammas[best_i],
-            "ov_ang_amp": best_s,
-            "ov_cos": overlap(eta[:, best_i], t_cos[m], w),
-            "ov_sin": overlap(eta[:, best_i], t_sin[m], w),
-        }
+        diag[m] = {"gamma": float(gammas[best_i]), "ov_ang_amp": float(best_s)}
 
     return chosen, diag
 
@@ -350,17 +407,36 @@ def main():
 
         # Identify modes by overlap
         chosen, diag = pick_modes_by_overlap(
-            gammas, eta, w, theta, px, py, vg_phys, mmax=args.mmax
+            gammas, eta, w, theta, px, py, P, meta, mmax=args.mmax, include_energy_invariant=True
         )
 
+        print("Invariants:")
+        for key in ["inv_den", "inv_px", "inv_py", "inv_E"]:
+            if key in diag:
+                print(f"  {key:7s}: idx={chosen[key]:3d} gamma={diag[key]['gamma']:.3e} ov={diag[key]['overlap']:.3f}")
+
+        print(f"j_perp norm (should be ~0 in parabolic, >0 in non-parabolic): {diag['jperp_norm']:.3e}")
+
+        print("Modes:")
+        for m in range(0, args.mmax + 1):
+            i = chosen[m]
+            if m == 1 and "ov_jperp_amp" in diag[1]:
+                print(f"  m=1 (DECAYING current): idx={i:3d} gamma={diag[1]['gamma']:.3e} "
+                      f"|ov_jperp|={diag[1]['ov_jperp_amp']:.3f} |ov_mom|={diag[1]['ov_momentum_amp']:.3f}")
+            else:
+                print(f"  m={m}: idx={i:3d} gamma={gammas[i]:.3e}")
+                
         # Print diagnostics (this is where you check μ=0.1 vs 10 expectations)
         print("Mode identification by overlaps (B-inner product with w=f0(1-f0)):")
         for m in range(0, args.mmax + 1):
             i = chosen[m]
             d = diag[m]
             if m == 1:
-                print(f"  m=1 (CURRENT): idx={i:3d}  gamma={d['gamma']:.6e}  |ov_current|={d['ov_cur_amp']:.3f}  "
-                      f"ov_momx={d['ov_momx']:.3f}")
+                if "note" in d:
+                    print(f"  m=1 (CURRENT): idx={i:3d}  gamma={d['gamma']:.6e}  {d['note']}")
+                else:
+                    print(f"  m=1 (CURRENT): idx={i:3d}  gamma={d['gamma']:.6e}  |ov_current|={d.get('ov_current_amp', np.nan):.3f}  "
+                          f"|ov_momentum|={d.get('ov_momentum_amp', np.nan):.3f}")
             else:
                 key = "ov_density" if m == 0 else "ov_ang_amp"
                 print(f"  m={m}:           idx={i:3d}  gamma={d['gamma']:.6e}  overlap={d.get(key, np.nan):.3f}")
