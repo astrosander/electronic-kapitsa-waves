@@ -142,8 +142,8 @@ HBAR = 1.0         # ħ (set 1 for dimensionless)
 # ------------------------ BILAYER BAND PATCH ------------------------
 # Physical band params (same units as mu_phys)
 V_BAND   = 1.0    # v
-MU_PHYS  = 1.0    # chemical potential scale (units)
-U_BAND   = 10.0 * MU_PHYS   # U = 10 * mu  (strongly gapped / U >> mu)
+MU_PHYS  = 0.001#1.0    # chemical potential scale (units)
+U_BAND   = 1#10.0 * MU_PHYS   # U = 10 * mu  (strongly gapped / U >> mu)
 
 # If you want fixed-density mu(T) instead of fixed mu, set this True.
 # Default False = keep mu fixed (recommended for "U = 10 mu" regime)
@@ -232,7 +232,8 @@ def solve_mu_bar_for_density(Theta: float) -> float:
 #           + [0.0012, 0.0016, 0.002, 0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
 #              0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28])
 
-Thetas = [1e-2, 1e-1]#np.geomspace(1e-4, 1e-3, 12)
+Thetas = np.geomspace(1e-4, 1.28, 50)
+#[1e-2]#np.geomspace(1e-4, 1e-3, 12)
 
 # active-shell cutoff: only include states where f(1-f) > cutoff
 ACTIVE_CUTOFF = 1e-8
@@ -246,10 +247,13 @@ DIMLESS_CONST = 1.0 / ((2.0 * math.pi) ** 4)
 # Target Nactive control at very low T (explicit energy window for shell)
 # These knobs control the active shell width and minimum ring thickness.
 # For dp ≈ 1e-3, PRAD_FLOOR_DP=0.5 gives Nactive ~ 2π/dp ≈ 5e3 at ultra-low T.
-EWIN_THETA_MULT = 8.0     # energy window in units of Theta
+EWIN_THETA_MULT = 7     # energy window in units of Theta
 EWIN_DP_MULT    = 0.5     # Δε floor ≈ 0.5 * vgF * dp  -> p_rad floor ≈ dp/2
 EWIN_DP2_MULT   = 0.0     # optional dp^2 floor (keep 0 unless explicitly needed)
 PRAD_FLOOR_DP   = 0.5     # ring thickness floor in units of dp (≈ one radial pixel)
+
+# NEW: target number of active states (kept approximately constant with T)
+N_ACTIVE_TARGET = 5000
 
 OUT_DIR = "Matrixes_bruteforce"
 # ----------------------------------------------------------------------
@@ -377,15 +381,26 @@ def precompute(nx, ny, dp: float, Theta: float, mu_bar: float,
 def active_indices(f: np.ndarray, P: np.ndarray, eps: np.ndarray,
                    Theta: float, cutoff: float, dp: float, mu_bar: float) -> np.ndarray:
     """
-    Active shell around eps ≈ mu_bar with a *contiguous* radial window.
-    Window is explicitly controlled to keep Nactive reasonable at tiny Theta.
+    Select active states around eps ≈ mu_bar with an energy window,
+    then *fix* the number of active states to ~N_ACTIVE_TARGET by
+    keeping those closest to the Fermi ring P≈1.
+
+    Steps:
+      1) Build an energy-based shell: |eps-mu_bar| < ewin with a dp-based floor.
+      2) Apply the usual f(1-f) > cutoff filter.
+      3) Among all candidates, sort by |P-1| and keep the N_ACTIVE_TARGET
+         nearest to the Fermi radius.
+
+    This keeps N_active approximately constant in T, while preserving
+    a thin, nearly isotropic ring around the Fermi surface.
     """
+    # Pauli weight
     w = f * (1.0 - f)
 
     # group velocity at FS (P=1) in dimensionless units:
     vgF = vgroup_scalar(1.0)  # d eps / dP at FS
 
-    # Energy window with dp floor (this is what fixes Nactive ~ 5000 at low T):
+    # Energy window with dp floor:
     # |eps - mu| < max(A*Theta, B*vgF*dp, C*dp^2)
     ewin = max(
         EWIN_THETA_MULT * Theta,
@@ -393,18 +408,23 @@ def active_indices(f: np.ndarray, P: np.ndarray, eps: np.ndarray,
         EWIN_DP2_MULT * (dp * dp),
     )
 
-    # Convert energy window to radial thickness using vgF: d eps ≈ vgF dP
-    p_rad = ewin / max(vgF, 1e-12)
-
-    # Crucial: minimum ring thickness in units of dp.
-    # Controls Nmin ~ 2π * PRAD_FLOOR_DP / dp at ultra-low T.
-    p_rad = max(p_rad, PRAD_FLOOR_DP * dp)
-
-    ring  = np.abs(P - 1.0) < p_rad
     shell = np.abs(eps - mu_bar) < ewin
+    base_mask = shell & (w > cutoff)
 
-    # Keep w-cutoff only as a weak safeguard
-    return np.where(ring & shell & (w > cutoff))[0].astype(np.int32)
+    cand = np.where(base_mask)[0].astype(np.int32)
+    total_cand = cand.size
+
+    # If we don't even have N_ACTIVE_TARGET eligible states, just take all of them.
+    target = int(N_ACTIVE_TARGET)
+    if total_cand <= target:
+        return cand
+
+    # Prefer the pixels closest to the Fermi circle P=1.
+    dr = np.abs(P[cand] - 1.0)
+    order = np.argsort(dr)
+    chosen = cand[order[:target]]
+
+    return chosen.astype(np.int32)
 
 
 if USE_NUMBA:
