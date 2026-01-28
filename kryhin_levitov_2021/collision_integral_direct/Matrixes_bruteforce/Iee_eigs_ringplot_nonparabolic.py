@@ -31,7 +31,7 @@ import pickle
 import numpy as np
 
 from scipy.sparse import issparse, csr_matrix
-from scipy.sparse.linalg import eigsh
+from scipy.sparse.linalg import eigsh, LinearOperator
 
 import matplotlib.pyplot as plt
 
@@ -149,6 +149,86 @@ def solve_weighted_modes(M_in, w_active, k=60, symmetrize=True):
     return gammas, eta
 
 
+# ------------------------- projected eigensolver -------------------------
+
+def _qr_orthonormal_columns(B: np.ndarray) -> np.ndarray:
+    """Thin QR; returns Q with orthonormal columns spanning cols(B)."""
+    Q, _ = np.linalg.qr(B)
+    return Q
+
+def _make_projected_operator(K: csr_matrix, Q: np.ndarray) -> LinearOperator:
+    """
+    Return LinearOperator implementing (I - QQ^T) K (I - QQ^T).
+    Q must have orthonormal columns (N x r).
+    """
+    def matvec(x):
+        x = x - Q @ (Q.T @ x)
+        y = K @ x
+        y = y - Q @ (Q.T @ y)
+        return y
+
+    n = K.shape[0]
+    return LinearOperator((n, n), matvec=matvec, dtype=np.float64)
+
+def solve_weighted_modes_projected(M_in, w_active, templates_eta, k=60, symmetrize=True):
+    """
+    Solve generalized eigenproblem in the orthogonal complement of span(templates_eta)
+    w.r.t. the W-inner product in eta-space.
+
+    Internally solves symmetric K = W^{-1/2} A W^{-1/2} in u-space with Euclidean metric,
+    and projects out u_templates = sqrt(w) * templates_eta.
+
+    Returns (gammas, eta) as usual, B-normalized.
+    """
+    if not issparse(M_in):
+        M = csr_matrix(M_in)
+    else:
+        M = M_in.tocsr()
+
+    M = M.astype(np.float64)
+    if symmetrize:
+        M = symmetrize_sparse(M)
+
+    A = (-M).tocsr()
+
+    w = np.asarray(w_active, dtype=np.float64)
+    if np.any(w <= 0):
+        raise ValueError("w_active contains non-positive entries; active cutoff should prevent this.")
+
+    inv_sqrt_w = 1.0 / np.sqrt(w)
+    sqrt_w = np.sqrt(w)
+
+    # K = W^{-1/2} A W^{-1/2}
+    A_row = A.multiply(inv_sqrt_w[:, None])
+    K = A_row.multiply(inv_sqrt_w[None, :]).tocsr()
+
+    # Build invariant basis in u-space: u = sqrt(w) * t_eta
+    Uinv = np.column_stack([sqrt_w * t for t in templates_eta]).astype(np.float64)
+
+    # Orthonormalize basis (Euclidean)
+    Q = _qr_orthonormal_columns(Uinv)
+
+    # Projected operator
+    Kproj = _make_projected_operator(K, Q)
+
+    # Solve smallest projected eigenvalues
+    evals, u = eigsh(Kproj, k=k, which="SM", tol=1e-10, maxiter=8000)
+    idx = np.argsort(evals)
+    gammas = np.array(evals[idx], dtype=np.float64)
+    u = u[:, idx]
+
+    # Back to eta
+    eta = inv_sqrt_w[:, None] * u
+
+    # B-normalize
+    for j in range(eta.shape[1]):
+        nrm = np.sqrt(np.dot(w, eta[:, j] * eta[:, j]))
+        if nrm > 0:
+            eta[:, j] /= nrm
+
+    return gammas, eta
+
+
 # ------------------------- template overlaps / mode identification -------------------------
 
 def w_inner(a, b, w):
@@ -159,6 +239,24 @@ def norm_w(a, w):
 
 def overlap(a, t, w):
     return w_inner(a, t, w) / (norm_w(a, w) * norm_w(t, w))
+
+def rayleigh_gamma_for_template(M, w, t_eta, symmetrize=True):
+    """
+    gamma_eff(t) = <t, A t> / <t, W t>, where A=-sym(M), W=diag(w).
+    """
+    if not issparse(M):
+        M = csr_matrix(M)
+    M = M.tocsr().astype(np.float64)
+    if symmetrize:
+        M = symmetrize_sparse(M)
+    A = (-M).tocsr()
+
+    num = np.dot(t_eta, A @ t_eta)
+    den = w_inner(t_eta, t_eta, w)
+    if den <= 1e-300:
+        return np.nan
+    return float(num / den)
+
 def eps_bar_from_meta(P: np.ndarray, meta: dict) -> np.ndarray:
     """Dimensionless ε(P) in units of MU_PHYS (same as generator)."""
     U_bar = float(meta.get("U_bar", meta.get("U_BAND", 1.0) / meta.get("mu_phys", 1.0)))
@@ -183,7 +281,7 @@ def orthogonalize_to_basis(t: np.ndarray, basis: list[np.ndarray], w: np.ndarray
         out -= (w_inner(out, b, w) / nb2) * b
     return out
 
-def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, include_energy_invariant=True):
+def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, include_energy_invariant=True, have_inv_evecs=True):
     """
     Identify:
       m=0: density invariant
@@ -191,6 +289,9 @@ def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, includ
       inv_E: energy invariant (optional; often ~zero too)
       m=1: DECAYING current mode via j_perp = v - alpha p (orthogonal to momentum)
       m>=2: angular harmonics (cos mθ / sin mθ), after removing invariant subspace
+    
+    Args:
+        have_inv_evecs: If False, invariants were projected out, so don't try to find them in eta.
     """
     k = eta.shape[1]
     used = set()
@@ -216,24 +317,40 @@ def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, includ
     diag = {}
 
     # pick best eigenvector for each invariant by overlap, and mark as used
-    for name, templ in zip(inv_names, invariants):
+    if have_inv_evecs:
+        for name, templ in zip(inv_names, invariants):
+            best_i, best_s = None, -1.0
+            for i in range(k):
+                if i in used:
+                    continue
+                s = abs(overlap(eta[:, i], templ, w))
+                if s > best_s:
+                    best_s, best_i = s, i
+            chosen[f"inv_{name}"] = best_i
+            used.add(best_i)
+            diag[f"inv_{name}"] = {"gamma": float(gammas[best_i]), "overlap": float(overlap(eta[:, best_i], templ, w))}
+
+        # Define "m=0" as density invariant's eigenvector
+        chosen[0] = chosen["inv_den"]
+        diag[0] = {
+            "gamma": float(gammas[chosen[0]]),
+            "ov_density": float(overlap(eta[:, chosen[0]], t_den, w)),
+        }
+    else:
+        # Invariants were projected out; pick m=0 as best match to density template
         best_i, best_s = None, -1.0
         for i in range(k):
             if i in used:
                 continue
-            s = abs(overlap(eta[:, i], templ, w))
+            s = abs(overlap(eta[:, i], t_den, w))
             if s > best_s:
                 best_s, best_i = s, i
-        chosen[f"inv_{name}"] = best_i
+        chosen[0] = best_i
         used.add(best_i)
-        diag[f"inv_{name}"] = {"gamma": float(gammas[best_i]), "overlap": float(overlap(eta[:, best_i], templ, w))}
-
-    # Define "m=0" as density invariant’s eigenvector
-    chosen[0] = chosen["inv_den"]
-    diag[0] = {
-        "gamma": float(gammas[chosen[0]]),
-        "ov_density": float(overlap(eta[:, chosen[0]], t_den, w)),
-    }
+        diag[0] = {
+            "gamma": float(gammas[chosen[0]]),
+            "ov_density": float(overlap(eta[:, chosen[0]], t_den, w)),
+        }
 
     # ---------- Current templates ----------
     # Use dimensionless v(P)=dε/dP; physical prefactors don’t affect overlaps
@@ -258,7 +375,7 @@ def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, includ
     # m=1 mode selection: use threshold on fraction to distinguish parabolic vs non-parabolic
     FRAC_THR = 5e-2  # 0.05 works well; parabolic case typically has ~0.015
 
-    if frac < FRAC_THR:
+    if frac < FRAC_THR and have_inv_evecs:
         # current is essentially momentum -> pick the momentum invariant as "m=1 current"
         # choose the better of px/py by overlap with raw current (not jperp)
         ov_px = np.sqrt(overlap(eta[:, chosen["inv_px"]], v_x, w) ** 2 + overlap(eta[:, chosen["inv_px"]], v_y, w) ** 2)
@@ -392,6 +509,10 @@ def main():
     ap.add_argument("--k", type=int, default=80, help="Number of eigenpairs to compute")
     ap.add_argument("--mmax", type=int, default=8, help="Max m to identify (plots m=0..8)")
     ap.add_argument("--no_sym", action="store_true", help="Disable explicit symmetrization (not recommended)")
+    ap.add_argument("--project_invariants", action="store_true",
+                    help="Project out invariant subspace {1,px,py} (and optionally energy) before eigensolve.")
+    ap.add_argument("--project_energy", action="store_true",
+                    help="Also project out energy-like template eps(P). (Use only if you want it removed.)")
     ap.add_argument("--show", action="store_true", help="Show matplotlib windows")
     args = ap.parse_args()
 
@@ -411,18 +532,49 @@ def main():
         U_band  = float(meta.get("U_band", np.nan))
         Theta   = float(meta.get("Theta", np.nan))
 
+        # Build invariant templates in eta-space for optional projection
+        t_den = np.ones_like(theta)
+        t_px = px.copy()
+        t_py = py.copy()
+
+        templates = [t_den, t_px, t_py]
+
+        if args.project_energy:
+            templates.append(eps_bar_from_meta(P, meta))
+
         # Solve
-        gammas, eta = solve_weighted_modes(M, w, k=args.k, symmetrize=(not args.no_sym))
+        if args.project_invariants:
+            gammas, eta = solve_weighted_modes_projected(
+                M, w, templates_eta=templates, k=args.k, symmetrize=(not args.no_sym)
+            )
+        else:
+            gammas, eta = solve_weighted_modes(
+                M, w, k=args.k, symmetrize=(not args.no_sym)
+            )
 
         # Identify modes by overlap
+        have_inv_evecs = (not args.project_invariants)
         chosen, diag, jperp_x, jperp_y, v_x, v_y = pick_modes_by_overlap(
-            gammas, eta, w, theta, px, py, P, meta, mmax=args.mmax, include_energy_invariant=True
+            gammas, eta, w, theta, px, py, P, meta, mmax=args.mmax, 
+            include_energy_invariant=True, have_inv_evecs=have_inv_evecs
         )
 
-        print("Invariants:")
-        for key in ["inv_den", "inv_px", "inv_py", "inv_E"]:
-            if key in diag:
-                print(f"  {key:7s}: idx={chosen[key]:3d} gamma={diag[key]['gamma']:.3e} ov={diag[key]['overlap']:.3f}")
+        # Print invariant gammas (as Rayleigh quotients if projected, as eigenvalues if not)
+        print("Invariants (Rayleigh gammas):")
+        sym = (not args.no_sym)
+        print(f"  den : gamma_eff={rayleigh_gamma_for_template(M, w, t_den, symmetrize=sym):.3e}")
+        print(f"  px  : gamma_eff={rayleigh_gamma_for_template(M, w, t_px,  symmetrize=sym):.3e}")
+        print(f"  py  : gamma_eff={rayleigh_gamma_for_template(M, w, t_py,  symmetrize=sym):.3e}")
+        if args.project_energy or (have_inv_evecs and "inv_E" in diag):
+            tE = eps_bar_from_meta(P, meta)
+            print(f"  E   : gamma_eff={rayleigh_gamma_for_template(M, w, tE,   symmetrize=sym):.3e}")
+        
+        # Also print eigenvector-based info if invariants were found
+        if have_inv_evecs:
+            print("Invariants (eigenvector matches):")
+            for key in ["inv_den", "inv_px", "inv_py", "inv_E"]:
+                if key in diag:
+                    print(f"  {key:7s}: idx={chosen[key]:3d} gamma={diag[key]['gamma']:.3e} ov={diag[key]['overlap']:.3f}")
 
         print(f"j_perp norm (should be ~0 in parabolic, >0 in non-parabolic): {diag['jperp_norm']:.3e}")
 
