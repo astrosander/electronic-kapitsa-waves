@@ -309,7 +309,7 @@ def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, includ
         used.add(best_i)
         diag[m] = {"gamma": float(gammas[best_i]), "ov_ang_amp": float(best_s)}
 
-    return chosen, diag
+    return chosen, diag, jperp_x, jperp_y, v_x, v_y
 
 
 # ------------------------- plotting -------------------------
@@ -406,7 +406,7 @@ def main():
         gammas, eta = solve_weighted_modes(M, w, k=args.k, symmetrize=(not args.no_sym))
 
         # Identify modes by overlap
-        chosen, diag = pick_modes_by_overlap(
+        chosen, diag, jperp_x, jperp_y, v_x, v_y = pick_modes_by_overlap(
             gammas, eta, w, theta, px, py, P, meta, mmax=args.mmax, include_energy_invariant=True
         )
 
@@ -417,17 +417,21 @@ def main():
 
         print(f"j_perp norm (should be ~0 in parabolic, >0 in non-parabolic): {diag['jperp_norm']:.3e}")
 
+        # W-norm fractions: how much of current is non-conserved?
+        cur_norm2 = w_inner(v_x, v_x, w) + w_inner(v_y, v_y, w)
+        perp_norm2 = w_inner(jperp_x, jperp_x, w) + w_inner(jperp_y, jperp_y, w)
+        frac = np.sqrt(perp_norm2 / max(cur_norm2, 1e-300))
+        print(f"||j_perp||_W / ||j||_W = {frac:.3e}")
+
+        # Current relaxation rate via Rayleigh quotient on projected current
+        A = (-symmetrize_sparse(M)).tocsr() if not args.no_sym else (-M).tocsr()
+        num = np.dot(jperp_x, A @ jperp_x) + np.dot(jperp_y, A @ jperp_y)
+        den = w_inner(jperp_x, jperp_x, w) + w_inner(jperp_y, jperp_y, w)
+        if den > 1e-300:
+            gamma_eff = num / den
+            print(f"gamma_eff(j_perp) = {gamma_eff:.6e}")
+
         print("Modes:")
-        for m in range(0, args.mmax + 1):
-            i = chosen[m]
-            if m == 1 and "ov_jperp_amp" in diag[1]:
-                print(f"  m=1 (DECAYING current): idx={i:3d} gamma={diag[1]['gamma']:.3e} "
-                      f"|ov_jperp|={diag[1]['ov_jperp_amp']:.3f} |ov_mom|={diag[1]['ov_momentum_amp']:.3f}")
-            else:
-                print(f"  m={m}: idx={i:3d} gamma={gammas[i]:.3e}")
-                
-        # Print diagnostics (this is where you check μ=0.1 vs 10 expectations)
-        print("Mode identification by overlaps (B-inner product with w=f0(1-f0)):")
         for m in range(0, args.mmax + 1):
             i = chosen[m]
             d = diag[m]
