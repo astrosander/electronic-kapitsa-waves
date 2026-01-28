@@ -248,19 +248,28 @@ def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, includ
     jperp_x = v_x - ax * t_px
     jperp_y = v_y - ay * t_py
 
-    # If band is (nearly) parabolic on the active shell, jperp ~ 0: no distinct decaying current mode
-    jperp_norm = np.sqrt(max(w_inner(jperp_x, jperp_x, w) + w_inner(jperp_y, jperp_y, w), 0.0))
-    diag["jperp_norm"] = float(jperp_norm)
+    # W-norm fractions: how much of current is non-conserved?
+    cur_norm2 = w_inner(v_x, v_x, w) + w_inner(v_y, v_y, w)
+    perp_norm2 = w_inner(jperp_x, jperp_x, w) + w_inner(jperp_y, jperp_y, w)
+    frac = np.sqrt(perp_norm2 / max(cur_norm2, 1e-300))
+    diag["jperp_norm"] = float(np.sqrt(max(perp_norm2, 0.0)))  # keep for backward compatibility
+    diag["jperp_frac"] = float(frac)  # store fraction for diagnostics
 
-    # m=1 decaying current mode: maximize overlap with (jperp_x, jperp_y)
-    if jperp_norm < 1e-10:
-        # fallback: treat momentum invariant as “current” (Galilean/parabolic case)
-        chosen[1] = chosen["inv_px"]  # either px or py; degeneracy
+    # m=1 mode selection: use threshold on fraction to distinguish parabolic vs non-parabolic
+    FRAC_THR = 5e-2  # 0.05 works well; parabolic case typically has ~0.015
+
+    if frac < FRAC_THR:
+        # current is essentially momentum -> pick the momentum invariant as "m=1 current"
+        # choose the better of px/py by overlap with raw current (not jperp)
+        ov_px = np.sqrt(overlap(eta[:, chosen["inv_px"]], v_x, w) ** 2 + overlap(eta[:, chosen["inv_px"]], v_y, w) ** 2)
+        ov_py = np.sqrt(overlap(eta[:, chosen["inv_py"]], v_x, w) ** 2 + overlap(eta[:, chosen["inv_py"]], v_y, w) ** 2)
+        chosen[1] = chosen["inv_px"] if ov_px >= ov_py else chosen["inv_py"]
         diag[1] = {
             "gamma": float(gammas[chosen[1]]),
-            "note": "j_perp ~ 0 => current proportional to momentum on shell; using momentum invariant",
+            "note": f"frac={frac:.3e} < {FRAC_THR}; current≈momentum",
         }
     else:
+        # use decaying-current mode from j_perp
         best_i, best_s = None, -1.0
         for i in range(k):
             if i in used:
@@ -418,9 +427,7 @@ def main():
         print(f"j_perp norm (should be ~0 in parabolic, >0 in non-parabolic): {diag['jperp_norm']:.3e}")
 
         # W-norm fractions: how much of current is non-conserved?
-        cur_norm2 = w_inner(v_x, v_x, w) + w_inner(v_y, v_y, w)
-        perp_norm2 = w_inner(jperp_x, jperp_x, w) + w_inner(jperp_y, jperp_y, w)
-        frac = np.sqrt(perp_norm2 / max(cur_norm2, 1e-300))
+        frac = diag.get("jperp_frac", np.nan)
         print(f"||j_perp||_W / ||j||_W = {frac:.3e}")
 
         # Current relaxation rate via Rayleigh quotient on projected current
