@@ -28,6 +28,7 @@ Notes:
 import argparse
 import os
 import pickle
+import csv
 import numpy as np
 
 from scipy.sparse import issparse, csr_matrix
@@ -257,6 +258,26 @@ def rayleigh_gamma_for_template(M, w, t_eta, symmetrize=True):
         return np.nan
     return float(num / den)
 
+def invariant_residual(M, w, t_eta, symmetrize=True):
+    """
+    Measure ||A t||_{W^{-1}} / ||t||_W  where A = -sym(M).
+    This is 0 iff A t = 0 (exact invariant). Always >= 0.
+    """
+    if not issparse(M):
+        M = csr_matrix(M)
+    M = M.tocsr().astype(np.float64)
+    if symmetrize:
+        M = symmetrize_sparse(M)
+    A = (-M).tocsr()
+
+    w = np.asarray(w, dtype=np.float64)
+    inv_w = 1.0 / np.maximum(w, 1e-300)
+
+    r = A @ t_eta
+    num = float(np.dot(inv_w, r * r))            # r^T W^{-1} r
+    den = float(np.dot(w, t_eta * t_eta))        # t^T W t
+    return np.sqrt(max(num / max(den, 1e-300), 0.0))
+
 def eps_bar_from_meta(P: np.ndarray, meta: dict) -> np.ndarray:
     """Dimensionless ε(P) in units of MU_PHYS (same as generator)."""
     U_bar = float(meta.get("U_bar", meta.get("U_BAND", 1.0) / meta.get("mu_phys", 1.0)))
@@ -281,7 +302,7 @@ def orthogonalize_to_basis(t: np.ndarray, basis: list[np.ndarray], w: np.ndarray
         out -= (w_inner(out, b, w) / nb2) * b
     return out
 
-def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, include_energy_invariant=True, have_inv_evecs=True):
+def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, include_energy_invariant=True, have_inv_evecs=True, have_density_evec=True):
     """
     Identify:
       m=0: density invariant
@@ -291,7 +312,8 @@ def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, includ
       m>=2: angular harmonics (cos mθ / sin mθ), after removing invariant subspace
     
     Args:
-        have_inv_evecs: If False, invariants were projected out, so don't try to find them in eta.
+        have_inv_evecs: If False, momentum invariants were projected out, so don't try to find them in eta.
+        have_density_evec: If False, density was projected out, so don't try to find it in eta.
     """
     k = eta.shape[1]
     used = set()
@@ -318,7 +340,10 @@ def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, includ
 
     # pick best eigenvector for each invariant by overlap, and mark as used
     if have_inv_evecs:
+        # Find momentum invariants (and optionally energy)
         for name, templ in zip(inv_names, invariants):
+            if name == "den" and not have_density_evec:
+                continue  # Skip density if it was projected
             best_i, best_s = None, -1.0
             for i in range(k):
                 if i in used:
@@ -330,27 +355,46 @@ def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, includ
             used.add(best_i)
             diag[f"inv_{name}"] = {"gamma": float(gammas[best_i]), "overlap": float(overlap(eta[:, best_i], templ, w))}
 
-        # Define "m=0" as density invariant's eigenvector
-        chosen[0] = chosen["inv_den"]
-        diag[0] = {
-            "gamma": float(gammas[chosen[0]]),
-            "ov_density": float(overlap(eta[:, chosen[0]], t_den, w)),
-        }
+        # Define "m=0" as density invariant's eigenvector (if available)
+        if have_density_evec and "inv_den" in chosen:
+            chosen[0] = chosen["inv_den"]
+            diag[0] = {
+                "gamma": float(gammas[chosen[0]]),
+                "ov_density": float(overlap(eta[:, chosen[0]], t_den, w)),
+            }
+        else:
+            # Density was projected; mark m=0 to use template
+            chosen[0] = None  # Signal to use template
+            diag[0] = {
+                "gamma": 0.0,  # By definition when projected
+                "ov_density": 1.0,  # Template is exact
+                "note": "density projected; using template",
+            }
     else:
-        # Invariants were projected out; pick m=0 as best match to density template
-        best_i, best_s = None, -1.0
-        for i in range(k):
-            if i in used:
-                continue
-            s = abs(overlap(eta[:, i], t_den, w))
-            if s > best_s:
-                best_s, best_i = s, i
-        chosen[0] = best_i
-        used.add(best_i)
-        diag[0] = {
-            "gamma": float(gammas[chosen[0]]),
-            "ov_density": float(overlap(eta[:, chosen[0]], t_den, w)),
-        }
+        # Momentum invariants were projected out; pick m=0 based on density availability
+        if have_density_evec:
+            # Pick m=0 as best match to density template
+            best_i, best_s = None, -1.0
+            for i in range(k):
+                if i in used:
+                    continue
+                s = abs(overlap(eta[:, i], t_den, w))
+                if s > best_s:
+                    best_s, best_i = s, i
+            chosen[0] = best_i
+            used.add(best_i)
+            diag[0] = {
+                "gamma": float(gammas[chosen[0]]),
+                "ov_density": float(overlap(eta[:, chosen[0]], t_den, w)),
+            }
+        else:
+            # Both momentum and density projected; mark m=0 to use template
+            chosen[0] = None  # Signal to use template
+            diag[0] = {
+                "gamma": 0.0,  # By definition when projected
+                "ov_density": 1.0,  # Template is exact
+                "note": "density projected; using template",
+            }
 
     # ---------- Current templates ----------
     # Use dimensionless v(P)=dε/dP; physical prefactors don’t affect overlaps
@@ -375,7 +419,7 @@ def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, includ
     # m=1 mode selection: use threshold on fraction to distinguish parabolic vs non-parabolic
     FRAC_THR = 5e-2  # 0.05 works well; parabolic case typically has ~0.015
 
-    if frac < FRAC_THR and have_inv_evecs:
+    if frac < FRAC_THR and have_inv_evecs and "inv_px" in chosen and "inv_py" in chosen:
         # current is essentially momentum -> pick the momentum invariant as "m=1 current"
         # choose the better of px/py by overlap with raw current (not jperp)
         ov_px = np.sqrt(overlap(eta[:, chosen["inv_px"]], v_x, w) ** 2 + overlap(eta[:, chosen["inv_px"]], v_y, w) ** 2)
@@ -452,16 +496,26 @@ def ring_scatter(ax, px, py, val, title=""):
     ax.set_yticks([])
     return sc
 
-def make_figure(px, py, modes, gammas, mu_phys, U_band, Theta, out_prefix):
+def make_figure(px, py, modes, gammas, mu_phys, U_band, Theta, out_prefix, eta0_override=None):
     fig, axes = plt.subplots(3, 3, figsize=(11, 10))
     axes = axes.ravel()
 
     mlist = list(range(0, 9))
     last_sc = None
     for j, m in enumerate(mlist):
-        idx = modes[m]
-        val = modes["_eta"][:, idx]
-        g = gammas[idx]
+        if m == 0 and (eta0_override is not None or modes[m] is None):
+            # Use density template when density was projected
+            val = eta0_override if eta0_override is not None else np.ones_like(px)
+            g = 0.0
+        else:
+            idx = modes[m]
+            if idx is None:
+                # Fallback: should not happen for m > 0, but handle gracefully
+                val = np.ones_like(px)
+                g = 0.0
+            else:
+                val = modes["_eta"][:, idx]
+                g = gammas[idx]
         last_sc = ring_scatter(
             axes[j], px, py, val,
             title=f"m={m}   γ={g:.3e}"
@@ -477,10 +531,34 @@ def make_figure(px, py, modes, gammas, mu_phys, U_band, Theta, out_prefix):
 
     png = out_prefix + ".png"
     pdf = out_prefix + ".pdf"
-    fig.savefig(png, dpi=250)
-    fig.savefig(pdf)
+    # fig.savefig(png, dpi=250)
+    # fig.savefig(pdf)
     print(f"Saved: {png}")
     print(f"Saved: {pdf}")
+
+
+# ------------------------- CSV output (optional) -------------------------
+
+# Tolerances for deciding when density invariant diagnostics are "good enough"
+DENSITY_RES_TOL = 1e-8          # max allowed invariant_residual for density
+DENSITY_REL_GAMMA_TOL = 1e-3    # require |gamma_den| < DENSITY_REL_GAMMA_TOL * |m2|
+
+
+def _csv_ensure_header(path: str, fieldnames: list[str], overwrite: bool):
+    if overwrite and os.path.exists(path):
+        os.remove(path)
+    if not os.path.exists(path):
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            w.writeheader()
+
+def _csv_append_row(path: str, fieldnames: list[str], row: dict):
+    # Fill missing keys with empty string to keep DictWriter happy.
+    out = {k: row.get(k, "") for k in fieldnames}
+    with open(path, "a", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writerow(out)
 
 
 # ------------------------- CLI -------------------------
@@ -509,16 +587,28 @@ def main():
     ap.add_argument("--k", type=int, default=80, help="Number of eigenpairs to compute")
     ap.add_argument("--mmax", type=int, default=8, help="Max m to identify (plots m=0..8)")
     ap.add_argument("--no_sym", action="store_true", help="Disable explicit symmetrization (not recommended)")
-    ap.add_argument("--project_invariants", action="store_true",
-                    help="Project out invariant subspace {1,px,py} (and optionally energy) before eigensolve.")
+    ap.add_argument("--project_momentum", action="store_true",
+                    help="Project out momentum subspace {px,py} before eigensolve. Keeps density (default behavior).")
+    ap.add_argument("--project_density", action="store_true",
+                    help="Also project out density template {1}. Use if you want gamma0 forced to ~0.")
     ap.add_argument("--project_energy", action="store_true",
                     help="Also project out energy-like template eps(P). (Use only if you want it removed.)")
     ap.add_argument("--show", action="store_true", help="Show matplotlib windows")
+    ap.add_argument("--csv_out", type=str, default=None,
+                    help="Append one CSV row per processed PKL with physically-defined m0 (density Rayleigh gamma) and m1 (total current decay).")
+    ap.add_argument("--csv_overwrite", action="store_true", help="Overwrite --csv_out if it exists.")
     args = ap.parse_args()
 
     pkls = [args.pkl] if args.pkl else find_pkls_in_dir(args.dir)
     if not pkls:
         raise RuntimeError("No .pkl files found.")
+
+    # Prepare CSV header if requested
+    csv_fields = None
+    if args.csv_out:
+        # Minimal CSV: just T, mu, U, and m0..m_mmax
+        csv_fields = ["T", "mu", "U"] + [f"m{m}" for m in range(0, args.mmax + 1)]
+        _csv_ensure_header(args.csv_out, csv_fields, overwrite=args.csv_overwrite)
 
     for path in pkls:
         print("\n=== Processing:", path)
@@ -537,37 +627,60 @@ def main():
         t_px = px.copy()
         t_py = py.copy()
 
-        templates = [t_den, t_px, t_py]
-
+        # Build templates for projection: momentum (and optionally density and energy)
+        templates = [t_px, t_py]
+        if args.project_density:
+            templates = [t_den] + templates
         if args.project_energy:
             templates.append(eps_bar_from_meta(P, meta))
 
+        # Calculate effective k: request extra eigenpairs to account for projected dimensions
+        k_eff = args.k
+        if args.project_momentum:
+            k_eff += 2  # px, py
+        if args.project_density:
+            k_eff += 1  # density
+        if args.project_energy:
+            k_eff += 1  # energy
+
         # Solve
-        if args.project_invariants:
+        if args.project_momentum or args.project_density:
             gammas, eta = solve_weighted_modes_projected(
-                M, w, templates_eta=templates, k=args.k, symmetrize=(not args.no_sym)
+                M, w, templates_eta=templates, k=k_eff, symmetrize=(not args.no_sym)
             )
         else:
             gammas, eta = solve_weighted_modes(
-                M, w, k=args.k, symmetrize=(not args.no_sym)
+                M, w, k=k_eff, symmetrize=(not args.no_sym)
             )
 
         # Identify modes by overlap
-        have_inv_evecs = (not args.project_invariants)
+        # If momentum is projected, we can't find px/py eigenvectors
+        # If density is projected, we can't find density eigenvector (will use template instead)
+        have_inv_evecs = (not args.project_momentum)
+        have_density_evec = (not args.project_density)
         chosen, diag, jperp_x, jperp_y, v_x, v_y = pick_modes_by_overlap(
             gammas, eta, w, theta, px, py, P, meta, mmax=args.mmax, 
-            include_energy_invariant=True, have_inv_evecs=have_inv_evecs
+            include_energy_invariant=True, have_inv_evecs=have_inv_evecs, have_density_evec=have_density_evec
         )
 
-        # Print invariant gammas (as Rayleigh quotients if projected, as eigenvalues if not)
-        print("Invariants (Rayleigh gammas):")
+        # Print invariant diagnostics (Rayleigh gammas and residuals)
         sym = (not args.no_sym)
-        print(f"  den : gamma_eff={rayleigh_gamma_for_template(M, w, t_den, symmetrize=sym):.3e}")
-        print(f"  px  : gamma_eff={rayleigh_gamma_for_template(M, w, t_px,  symmetrize=sym):.3e}")
-        print(f"  py  : gamma_eff={rayleigh_gamma_for_template(M, w, t_py,  symmetrize=sym):.3e}")
+        print("Invariants (diagnostics):")
+        gamma_den = rayleigh_gamma_for_template(M, w, t_den, symmetrize=sym)
+        res_den   = invariant_residual(M, w, t_den, symmetrize=sym)
+        gamma_px  = rayleigh_gamma_for_template(M, w, t_px,  symmetrize=sym)
+        res_px    = invariant_residual(M, w, t_px,  symmetrize=sym)
+        gamma_py  = rayleigh_gamma_for_template(M, w, t_py,  symmetrize=sym)
+        res_py    = invariant_residual(M, w, t_py,  symmetrize=sym)
+        print(f"  den: gamma_eff={gamma_den:+.3e}   residual={res_den:.3e}")
+        print(f"  px : gamma_eff={gamma_px:+.3e}   residual={res_px:.3e}")
+        print(f"  py : gamma_eff={gamma_py:+.3e}   residual={res_py:.3e}")
+        
         if args.project_energy or (have_inv_evecs and "inv_E" in diag):
             tE = eps_bar_from_meta(P, meta)
-            print(f"  E   : gamma_eff={rayleigh_gamma_for_template(M, w, tE,   symmetrize=sym):.3e}")
+            gE = rayleigh_gamma_for_template(M, w, tE, symmetrize=sym)
+            rE = invariant_residual(M, w, tE, symmetrize=sym)
+            print(f"  E  : gamma_eff={gE:+.3e}   residual={rE:.3e}")
         
         # Also print eigenvector-based info if invariants were found
         if have_inv_evecs:
@@ -585,10 +698,17 @@ def main():
         # Current relaxation rate via Rayleigh quotient on projected current
         A = (-symmetrize_sparse(M)).tocsr() if not args.no_sym else (-M).tocsr()
         num = np.dot(jperp_x, A @ jperp_x) + np.dot(jperp_y, A @ jperp_y)
-        den = w_inner(jperp_x, jperp_x, w) + w_inner(jperp_y, jperp_y, w)
-        if den > 1e-300:
-            gamma_eff = num / den
-            print(f"gamma_eff(j_perp) = {gamma_eff:.6e}")
+        den_jperp = w_inner(jperp_x, jperp_x, w) + w_inner(jperp_y, jperp_y, w)
+        cur_norm2 = w_inner(v_x, v_x, w) + w_inner(v_y, v_y, w)
+        gamma_eff_jperp = np.nan
+        gamma_j_total   = np.nan
+        if den_jperp > 1e-300:
+            gamma_eff_jperp = num / den_jperp
+            print(f"gamma_eff(j_perp) = {gamma_eff_jperp:.6e}")
+        if cur_norm2 > 1e-300:
+            # TOTAL current decay (this is the one that -> 0 in parabolic regime):
+            # gamma_j_total = <j,Aj>/<j,Wj> = gamma_eff(j_perp) * (||j_perp||_W/||j||_W)^2
+            gamma_j_total = num / cur_norm2
 
         print("Modes:")
         for m in range(0, args.mmax + 1):
@@ -596,21 +716,77 @@ def main():
             d = diag[m]
             if m == 1:
                 if "note" in d:
-                    print(f"  m=1 (CURRENT): idx={i:3d}  gamma={d['gamma']:.6e}  {d['note']}")
+                    idx_str = "N/A" if i is None else f"{i:3d}"
+                    frac_val = diag.get("jperp_frac", np.nan)
+                    print(f"  m=1 (CURRENT): idx={idx_str}  gamma={d['gamma']:.6e}  frac={frac_val:.3e}  {d['note']}")
                 else:
-                    print(f"  m=1 (CURRENT): idx={i:3d}  gamma={d['gamma']:.6e}  |ov_current|={d.get('ov_current_amp', np.nan):.3f}  "
-                          f"|ov_momentum|={d.get('ov_momentum_amp', np.nan):.3f}")
+                    idx_str = "N/A" if i is None else f"{i:3d}"
+                    frac_val = diag.get("jperp_frac", np.nan)
+                    print(f"  m=1 (j_perp):  idx={idx_str}  gamma={d['gamma']:.6e}  frac={frac_val:.3e}  "
+                          f"|ov_jperp|={d.get('ov_jperp_amp', np.nan):.6f}  "
+                          f"|ov_current|={d.get('ov_current_amp', np.nan):.6f}  "
+                          f"|ov_momentum|={d.get('ov_momentum_amp', np.nan):.6f}")
             else:
                 key = "ov_density" if m == 0 else "ov_ang_amp"
-                print(f"  m={m}:           idx={i:3d}  gamma={d['gamma']:.6e}  overlap={d.get(key, np.nan):.3f}")
+                idx_str = "N/A" if i is None else f"{i:3d}"
+                note_str = f"  {d.get('note', '')}" if 'note' in d else ""
+                print(f"  m={m}:           idx={idx_str}  gamma={d['gamma']:.6e}  overlap={d.get(key, np.nan):.3f}{note_str}")
 
         # Store eta for plotting convenience
         chosen["_eta"] = eta
 
+        # Decide whether density invariant diagnostics are good enough; warn if not
+        bad_density = False
+        # 1) residual too large
+        if np.isfinite(res_den) and res_den > DENSITY_RES_TOL:
+            bad_density = True
+        # 2) |gamma_den| not much smaller than first physical gamma (m=2)
+        gamma_m2 = np.nan
+        if 2 in diag and "gamma" in diag[2]:
+            gamma_m2 = float(diag[2]["gamma"])
+        if (
+            np.isfinite(gamma_den)
+            and np.isfinite(gamma_m2)
+            and abs(gamma_den) > DENSITY_REL_GAMMA_TOL * abs(gamma_m2)
+        ):
+            bad_density = True
+
+        if bad_density:
+            print(
+                f"WARNING: density invariant diagnostics failed "
+                f"(res_den={res_den:.3e}, gamma_den={gamma_den:.3e}, m2={gamma_m2:.3e}); "
+                "CSV row will still be written for this point; check diagnostics."
+            )
+
+        # ---------------- CSV row (optional) ----------------
+        if args.csv_out and csv_fields:
+            row = {
+                "T": float(Theta),
+                "mu": float(mu_phys),
+                "U": float(U_band),
+                # m0 is the density invariant Rayleigh gamma (NOT the smallest eigenvalue)
+                "m0": float(gamma_den) if np.isfinite(gamma_den) else "",
+                # m1 is total current decay rate (goes ~0 in parabolic; finite in non-parabolic)
+                "m1": float(gamma_j_total) if np.isfinite(gamma_j_total) else "",
+            }
+            for m in range(2, args.mmax + 1):
+                row[f"m{m}"] = float(diag[m]["gamma"]) if (m in diag and "gamma" in diag[m]) else ""
+            _csv_append_row(args.csv_out, csv_fields, row)
+
+        # Prepare density template for plotting if density was projected
+        eta0_override = None
+        if args.project_density:
+            # Create B-normalized density template
+            eta0 = t_den.copy()
+            nrm = np.sqrt(np.dot(w, eta0 * eta0))
+            if nrm > 0:
+                eta0 /= nrm
+            eta0_override = eta0
+
         # Plot 3x3 (m=0..8)
         base = os.path.splitext(os.path.basename(path))[0]
         out_prefix = f"ring_modes_{base}_mu{mu_phys:g}_U{U_band:g}_T{Theta:g}"
-        make_figure(px, py, chosen, gammas, mu_phys, U_band, Theta, out_prefix)
+        make_figure(px, py, chosen, gammas, mu_phys, U_band, Theta, out_prefix, eta0_override=eta0_override)
 
         if args.show:
             plt.show()
