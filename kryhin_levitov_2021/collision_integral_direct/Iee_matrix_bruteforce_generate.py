@@ -66,8 +66,8 @@ dp   = 0.08         # Δp
 # Non-parabolic bilayer dispersion in these units is:
 #   eps(p) = sqrt(alpha^2 + (1+2alpha) p^2) - alpha,  alpha = U / μ.
 # Parabolic limit (alpha >> 1) is eps(p) -> p^2.
-MU_PHYS = 1.0       # chemical potential μ (energy units)
-U_BAND  = 10.0        # band parameter U (energy units)
+MU_PHYS = 1.0       # chemical potential μ (energy units) [default; can be swept over MU_LIST]
+U_BAND  = 1.0      # band parameter U (energy units)
 V_BAND  = 1.0        # velocity scale v (drops out after nondimensionalization, kept for metadata)
 
 # Choose dispersion used for energy conservation:
@@ -115,7 +115,7 @@ THETA_PBOX_SWITCH = 1e-3
 # PATCH (strong): push much higher ring accuracy.
 # Smaller dp is necessary to expose clean T^2 (even m) and especially T^4 (odd m).
 # We will *not* try to keep file sizes constant here; accuracy first.
-RING_PIXEL_BOOST = 1.5      # strong; try 2.5–4.0
+RING_PIXEL_BOOST = 0.5      # strong; try 2.5–4.0
 RING_SHELL_TIGHTEN = 0.45   # tighter ring (suppresses bulk contamination)
 
 # Compute pixel ratios for both regions
@@ -167,7 +167,10 @@ HBAR = 1.0         # ħ (set 1 for dimensionless)
 # Thetas = (np.geomspace(1e-4, 1e-3, 12).tolist()
 #           + [0.0012, 0.0016, 0.002, 0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
 #              0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28])
-Thetas = [1e-1]
+Thetas = [1]
+
+# Sweep over chemical potential values mu in dimensionless units (energy units of MU_PHYS)
+MU_LIST = np.geomspace(1e-2, 1e2, 100)
 # active-shell cutoff: only include states where f(1-f) > cutoff
 ACTIVE_CUTOFF = 1e-8
 
@@ -593,24 +596,32 @@ def main():
         print(f"[AUTO_GRID] PRIORITIZE_SIZE_OVER_RING={PRIORITIZE_SIZE_OVER_RING} (allows dp>{DP_RING_MAX} to keep size constant)")
         print(f"[AUTO_GRID] Low-T pbox: {PBOX_MIN_LOW} for Theta<= {THETA_PBOX_SWITCH}, High-T pbox: {PBOX_MIN_HIGH}")
         print(f"[AUTO_GRID] NMAX_MAX={NMAX_MAX}")
-    for T in Thetas:
-        Theta = float(T)
-        if AUTO_DP_FROM_ANCHOR:
-            dp_T = choose_dp(Theta)
-            Nmax_T = choose_Nmax(dp_T, Theta)
-            # Determine which anchor was used
-            if Theta < THETA_CROSSOVER:
-                pixel_ratio = PIXEL_RATIO_LOW
-                anchor_info = f"low-T anchor"
+
+    # Sweep over mu values
+    global MU_PHYS
+    for mu in MU_LIST:
+        if mu<1:
+            continue
+        MU_PHYS = float(mu)
+        print(f"\n===== Generating matrices for mu={MU_PHYS:.6g} =====")
+        for T in Thetas:
+            Theta = float(T)
+            if AUTO_DP_FROM_ANCHOR:
+                dp_T = choose_dp(Theta)
+                Nmax_T = choose_Nmax(dp_T, Theta)
+                # Determine which anchor was used
+                if Theta < THETA_CROSSOVER:
+                    pixel_ratio = PIXEL_RATIO_LOW
+                    anchor_info = f"low-T anchor"
+                else:
+                    pixel_ratio = PIXEL_RATIO_HIGH
+                    anchor_info = f"high-T anchor"
+                print(f"[AUTO_GRID] Theta={Theta:.6g} -> dp={dp_T:.8g}, Nmax={Nmax_T} ({anchor_info}) "
+                      f"(Theta/dp^2={Theta/(dp_T*dp_T):.3f}, target={pixel_ratio:.3f})")
             else:
-                pixel_ratio = PIXEL_RATIO_HIGH
-                anchor_info = f"high-T anchor"
-            print(f"[AUTO_GRID] Theta={Theta:.6g} -> dp={dp_T:.8g}, Nmax={Nmax_T} ({anchor_info}) "
-                  f"(Theta/dp^2={Theta/(dp_T*dp_T):.3f}, target={pixel_ratio:.3f})")
-        else:
-            dp_T = float(dp)
-            Nmax_T = int(Nmax)
-        build_matrix_for_theta(Theta, Nmax_T, dp_T)
+                dp_T = float(dp)
+                Nmax_T = int(Nmax)
+            build_matrix_for_theta(Theta, Nmax_T, dp_T)
 
 
 if __name__ == "__main__":

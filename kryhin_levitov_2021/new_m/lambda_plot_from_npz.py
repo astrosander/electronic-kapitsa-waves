@@ -26,7 +26,7 @@ plt.rcParams['legend.fontsize'] = 16
 plt.rcParams['figure.titlesize'] = 20
 
 # Default input/output filenames
-DEFAULT_IN_CSV = "Eigenvals_bruteforce.csv"
+DEFAULT_IN_CSV = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu1\gamma_vs_mu_T0.1.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu\gamma_vs_mu_T0.1.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\gamma_vs_T_mu0p1_U1.csv"#"gamma_vs_T_mu0p1_U1.csv"
 DEFAULT_OUT_PNG = "Eigenvals_bruteforce_generalized_from_csv.png"
 DEFAULT_OUT_SVG = "Eigenvals_bruteforce_generalized_from_csv.svg"
 
@@ -53,10 +53,17 @@ def load_data(csv_path: str):
         if fieldnames is None:
             raise ValueError("CSV file has no headers")
         
-        # Check for formats: "m0c, m1c" (conserved), "m0r, m1r" (relaxing), "m2, m3, ..." (regular), 
+        # Check for formats: "m0c, m1c" (conserved), "m0r, m1r" (relaxing), "m2, m3, ..." (regular),
         # and old formats: "m0, m1, ..." and "gamma_0, gamma_1, ..."
+        control_key = None  # "T" or "mu" depending on CSV
         for field in fieldnames:
             field_stripped = field.strip()
+            low = field_stripped.lower()
+
+            # Detect control parameter column once (temperature or mu)
+            if control_key is None and low in ("t", "mu"):
+                control_key = field_stripped
+
             # New format: m0r, m1r (relaxing modes) - treat as m=0, m=1 for plotting
             if field_stripped in ['m0r', 'm1r', 'm0']:
                 m = 0 if field_stripped == 'm0r' else 1
@@ -86,17 +93,23 @@ def load_data(csv_path: str):
         
         if len(modes_set) == 0:
             raise ValueError("No mode columns found in CSV. Expected columns like 'm0', 'm1', ... or 'gamma_0', 'gamma_1', ...")
+        if control_key is None:
+            raise ValueError("No control parameter column found in CSV. Expected 'T' or 'mu'.")
         
         # Read data rows
         for row in reader:
-            # Read T
-            if 'T' in row and row['T'].strip():
-                try:
-                    T.append(float(row['T']))
-                except (ValueError, TypeError):
-                    continue
-            else:
+            # Read temperature / control parameter from detected column (T or mu)
+            raw_val = row.get(control_key, "").strip()
+            try:
+                val_T = float(raw_val) if raw_val else None
+            except (ValueError, TypeError):
+                val_T = None
+
+            if val_T is None:
+                # Skip rows without a valid control parameter
                 continue
+
+            T.append(val_T)
             
             # Read T_requested if available
             if 'T_requested' in row and row['T_requested'].strip():
@@ -157,7 +170,8 @@ def load_data(csv_path: str):
     for m in gammas:
         gammas[m] = np.array(gammas[m], dtype=np.float64)
     
-    return T, modes, gammas, T_requested
+    # control_key tells us whether T is actually temperature or mu
+    return T, modes, gammas, T_requested, control_key
 
 
 def get_color_and_alpha(m, max_m=8):
@@ -233,7 +247,7 @@ def get_color_and_alpha(m, max_m=8):
         return color, 1.0
 
 
-def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
+def plot_from_data(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Temperature, $T/T_F$"):
     """
     Plot gamma_m(T) from loaded data (without dividing by T^2).
     """
@@ -272,7 +286,7 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
                     linewidth = 2.0  # Thicker for blue (odd) modes
                 if m_int <= 1:
                     # For m=0, m=1: label as relaxing modes
-                    label = fr"$m={m_int}$ (relax)" if m_int in [0, 1] else fr"$m={m_int}$"
+                    label = fr"$m={m_int}$" if m_int in [0, 1] else fr"$m={m_int}$"
                     ax.loglog(T_plot, gm_plot, label=label, 
                              linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
                 else:
@@ -302,18 +316,18 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
             # For T^4: gamma = C_T4 * T^4
             C_T1 = gamma_ref / (T_mid ** 1)
             C_T2 = gamma_ref / (T_mid ** 2)
-            C_T4 = gamma_ref / (T_mid ** 4)
+            C_T4 = gamma_ref / (T_mid ** 3)
             
             # T^1 reference: C_T1 * T^1
             ref_T1 = C_T1 * (T_ref ** 1)
             # T^2 reference: C_T2 * T^2
             ref_T2 = C_T2 * (T_ref ** 2)
             # T^4 reference: C_T4 * T^4
-            ref_T4 = C_T4 * (T_ref ** 4)
+            ref_T4 = C_T4 * (T_ref ** 3)
             
-            ax.loglog(T_ref, ref_T1, ':', color='darkgreen', linewidth=3.5, alpha=0.8, label=r"$\propto T^1$")
-            ax.loglog(T_ref, ref_T2, '--', color='darkblue', linewidth=3.5, alpha=0.8, label=r"$\propto T^2$")
-            ax.loglog(T_ref, ref_T4, '-.', color='darkred', linewidth=3.5, alpha=0.8, label=r"$\propto T^4$")
+            ax.loglog(T_ref, ref_T1, ':', color='darkgreen', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^1$")
+            ax.loglog(T_ref, ref_T2, '--', color='darkblue', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^2$")
+            ax.loglog(T_ref, ref_T4, '-.', color='darkred', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^3$")
 
     # Set limits based on data curves only (not reference lines)
     if len(T_valid) > 0 and len(gamma_valid) > 0:
@@ -322,7 +336,7 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
         ax.set_xlim([T_valid.min(), T_valid.max()])
         ax.set_ylim([gamma_valid.min(), gamma_valid.max()])
 
-    ax.set_xlabel(r"Temperature, $T/T_F$")
+    ax.set_xlabel(x_label)
     ax.set_ylabel(r"Decay rate (eigenvalue), $\gamma_m$")
     ax.legend()
 
@@ -339,7 +353,7 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None):
     # Don't show here, will show both figures together at the end
 
 
-def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None):
+def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Temperature, $T/T_F$"):
     """
     Plot logarithmic derivative of the decay rate gamma_m to extract the local scaling exponent.
     
@@ -409,7 +423,7 @@ def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None):
                             ax.semilogx(T_mid, exponent_plot, 
                                       linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
     
-    ax.set_xlabel(r"Temperature, $T/T_F$")
+    ax.set_xlabel(x_label)
     ax.set_ylabel(r"Local scaling exponent, $\frac{d\log(\gamma_m)}{d\log(T)}$")
     ax.set_ylim([0, 6])  # Reasonable range for exponents (0 to 6)
     ax.legend(loc='best', fontsize=12)
@@ -462,29 +476,42 @@ def main():
         args.output_svg = f"{base}_from_csv.svg"
     
     print(f"Loading data from: {args.input}")
-    T, modes, gammas, T_requested = load_data(args.input)
+    T, modes, gammas, T_requested, control_key = load_data(args.input)
     
-    print(f"Loaded {len(T)} temperature points")
+    print(f"Loaded {len(T)} points")
     print(f"Modes: {modes}")
-    print(f"Temperature range: {T.min():.6g} to {T.max():.6g}")
+    if len(T) > 0:
+        print(f"Control range ({control_key}): {T.min():.6g} to {T.max():.6g}")
     
     if T_requested is not None:
         print(f"Requested temperature range: {T_requested.min():.6g} to {T_requested.max():.6g}")
     
-    # Plot main figure: gamma_m / T^2
-    plot_from_data(T, modes, gammas, args.output_png, args.output_svg)
-    
-    # Plot logarithmic derivative figure
-    # Use the same base name as the main plot
-    if args.output_png is not None:
-        base = os.path.splitext(args.output_png)[0]
+    # Restrict to modes m=1..4 as requested
+    modes_plot = np.array([m for m in modes if 1 <= int(m) <= 8], dtype=np.int32)
+    if modes_plot.size == 0:
+        modes_plot = modes
+
+    # Choose x-axis label depending on control parameter
+    if control_key.lower() == "mu":
+        x_label = r"Chemical potential, $\mu$"
     else:
-        base = os.path.splitext(args.input)[0]
+        x_label = r"Temperature, $T/T_F$"
+
+    # Plot main figure
+    plot_from_data(T, modes_plot, gammas, args.output_png, args.output_svg, x_label=x_label)
     
-    logderiv_png = f"{base}_logderiv.png"
-    logderiv_svg = f"{base}_logderiv.svg"
-    
-    plot_logarithmic_derivative(T, modes, gammas, logderiv_png, logderiv_svg)
+    # For mu-scan, skip logarithmic-derivative T-scaling plot
+    if control_key.lower() != "mu":
+        # Plot logarithmic derivative figure (for T-scan)
+        if args.output_png is not None:
+            base = os.path.splitext(args.output_png)[0]
+        else:
+            base = os.path.splitext(args.input)[0]
+        
+        logderiv_png = f"{base}_logderiv.png"
+        logderiv_svg = f"{base}_logderiv.svg"
+        
+        plot_logarithmic_derivative(T, modes_plot, gammas, logderiv_png, logderiv_svg, x_label=x_label)
     print("Plotting complete.")
 
 
