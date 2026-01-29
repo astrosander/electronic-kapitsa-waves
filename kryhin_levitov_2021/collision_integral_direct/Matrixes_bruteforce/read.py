@@ -25,7 +25,7 @@ plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
 
 # Specific file to analyze
-MATRIX_FILE = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_N320_dp0.032716515_T0.1.pkl"#M_Iee_N410_dp0.012247449_T0.01.pkl"
+MATRIX_FILE = r"D:\Downloads\28_1\Matrixes_bruteforce\M_Iee_N320_dp0.032716515_T0.1.pkl"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_N410_dp0.012247449_T0.01.pkl"
 #M_Iee_N320_dp0.032716515_T0.1.pkl"
 
 def build_centered_lattice(Nmax: int):
@@ -64,6 +64,11 @@ def reconstruct_px_py(meta):
 def wdot(u, v, w):
     """Weighted inner product: u^T W v"""
     return float(np.dot(u, w * v))
+
+
+def wnorm(u, w):
+    """Weighted norm: ||u||_W"""
+    return np.sqrt(max(wdot(u, u, w), 0.0))
 
 
 def w_orthonormalize(vecs, w, remove_basis=None):
@@ -186,6 +191,72 @@ def compute_general_eigenfunctions(Ma, meta, n_eigs=10):
     px, py = reconstruct_px_py(meta)
 
     return vals, vecs, px, py
+
+
+def print_conservation_residuals(Ma, meta, px, py):
+    """
+    Print relative residuals for candidate conserved vectors to diagnose
+    which combinations are (near) null modes of the collision operator.
+    """
+    w_active = meta["w_active"].astype(np.float64)
+    w_safe = np.clip(w_active, 1e-30, None)
+
+    # Collision operator A = -M in active space
+    if isinstance(Ma, csr_matrix):
+        A = -Ma
+    else:
+        A = csr_matrix(-Ma)
+
+    ones = np.ones(A.shape[0], dtype=np.float64)
+
+    cands = {
+        "eta:1":   ones,
+        "eta:px":  px,
+        "eta:py":  py,
+        "df:w":    w_safe,
+        "df:wpx":  w_safe * px,
+        "df:wpy":  w_safe * py,
+    }
+
+    scale = float(np.max(np.abs(A.data)) + 1e-30)
+
+    print("\n=== Conservation residuals (relative) ===", flush=True)
+    for name, v in cands.items():
+        r = A.dot(v)
+        num = np.linalg.norm(r)
+        den = np.linalg.norm(v) * scale + 1e-30
+        rel = num / den
+        print(f"{name:8s}  rel_resid = {rel:.3e}", flush=True)
+    print("=========================================\n", flush=True)
+
+
+def extract_from_span(V, w, target):
+    """
+    From the column span of V, pick v closest to target in W-norm:
+        v = argmin ||v - target||_W.
+    Returns a W-normalized vector v.
+    """
+    if V.size == 0:
+        return target / (wnorm(target, w) + 1e-300)
+
+    # Gram matrix in W-inner product
+    G = V.T @ (w[:, None] * V)
+    b = V.T @ (w * target)
+    coeff = np.linalg.solve(G, b)
+    v = V @ coeff
+    v /= (wnorm(v, w) + 1e-300)
+    return v
+
+
+def rayleigh_gamma(A, w, v):
+    """
+    Rayleigh quotient gamma = (v^T A v) / (v^T W v)
+    for the generalized problem -M v = gamma W v.
+    """
+    Av = A.dot(v)
+    num = float(np.dot(v, Av))
+    den = float(np.dot(v, w * v)) + 1e-300
+    return num / den
 
 
 def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
@@ -323,33 +394,68 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
 
 def ring_scatter(ax, px, py, val, title=""):
     """
-    Scatter in (px,py) with per-panel normalized colors and square markers,
-    matched to Iee_eigs_ringplot_nonparabolic.py "ring_scatter" style.
+    Render values on the (px,py) lattice as an image (imshow) with
+    per-panel normalized colors and pixel-perfect squares, without gaps.
     """
-    # Robust color limits, normalized per panel
-    vmax = float(np.max(np.abs(val))) if val.size > 0 else 1.0
-    if vmax <= 0:
-        vmax = 1.0
-    c_plot = val / vmax
+    # Unique x,y coordinates define the lattice
+    xs, ix = np.unique(px, return_inverse=True)
+    ys, iy = np.unique(py, return_inverse=True)
 
-    sc = ax.scatter(
-        px,
-        py,
-        c=c_plot,
-        s=RING_PIXEL_SIZE,
-        marker="s",
-        cmap="RdBu_r",
-        linewidths=0,
-        edgecolors="none",
+    ny = len(ys)
+    nx = len(xs)
+
+    grid = np.full((ny, nx), np.nan, dtype=float)
+    for k, (jx, jy) in enumerate(zip(ix, iy)):
+        grid[jy, jx] = val[k]
+
+    # Robust color limits, normalized per panel, ignoring NaNs
+    if np.all(~np.isfinite(grid)):
+        vmax = 1.0
+    else:
+        vmax = float(np.nanmax(np.abs(grid)))
+        if vmax <= 0 or not np.isfinite(vmax):
+            vmax = 1.0
+
+    vmin = -vmax
+
+    # Pixel edges in physical units
+    if nx > 1:
+        dx = float(np.min(np.diff(xs)))
+    else:
+        dx = 1.0
+    if ny > 1:
+        dy = float(np.min(np.diff(ys)))
+    else:
+        dy = 1.0
+
+    extent = [
+        xs[0] - dx / 2.0,
+        xs[-1] + dx / 2.0,
+        ys[0] - dy / 2.0,
+        ys[-1] + dy / 2.0,
+    ]
+
+    cmap = plt.get_cmap("RdBu_r").copy()
+    cmap.set_bad("white")
+
+    im = ax.imshow(
+        grid,
+        origin="lower",
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        extent=extent,
+        interpolation="nearest",
+        aspect="equal",
     )
-    ax.set_aspect("equal", "box")
+
     ax.set_title(title)
     ax.set_xticks([])
     ax.set_yticks([])
-    return sc
+    return im
 
 
-def plot_eigenvector_panel(eigenfunctions, eigenvalues, px, py, Theta, ms):
+def plot_eigenvector_panel(eigenfunctions, eigenvalues, px, py, Theta, ms, w):
     """Plot eigenvectors as a panel of 2D plots in (px, py) space for each angular mode m."""
     # Filter out None eigenfunctions
     valid_ms = [m for m in ms if eigenfunctions.get(m) is not None]
@@ -373,12 +479,15 @@ def plot_eigenvector_panel(eigenfunctions, eigenvalues, px, py, Theta, ms):
         ax = axes[idx]
         v = eigenfunctions[m]
         gamma = eigenvalues[m]
-        
+
+        # Plot η * f(1-f) = v * w to match δf representation
+        v_plot = v * w
+
         last_sc = ring_scatter(
             ax,
             px,
             py,
-            v,
+            v_plot,
             title=f"m={m},γ={gamma:.6e},Θ={Theta:.6g}",
         )
     
@@ -396,7 +505,7 @@ def plot_eigenvector_panel(eigenfunctions, eigenvalues, px, py, Theta, ms):
     plt.show()
 
 
-def plot_general_eigenvector_panel(vals, vecs, px, py, Theta, n_plot=10):
+def plot_general_eigenvector_panel(vals, vecs, px, py, Theta, w, n_plot=10):
     """
     Plot raw eigenvectors (no angular projection) as a panel of 2D plots
     in (px, py) space.
@@ -423,11 +532,14 @@ def plot_general_eigenvector_panel(vals, vecs, px, py, Theta, n_plot=10):
         v = vecs[:, i]
         gamma = vals[i]
 
+        # Plot η * f(1-f) = v * w
+        v_plot = v * w
+
         last_sc = ring_scatter(
             ax,
             px,
             py,
-            v,
+            v_plot,
             title=f"mode #{i+1}, γ={gamma:.6e}, Θ={Theta:.6g}",
         )
 
@@ -444,6 +556,81 @@ def plot_general_eigenvector_panel(vals, vecs, px, py, Theta, n_plot=10):
     # plt.show()
 
 
+def extract_and_plot_invariants_from_raw(Ma, meta, vals_raw, vecs_raw, px, py, w, Theta):
+    """
+    From the raw eigen-subspace, extract approximate density and momentum
+    invariants and plot them as η * f(1-f).
+    """
+    if vecs_raw.size == 0:
+        return
+
+    # Build collision operator A = -M (same convention as elsewhere)
+    if isinstance(Ma, csr_matrix):
+        A = -Ma
+    else:
+        A = csr_matrix(-Ma)
+    n = A.shape[0]
+    if REG_ABS > 0.0:
+        A = A + diags([REG_ABS] * n, 0, format="csr")
+
+    ones = np.ones_like(px)
+
+    # Use a modest number of lowest eigenvectors to span the near-null space
+    k0 = min(12, vecs_raw.shape[1])
+    V0 = vecs_raw[:, :k0]
+
+    # Extract density mode
+    v_rho = extract_from_span(V0, w, ones)
+
+    # Make px, py orthogonal to density first, then extract
+    px_ortho = px - wdot(v_rho, px, w) * v_rho
+    py_ortho = py - wdot(v_rho, py, w) * v_rho
+
+    v_px = extract_from_span(V0, w, px_ortho)
+    v_py = extract_from_span(V0, w, py_ortho)
+
+    # W-orthogonalize v_py against v_px
+    v_py = v_py - wdot(v_px, v_py, w) * v_px
+    v_py /= (wnorm(v_py, w) + 1e-300)
+
+    # Rayleigh gammas
+    gamma_rho = rayleigh_gamma(A, w, v_rho)
+    gamma_px = rayleigh_gamma(A, w, v_px)
+    gamma_py = rayleigh_gamma(A, w, v_py)
+
+    print("=== Invariants extracted from raw eigenspace (Rayleigh gammas) ===", flush=True)
+    print(f"rho: gamma = {gamma_rho:.6e}", flush=True)
+    print(f"px : gamma = {gamma_px:.6e}", flush=True)
+    print(f"py : gamma = {gamma_py:.6e}", flush=True)
+    print("=================================================================", flush=True)
+
+    # Quick overlaps to see mixing
+    print("Overlaps of first few raw eigenvectors with 1, px, py (W-inner product):", flush=True)
+    k_print = min(6, vecs_raw.shape[1])
+    for i in range(k_print):
+        vi = vecs_raw[:, i]
+        o1 = wdot(vi, ones, w)
+        opx = wdot(vi, px, w)
+        opy = wdot(vi, py, w)
+        print(f"mode {i:2d}: <v,1>_W={o1:+.3e}, <v,px>_W={opx:+.3e}, <v,py>_W={opy:+.3e}", flush=True)
+
+    # Plot the three approximate invariants as η * f(1-f)
+    fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+    labels = [("density (m=0)", v_rho), ("px (m=1,x)", v_px), ("py (m=1,y)", v_py)]
+
+    for ax, (lab, v) in zip(axes, labels):
+        v_plot = v * w
+        ring_scatter(ax, px, py, v_plot, title=f"{lab}, Θ={Theta:.6g}")
+
+    plt.suptitle("Approximate invariants from raw eigenspace (η·f(1-f))", fontsize=14, fontweight="bold", y=0.995)
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+
+    fname = "eigenvector_invariants_raw.svg"
+    plt.savefig(fname, dpi=300, bbox_inches="tight")
+    print(f"Saved: {fname}", flush=True)
+    # plt.show()
+
+
 if __name__ == "__main__":
     print("=== Loading matrix and computing eigenvectors ===", flush=True)
     
@@ -453,6 +640,8 @@ if __name__ == "__main__":
         Ma, meta = pickle.load(fp)
     
     Theta = float(meta.get("Theta", 0.0))
+    w_active_main = meta["w_active"].astype(np.float64)
+    w_safe_main = np.clip(w_active_main, 1e-30, None)
     print(f"Matrix shape: {Ma.shape}, type: {type(Ma).__name__}", flush=True)
     print(f"Temperature (Theta): {Theta:.6g}", flush=True)
     print(f"Computing eigenfunctions for angular modes: {ms}", flush=True)
@@ -460,6 +649,9 @@ if __name__ == "__main__":
     
     # Compute eigenfunctions for angular modes
     eigenfunctions, eigenvalues, px, py = compute_eigenfunctions_by_mode(Ma, meta, ms=ms)
+
+    # Diagnostics: check which candidate vectors are (near) conserved
+    print_conservation_residuals(Ma, meta, px, py)
 
     print()
     print("=== Summary: angular-mode eigenvalues ===", flush=True)
@@ -472,7 +664,7 @@ if __name__ == "__main__":
     # Plot panel of detected eigenvectors (by angular mode)
     print()
     print("=== Creating eigenvector panel by angular mode ===", flush=True)
-    plot_eigenvector_panel(eigenfunctions, eigenvalues, px, py, Theta, ms)
+    plot_eigenvector_panel(eigenfunctions, eigenvalues, px, py, Theta, ms, w_safe_main)
 
     # Also compute and plot raw eigenvectors before angular-mode detection
     print()
@@ -483,5 +675,9 @@ if __name__ == "__main__":
     print("Raw eigenvalues (first 10):", vals_raw, flush=True)
 
     print()
+    print("=== Extracting and plotting invariant combinations from raw eigenspace ===", flush=True)
+    extract_and_plot_invariants_from_raw(Ma, meta, vals_raw, vecs_raw, px_raw, py_raw, w_safe_main, Theta)
+
+    print()
     print("=== Creating raw eigenvector panel ===", flush=True)
-    plot_general_eigenvector_panel(vals_raw, vecs_raw, px_raw, py_raw, Theta, n_plot=n_eigs)
+    plot_general_eigenvector_panel(vals_raw, vecs_raw, px_raw, py_raw, Theta, w_safe_main, n_plot=n_eigs)
