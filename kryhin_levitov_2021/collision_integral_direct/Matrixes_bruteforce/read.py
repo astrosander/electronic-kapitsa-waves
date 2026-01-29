@@ -29,7 +29,7 @@ plt.rcParams["legend.frameon"] = False
 MATRIX_FILE = r""  # leave empty when using MATRIX_DIR batch mode
 
 # Directory with many matrices (batch mode over mu)
-MATRIX_DIR = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu1"
+MATRIX_DIR = "Matrixes_bruteforce"#r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu1"
 
 # CSV output file (for batch mode)
 CSV_OUT = "gamma_vs_mu_T0.1.csv"

@@ -26,10 +26,11 @@ plt.rcParams['legend.fontsize'] = 16
 plt.rcParams['figure.titlesize'] = 20
 
 # Default input/output filenames
-DEFAULT_IN_CSV = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu001\gamma_vs_mu_T0.1.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu\gamma_vs_mu_T0.1.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\gamma_vs_T_mu0p1_U1.csv"#"gamma_vs_T_mu0p1_U1.csv"
-DEFAULT_OUT_PNG = "Eigenvals_bruteforce_generalized_from_csv.png"
-DEFAULT_OUT_SVG = "Eigenvals_bruteforce_generalized_from_csv.svg"
+DEFAULT_IN_CSV = r"D:\Downloads\28_1\test\10.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu001\gamma_vs_mu_T0.1.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu\gamma_vs_mu_T0.1.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\gamma_vs_T_mu0p1_U1.csv"#"gamma_vs_T_mu0p1_U1.csv"
+BASE_DIR = r"D:\Downloads\28_1\test"
 
+DEFAULT_OUT_PNG = f"{DEFAULT_IN_CSV.replace(BASE_DIR, '')}.png"
+DEFAULT_OUT_SVG = f"{DEFAULT_IN_CSV.replace(BASE_DIR, '')}.svg"
 
 def load_data(csv_path: str):
     """
@@ -55,31 +56,45 @@ def load_data(csv_path: str):
         
         # Check for formats: "m0c, m1c" (conserved), "m0r, m1r" (relaxing), "m2, m3, ..." (regular),
         # and old formats: "m0, m1, ..." and "gamma_0, gamma_1, ..."
-        control_key = None  # "T" or "mu" depending on CSV
+        control_key = None  # "T", "Theta", or "mu" depending on CSV
+        
+        # First pass: prioritize temperature columns (T or Theta) over mu
+        for field in fieldnames:
+            field_stripped = field.strip()
+            low = field_stripped.lower()
+            # Prioritize temperature columns
+            if low in ("t", "theta"):
+                control_key = field_stripped
+                break  # Found temperature column, use it
+        
+        # Second pass: if no temperature column found, look for mu
+        if control_key is None:
+            for field in fieldnames:
+                field_stripped = field.strip()
+                low = field_stripped.lower()
+                if low == "mu":
+                    control_key = field_stripped
+                    break
+        
+        # Now process all fields for mode detection
         for field in fieldnames:
             field_stripped = field.strip()
             low = field_stripped.lower()
 
-            # Detect control parameter column once (temperature or mu)
-            if control_key is None and low in ("t", "mu"):
-                control_key = field_stripped
-
             # New format: m0r, m1r (relaxing modes) - treat as m=0, m=1 for plotting
-            if field_stripped in ['m0r', 'm1r', 'm0']:
+            if field_stripped in ['m0r', 'm1r']:
                 m = 0 if field_stripped == 'm0r' else 1
                 modes_set.add(m)
                 gammas[m] = []
             # New format: m0c, m1c (conserved) - skip these (always 0)
-            elif field_stripped in ['m0c', 'm1c', 'm1']:
+            elif field_stripped in ['m0c', 'm1c']:
                 continue  # Skip conserved modes
-            # New format: m2, m3, ... (regular modes)
+            # Regular format: m0, m1, m2, m3, ... (all modes)
             elif field_stripped.startswith('m') and len(field_stripped) > 1:
                 try:
                     m = int(field_stripped[1:])  # Extract number after 'm'
-                    # Skip m0, m1 if they exist (use m0r, m1r instead)
-                    if m >= 2:
-                        modes_set.add(m)
-                        gammas[m] = []
+                    modes_set.add(m)
+                    gammas[m] = []
                 except (ValueError, IndexError):
                     pass
             # Old format: gamma_0, gamma_1, ...
@@ -94,7 +109,7 @@ def load_data(csv_path: str):
         if len(modes_set) == 0:
             raise ValueError("No mode columns found in CSV. Expected columns like 'm0', 'm1', ... or 'gamma_0', 'gamma_1', ...")
         if control_key is None:
-            raise ValueError("No control parameter column found in CSV. Expected 'T' or 'mu'.")
+            raise ValueError("No control parameter column found in CSV. Expected 'T', 'Theta', or 'mu'.")
         
         # Read data rows
         for row in reader:
@@ -122,7 +137,8 @@ def load_data(csv_path: str):
             
             # Read gammas for each mode
             for m in modes_set:
-                # For m=0, m=1: try m0r, m1r first (relaxing modes)
+                # Try different formats in order of preference
+                # 1. Try m0r, m1r (relaxing modes) for m=0,1
                 if m in [0, 1]:
                     gamma_key = f'm{m}r'  # m0r, m1r
                     if gamma_key in row and row[gamma_key].strip():
@@ -131,25 +147,17 @@ def load_data(csv_path: str):
                             continue
                         except (ValueError, TypeError):
                             pass
-                    # Fallback to old format: m0, m1
-                    gamma_key = f'm{m}'
-                    if gamma_key in row and row[gamma_key].strip():
-                        try:
-                            gammas[m].append(float(row[gamma_key]))
-                            continue
-                        except (ValueError, TypeError):
-                            pass
-                else:
-                    # For m>=2: try m2, m3, ...
-                    gamma_key = f'm{m}'
-                    if gamma_key in row and row[gamma_key].strip():
-                        try:
-                            gammas[m].append(float(row[gamma_key]))
-                            continue
-                        except (ValueError, TypeError):
-                            pass
                 
-                # Try old format: gamma_0, gamma_1, ...
+                # 2. Try standard format: m0, m1, m2, m3, ...
+                gamma_key = f'm{m}'
+                if gamma_key in row and row[gamma_key].strip():
+                    try:
+                        gammas[m].append(float(row[gamma_key]))
+                        continue
+                    except (ValueError, TypeError):
+                        pass
+                
+                # 3. Try old format: gamma_0, gamma_1, ...
                 gamma_key = f'gamma_{m}'
                 if gamma_key in row and row[gamma_key].strip():
                     try:
@@ -247,7 +255,7 @@ def get_color_and_alpha(m, max_m=8):
         return color, 1.0
 
 
-def plot_from_data(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Temperature, $T/T_F$"):
+def plot_from_data(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Temperature, $T/T_F$", control_key="T"):
     """
     Plot gamma_m(T) from loaded data (without dividing by T^2).
     """
@@ -311,28 +319,43 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Tempe
                 break
         
         if gamma_ref is not None and gamma_ref > 0:
-            # For mu^1: gamma = C_mu1 * mu^1
-            # For mu^2: gamma = C_mu2 * mu^2
-            # For mu^3: gamma = C_mu3 * mu^3
-            # For mu^4: gamma = C_mu4 * mu^4
-            C_mu1 = gamma_ref / (T_mid ** 1)
-            C_mu2 = gamma_ref / (T_mid ** 2)
-            C_mu3 = gamma_ref / (T_mid ** 3)
-            C_mu4 = gamma_ref / (T_mid ** 4)
+            # Determine if this is a mu-sweep or T-sweep
+            is_mu_sweep = (control_key.lower() == "mu")
             
-            # mu^1 reference: C_mu1 * mu^1
-            ref_mu1 = C_mu1 * (T_ref ** 1)
-            # mu^2 reference: C_mu2 * mu^2
-            ref_mu2 = C_mu2 * (T_ref ** 2)
-            # mu^3 reference: C_mu3 * mu^3
-            ref_mu3 = C_mu3 * (T_ref ** 3)
-            # mu^4 reference: C_mu4 * mu^4
-            ref_mu4 = C_mu4 * (T_ref ** 4)
-            
-            ax.loglog(T_ref, ref_mu1, ':', color='darkgreen', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^1$")
-            ax.loglog(T_ref, ref_mu2, '--', color='darkblue', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^2$")
-            ax.loglog(T_ref, ref_mu3, '-.', color='darkorange', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^3$")
-            ax.loglog(T_ref, ref_mu4, '--', color='darkred', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^4$")
+            if is_mu_sweep:
+                # For mu-sweeps: show mu^1, mu^2, mu^3, mu^4 reference lines
+                C_mu1 = gamma_ref / (T_mid ** 1)
+                C_mu2 = gamma_ref / (T_mid ** 2)
+                C_mu3 = gamma_ref / (T_mid ** 3)
+                C_mu4 = gamma_ref / (T_mid ** 4)
+                
+                ref_mu1 = C_mu1 * (T_ref ** 1)
+                ref_mu2 = C_mu2 * (T_ref ** 2)
+                ref_mu3 = C_mu3 * (T_ref ** 3)
+                ref_mu4 = C_mu4 * (T_ref ** 4)
+                
+                ax.loglog(T_ref, ref_mu1, ':', color='darkgreen', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^1$")
+                ax.loglog(T_ref, ref_mu2, '--', color='darkblue', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^2$")
+                ax.loglog(T_ref, ref_mu3, '-.', color='darkorange', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^3$")
+                ax.loglog(T_ref, ref_mu4, '--', color='darkred', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^4$")
+            else:
+                # For T-sweeps or Theta-sweeps: show T^2, T^4, and T^8 reference lines
+                C_T2 = gamma_ref / (T_mid ** 2)
+                C_T4 = gamma_ref / (T_mid ** 4)
+                C_T8 = gamma_ref / (T_mid ** 8)
+                
+                ref_T2 = C_T2 * (T_ref ** 2)
+                ref_T4 = C_T4 * (T_ref ** 4)
+                ref_T8 = C_T8 * (T_ref ** 8)
+                
+                if control_key.lower() == "theta":
+                    ax.loglog(T_ref, ref_T2, '--', color='darkblue', linewidth=3.5, alpha=0.8, label=r"$\propto T^2$")
+                    ax.loglog(T_ref, ref_T4, '-.', color='darkred', linewidth=3.5, alpha=0.8, label=r"$\propto T^4$")
+                    ax.loglog(T_ref, ref_T8, ':', color='purple', linewidth=3.5, alpha=0.8, label=r"$\propto T^8$")
+                else:
+                    ax.loglog(T_ref, ref_T2, '--', color='darkblue', linewidth=3.5, alpha=0.8, label=r"$\propto T^2$")
+                    ax.loglog(T_ref, ref_T4, '-.', color='darkred', linewidth=3.5, alpha=0.8, label=r"$\propto T^4$")
+                    ax.loglog(T_ref, ref_T8, ':', color='purple', linewidth=3.5, alpha=0.8, label=r"$\propto T^8$")
 
     # Set limits based on data curves only (not reference lines)
     if len(T_valid) > 0 and len(gamma_valid) > 0:
@@ -378,12 +401,12 @@ def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None, x_
     T_ref = T[np.isfinite(T) & (T > 0)]
     if len(T_ref) > 0:
         if control_key.lower() == "mu":
-            # For mu-sweeps: show only mu^4 reference line
+            # For mu-sweeps: show only mu^2 reference line
             ax.axhline(y=2.0, color='red', linestyle='-.', linewidth=1.0, alpha=0.5, label=r"$\mu^2$")
         else:
-            # For T-sweeps: show T^2 and T^4 reference lines
-            ax.axhline(y=2.0, color='blue', linestyle='--', linewidth=1.0, alpha=0.5, label=r"$T^2$")
-            ax.axhline(y=4.0, color='red', linestyle='-.', linewidth=1.0, alpha=0.5, label=r"$T^4$")
+            # For T-sweeps or Theta-sweeps: show T^2 and T^4 reference lines
+            ax.axhline(y=2.0, color='blue', linestyle='--', linewidth=1.0, alpha=0.5, label=r"$\Theta^2$")
+            ax.axhline(y=4.0, color='red', linestyle='-.', linewidth=1.0, alpha=0.5, label=r"$\Theta^4$")
     
     for m in modes:
         m_int = int(m)
@@ -401,7 +424,7 @@ def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None, x_
                 # Compute logarithmic derivative: d(log(γ)) / d(log(T))
                 # Use span of 5 points to reduce noise: log(γ_{i+span}/γ_i) / log(T_{i+span}/T_i)
                 # Use smaller span if we don't have enough points
-                span = min(40, max(2, len(T_plot) - 1))
+                span = min(6, max(2, len(T_plot) - 1))
                 if len(T_plot) > 1:
                     T_mid_list = []
                     exponent_list = []
@@ -452,9 +475,11 @@ def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None, x_
     # Update y-axis label based on control parameter
     if control_key.lower() == "mu":
         ax.set_ylabel(r"$\frac{d\log(\gamma_m)}{d\log(\mu)}$")
+    elif control_key.lower() == "theta":
+        ax.set_ylabel(r"$\frac{d\log(\gamma_m)}{d\log(\Theta)}$")
     else:
         ax.set_ylabel(r"$\frac{d\log(\gamma_m)}{d\log(T)}$")
-    ax.set_ylim([0, 3])  # Reasonable range for exponents (0 to 6)
+    ax.set_ylim([0, 10])  # Reasonable range for exponents (0 to 6)
     ax.legend(loc='best', fontsize=12, frameon=False)
     ax.grid(True, alpha=0.3, linestyle='--')
     
@@ -516,18 +541,20 @@ def main():
         print(f"Requested temperature range: {T_requested.min():.6g} to {T_requested.max():.6g}")
     
     # Restrict to modes m=1..4 as requested
-    modes_plot = np.array([m for m in modes if 1 <= int(m) <= 8], dtype=np.int32)
+    modes_plot = np.array([m for m in modes if 1 <= int(m) <= 30], dtype=np.int32)
     if modes_plot.size == 0:
         modes_plot = modes
 
     # Choose x-axis label depending on control parameter
     if control_key.lower() == "mu":
         x_label = r"$\mu$"
+    elif control_key.lower() == "theta":
+        x_label = r"$\Theta = T/T_F$"
     else:
         x_label = r"Temperature, $T/T_F$"
 
     # Plot main figure
-    plot_from_data(T, modes_plot, gammas, args.output_png, args.output_svg, x_label=x_label)
+    plot_from_data(T, modes_plot, gammas, args.output_png, args.output_svg, x_label=x_label, control_key=control_key)
     
     # Plot logarithmic derivative figure (for both T-scan and mu-scan)
     if args.output_png is not None:

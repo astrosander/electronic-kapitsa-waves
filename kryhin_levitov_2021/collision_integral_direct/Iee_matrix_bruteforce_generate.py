@@ -115,7 +115,7 @@ THETA_PBOX_SWITCH = 1e-3
 # PATCH (strong): push much higher ring accuracy.
 # Smaller dp is necessary to expose clean T^2 (even m) and especially T^4 (odd m).
 # We will *not* try to keep file sizes constant here; accuracy first.
-RING_PIXEL_BOOST = 0.5      # strong; try 2.5–4.0
+RING_PIXEL_BOOST = 1.0      # strong; try 2.5–4.0
 RING_SHELL_TIGHTEN = 0.45   # tighter ring (suppresses bulk contamination)
 
 # Compute pixel ratios for both regions
@@ -167,10 +167,11 @@ HBAR = 1.0         # ħ (set 1 for dimensionless)
 # Thetas = (np.geomspace(1e-4, 1e-3, 12).tolist()
 #           + [0.0012, 0.0016, 0.002, 0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
 #              0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28])
-Thetas = [1]
+Thetas = np.geomspace(1e-4, 1, 100)
+#[1]
 
 # Sweep over chemical potential values mu in dimensionless units (energy units of MU_PHYS)
-MU_LIST = np.geomspace(1e-2, 1e2, 100)
+MU_LIST = [0.1, 1, 10]#np.geomspace(1e-2, 1e2, 100)
 # active-shell cutoff: only include states where f(1-f) > cutoff
 ACTIVE_CUTOFF = 1e-8
 
@@ -600,8 +601,6 @@ def main():
     # Sweep over mu values
     global MU_PHYS
     for mu in MU_LIST:
-        if mu<1:
-            continue
         MU_PHYS = float(mu)
         print(f"\n===== Generating matrices for mu={MU_PHYS:.6g} =====")
         for T in Thetas:
