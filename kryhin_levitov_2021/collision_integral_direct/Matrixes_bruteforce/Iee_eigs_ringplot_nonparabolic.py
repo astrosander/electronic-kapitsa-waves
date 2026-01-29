@@ -36,6 +36,16 @@ from scipy.sparse.linalg import eigsh, LinearOperator
 
 import matplotlib.pyplot as plt
 
+# plt.rcParams['text.usetex'] = True
+plt.rcParams['font.family'] = 'serif'
+plt.rcParams["legend.frameon"] = False
+plt.rcParams['font.size'] = 16
+plt.rcParams['axes.labelsize'] = 16
+plt.rcParams['axes.titlesize'] = 16
+plt.rcParams['xtick.labelsize'] = 16
+plt.rcParams['ytick.labelsize'] = 16
+plt.rcParams['legend.fontsize'] = 16
+plt.rcParams['figure.titlesize'] = 16
 
 # ------------------------- band helpers (FULL dispersion) -------------------------
 
@@ -338,6 +348,11 @@ def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, includ
     chosen = {}
     diag = {}
 
+    # Build invariant basis for orthogonalization (same as m>=2)
+    inv_basis = [t_den, t_px, t_py]
+    if include_energy_invariant:
+        inv_basis.append(t_E)
+
     # pick best eigenvector for each invariant by overlap, and mark as used
     if have_inv_evecs:
         # Find momentum invariants (and optionally energy)
@@ -373,12 +388,15 @@ def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, includ
     else:
         # Momentum invariants were projected out; pick m=0 based on density availability
         if have_density_evec:
-            # Pick m=0 as best match to density template
+            # Apply same logic as m>=2: orthogonalize density template against other invariants
+            # Orthogonalize against momentum (and energy if included), but not against itself
+            t_den_ortho = orthogonalize_to_basis(t_den, [t_px, t_py] + ([t_E] if include_energy_invariant else []), w)
+            # Pick m=0 as best match to orthogonalized density template
             best_i, best_s = None, -1.0
             for i in range(k):
                 if i in used:
                     continue
-                s = abs(overlap(eta[:, i], t_den, w))
+                s = abs(overlap(eta[:, i], t_den_ortho, w))
                 if s > best_s:
                     best_s, best_i = s, i
             chosen[0] = best_i
@@ -430,13 +448,16 @@ def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, includ
             "note": f"frac={frac:.3e} < {FRAC_THR}; current≈momentum",
         }
     else:
-        # use decaying-current mode from j_perp
+        # Apply same logic as m>=2: orthogonalize j_perp against full invariant basis
+        jperp_x_ortho = orthogonalize_to_basis(jperp_x, inv_basis, w)
+        jperp_y_ortho = orthogonalize_to_basis(jperp_y, inv_basis, w)
+        # use decaying-current mode from orthogonalized j_perp
         best_i, best_s = None, -1.0
         for i in range(k):
             if i in used:
                 continue
-            ovx = overlap(eta[:, i], jperp_x, w)
-            ovy = overlap(eta[:, i], jperp_y, w)
+            ovx = overlap(eta[:, i], jperp_x_ortho, w)
+            ovy = overlap(eta[:, i], jperp_y_ortho, w)
             s = float(np.sqrt(ovx * ovx + ovy * ovy))
             if s > best_s:
                 best_s, best_i = s, i
@@ -457,9 +478,7 @@ def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, includ
 
     # ---------- Angular harmonics m>=2 ----------
     # Remove invariant subspace from angular templates to avoid accidentally selecting conserved modes
-    inv_basis = [t_den, t_px, t_py]
-    if include_energy_invariant:
-        inv_basis.append(t_E)
+    # (inv_basis already defined earlier)
 
     for m in range(2, mmax + 1):
         tc = orthogonalize_to_basis(np.cos(m * theta), inv_basis, w)
@@ -485,19 +504,40 @@ def pick_modes_by_overlap(gammas, eta, w, theta, px, py, P, meta, mmax=8, includ
 # ------------------------- plotting -------------------------
 
 def ring_scatter(ax, px, py, val, title=""):
-    # Robust color limits
-    vmax = np.percentile(np.abs(val), 99.0)
+    # Robust color limits, normalized *per panel*
+    vmax = float(np.max(np.abs(val))) if val.size > 0 else 1.0
     if vmax <= 0:
         vmax = 1.0
-    sc = ax.scatter(px, py, c=val, s=6, vmin=-vmax, vmax=vmax)
+    c_plot = val / vmax
+
+    # Choose square marker size based on number of k-points so the ring looks filled
+    n_pts = len(px)
+    if n_pts < 200:
+        msize = 60  # few points → make squares large
+    elif n_pts < 1000:
+        msize = 16  # typical resolution for these files
+    else:
+        msize = 6   # very dense sampling → smaller squares
+
+    # Use square "pixel-like" markers without edges to avoid white gaps between points
+    sc = ax.scatter(
+        px,
+        py,
+        c=c_plot,
+        s=msize,
+        marker="s",
+        cmap="RdBu_r",
+        linewidths=0,
+        edgecolors="none",
+    )
     ax.set_aspect("equal", "box")
-    ax.set_title(title, fontsize=10)
+    ax.set_title(title)
     ax.set_xticks([])
     ax.set_yticks([])
     return sc
 
-def make_figure(px, py, modes, gammas, mu_phys, U_band, Theta, out_prefix, eta0_override=None):
-    fig, axes = plt.subplots(3, 3, figsize=(11, 10))
+def make_figure(px, py, modes, gammas, mu_phys, U_band, Theta, out_prefix, w, eta0_override=None):
+    fig, axes = plt.subplots(3, 3, figsize=(10.2, 10))
     axes = axes.ravel()
 
     mlist = list(range(0, 9))
@@ -516,22 +556,34 @@ def make_figure(px, py, modes, gammas, mu_phys, U_band, Theta, out_prefix, eta0_
             else:
                 val = modes["_eta"][:, idx]
                 g = gammas[idx]
+        # Multiply by f*(1-f) = w to plot eta*f*(1-f)
+        val = val * w
+        # LaTeX-safe title (avoid raw Unicode when text.usetex=True)
+        # Format gamma as a·10^{b} instead of 1e{b}
+        g_str = f"{g:.3e}"
+        mant_str, exp_str = g_str.split("e")
+        exp_int = int(exp_str)
+        title = fr"$m={m},\ \gamma={mant_str}\cdot 10^{{{exp_int}}}$"
         last_sc = ring_scatter(
-            axes[j], px, py, val,
-            title=f"m={m}   γ={g:.3e}"
+            axes[j],
+            px,
+            py,
+            val,
+            title=title,
         )
 
-    fig.suptitle(f"Non-parabolic Iee modes on active shell | μ={mu_phys:g}, U={U_band:g}, Θ={Theta:g}", fontsize=12)
+    # LaTeX-safe super-title using math mode for Greek symbols
+    fig.suptitle(fr"$\mu={mu_phys:g},\ U={U_band:g},\ \Theta={Theta:g}$")
 
     # Add one shared colorbar
-    cbar = fig.colorbar(last_sc, ax=axes.tolist(), shrink=0.85, pad=0.02)
-    cbar.set_label("η(px,py)")
+    # cbar = fig.colorbar(last_sc, ax=axes.tolist(), shrink=0.85, pad=0.02)
+    # cbar.set_label("η(px,py)")
 
-    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    fig.tight_layout(rect=[0, 0, 1, 0.98])
 
     png = out_prefix + ".png"
     pdf = out_prefix + ".pdf"
-    # fig.savefig(png, dpi=250)
+    fig.savefig(png, dpi=250)
     # fig.savefig(pdf)
     print(f"Saved: {png}")
     print(f"Saved: {pdf}")
@@ -786,7 +838,7 @@ def main():
         # Plot 3x3 (m=0..8)
         base = os.path.splitext(os.path.basename(path))[0]
         out_prefix = f"ring_modes_{base}_mu{mu_phys:g}_U{U_band:g}_T{Theta:g}"
-        make_figure(px, py, chosen, gammas, mu_phys, U_band, Theta, out_prefix, eta0_override=eta0_override)
+        make_figure(px, py, chosen, gammas, mu_phys, U_band, Theta, out_prefix, w, eta0_override=eta0_override)
 
         if args.show:
             plt.show()
@@ -796,3 +848,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+#python Iee_eigs_ringplot_nonparabolic.py --dir mu10 --k 80 --mmax 8 --csv_out gamma_vs_T_mu1_U1.csv --csv_overwrite
+#python Iee_eigs_ringplot_nonparabolic.py --pkl "D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_N320_dp0.032716515_T0.1.pkl" --k 80 --mmax 8 --csv_out gamma_vs_T_mu1_U1.csv --csv_overwrite
