@@ -25,7 +25,7 @@ plt.rcParams['font.family'] = 'serif'
 plt.rcParams["legend.frameon"] = False
 
 # Specific file to analyze
-MATRIX_FILE = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_nonparabolic_mu1_U10_N320_dp0.04626814_T0.1.pkl"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_nonparabolic_mu10_U1_N320_dp0.04626814_T0.1.pkl"#"D:\Downloads\28_1\Matrixes_bruteforce\M_Iee_N320_dp0.04626814_T0.1.pkl"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_N410_dp0.012247449_T0.01.pkl"
+MATRIX_FILE = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_nonparabolic_mu1_U10_N320_dp0.04626814_T0.1.pkl"#r"D:\Downloads\28_1\Matrixes_bruteforce\M_Iee_N320_dp0.04626814_T0.1.pkl"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_N410_dp0.012247449_T0.01.pkl"
 #M_Iee_N320_dp0.032716515_T0.1.pkl"
 
 def build_centered_lattice(Nmax: int):
@@ -59,52 +59,6 @@ def reconstruct_px_py(meta):
     py = dp * (ny_active.astype(np.float64) + shift_y)
     
     return px, py
-
-
-def _alpha_disp_from_meta(meta):
-    """
-    Backward-compatible: if old files don't have dispersion metadata, assume parabolic.
-    """
-    disp = str(meta.get("dispersion", "parabolic"))
-    if "alpha" in meta:
-        alpha = float(meta["alpha"])
-    else:
-        mu = float(meta.get("mu_phys", 1.0))
-        U  = float(meta.get("U_band", 0.0))
-        alpha = U / mu if mu > 0 else 0.0
-    return alpha, disp
-
-
-def deps_dP_dimless(P, alpha, disp):
-    """
-    d eps / d p in dimensionless variables used by the generator.
-    Must match generator's definitions.
-    """
-    P = np.asarray(P, dtype=np.float64)
-    if disp == "parabolic":
-        return 2.0 * P
-    if disp == "nonparabolic":
-        a = float(alpha)
-        denom = np.sqrt(a * a + (1.0 + 2.0 * a) * (P * P))
-        return (1.0 + 2.0 * a) * P / np.maximum(denom, 1e-300)
-    raise ValueError(f"Unknown dispersion={disp!r}")
-
-
-def current_basis_vectors(meta, px, py):
-    """
-    Build current/velocity harmonic components:
-        jx ~ v(p) cos(theta),  jy ~ v(p) sin(theta),
-    where v(p)=d eps/dp for the dimensionless dispersion.
-    """
-    P = np.sqrt(px * px + py * py)
-    alpha, disp = _alpha_disp_from_meta(meta)
-    vmag = deps_dP_dimless(P, alpha, disp)
-    invP = 1.0 / np.maximum(P, 1e-300)
-    cx = px * invP
-    cy = py * invP
-    jx = vmag * cx
-    jy = vmag * cy
-    return jx, jy
 
 
 def wdot(u, v, w):
@@ -254,14 +208,11 @@ def print_conservation_residuals(Ma, meta, px, py):
         A = csr_matrix(-Ma)
 
     ones = np.ones(A.shape[0], dtype=np.float64)
-    jx, jy = current_basis_vectors(meta, px, py)
 
     cands = {
         "eta:1":   ones,
         "eta:px":  px,
         "eta:py":  py,
-        "eta:vx":  jx,
-        "eta:vy":  jy,
         "df:w":    w_safe,
         "df:wpx":  w_safe * px,
         "df:wpy":  w_safe * py,
@@ -320,9 +271,6 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     P = np.sqrt(px * px + py * py)
     Theta = float(meta.get("Theta", 0.0))
     dp = float(meta.get("dp", 0.0))
-
-    # Current basis components (vx, vy)
-    jx, jy = current_basis_vectors(meta, px, py)
     
     # Collision operator: -M v = gamma W v
     if isinstance(Ma, csr_matrix):
@@ -345,7 +293,7 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
     if REG_ABS > 0.0:
         A = A + diags([REG_ABS] * n, 0, format="csr")
     
-    # Invariants under normal e-e collisions: density + momentum (px,py)
+    # Invariants: density and momentum
     inv_vecs = [np.ones(n, dtype=np.float64), px.copy(), py.copy()]
     
     # W-orthonormalize invariants (density + px + py)
@@ -370,31 +318,14 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
             # m=0: constant mode (conserved density)
             u0 = inv_orth[0] if len(inv_orth) > 0 else np.ones(n, dtype=np.float64) / np.sqrt(n)
             eigenfunctions[m] = u0
-            # Report Rayleigh gamma for diagnostics (should be ~0)
-            gamma0 = rayleigh_gamma(A, w_safe, u0)
-            eigenvalues[m] = float(max(gamma0, 0.0))
-            print(f"  [m={m}] density mode: gamma(Rayleigh)={gamma0:.6e} (should be ~0)")
+            eigenvalues[m] = 0.0
+            print(f"  [m={m}] density mode: gamma=0.0 (conserved)")
             continue
         
-        if m == 1:
-            # m=1 in *this project* represents the CURRENT (velocity) harmonic.
-            # To obtain a finite relaxation rate in non-parabolic bands, we must
-            # remove the conserved density+momentum subspace first; otherwise the
-            # current basis overlaps the exact momentum zero-modes and returns gamma~0.
-            remove = inv_orth if len(inv_orth) > 0 else None
-
-            # Allow radial structure in current (important when v(p) varies across the shell)
-            sigma_p = max(RADIAL_SIGMA_P_MULT * (0.5 * Theta), 4.0 * dp, 1e-12)
-            z = (P - 1.0) / sigma_p
-            g = np.exp(-0.5 * z * z)
-
-            basis = []
-            for kk in range(int(RADIAL_BASIS_K)):
-                rk = (z ** kk)
-                basis.append(g * rk * jx)
-                basis.append(g * rk * jy)
-
-            U_list = w_orthonormalize(basis, w_safe, remove_basis=remove)
+        if m <-1:#== 1:
+            # m=1 *is* momentum conservation
+            remove = inv_orth[:1] if len(inv_orth) > 0 else None
+            U_list = w_orthonormalize([px.copy(), py.copy()], w_safe, remove_basis=remove)
         else:
             # For m>=2, allow radial structure (P-1)^k * cos/sin(mθ)
             remove = inv_orth[:1] if len(inv_orth) > 0 else None
@@ -412,24 +343,9 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
             U_list = w_orthonormalize(basis, w_safe, remove_basis=remove)
         
         if len(U_list) == 0:
-            if m == 1:
-                # Parabolic/Galilean regime: current lies entirely in conserved momentum subspace.
-                # In that case, the "relaxing" current component is numerically zero -> gamma=0.
-                # We return the conserved drift-like x-current proxy for plotting.
-                u = jx.copy()
-                # Remove density component only (so it looks like a dipole)
-                if len(inv_orth) > 0:
-                    u = u - wdot(inv_orth[0], u, w_safe) * inv_orth[0]
-                nrm = np.sqrt(max(wdot(u, u, w_safe), 0.0))
-                if nrm > 1e-30:
-                    u /= nrm
-                eigenfunctions[m] = u
-                eigenvalues[m] = 0.0
-                print(f"  [m={m}] current basis fully conserved (after removing invariants): gamma=0.0")
-            else:
-                print(f"  [m={m}] No valid basis, skipping")
-                eigenfunctions[m] = None
-                eigenvalues[m] = np.nan
+            print(f"  [m={m}] No valid basis, skipping")
+            eigenfunctions[m] = None
+            eigenvalues[m] = np.nan
             continue
         
         # Project operator onto basis: C = U^T A U
@@ -459,14 +375,14 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
         if nrm > 1e-30:
             u = u / nrm
         
-        # Optional: make m=1 plot stable by aligning with +jx (x-current direction)
-        if m == 1:
-            jx_proj = abs(wdot(u, jx, w_safe))
-            jy_proj = abs(wdot(u, jy, w_safe))
-            if jx_proj >= jy_proj:
-                u *= np.sign(wdot(u, jx, w_safe) + 1e-300)
+        # Optional: make m=1 plot stable by aligning with +px if it's that mode
+        if m<-1: #== 1:
+            px_proj = abs(wdot(u, px, w_safe))
+            py_proj = abs(wdot(u, py, w_safe))
+            if px_proj >= py_proj:
+                u *= np.sign(wdot(u, px, w_safe) + 1e-300)
             else:
-                u *= np.sign(wdot(u, jy, w_safe) + 1e-300)
+                u *= np.sign(wdot(u, py, w_safe) + 1e-300)
         
         eigenfunctions[m] = u
         eigenvalues[m] = gamma
@@ -752,7 +668,7 @@ if __name__ == "__main__":
 
     # Also compute and plot raw eigenvectors before angular-mode detection
     print()
-    n_eigs=12
+    n_eigs=16
     print("=== Computing raw eigenfunctions (no angular-mode projection) ===", flush=True)
     vals_raw, vecs_raw, px_raw, py_raw = compute_general_eigenfunctions(Ma, meta, n_eigs=n_eigs)
 
