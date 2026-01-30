@@ -9,7 +9,7 @@ from scipy.sparse.linalg import eigsh, eigs
 from matplotlib import pyplot as plt
 
 # Configuration
-ms = [0, 1, 2, 3, 4, 5, 6, 7]  # angular modes to extract
+ms = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]  # angular modes to extract
 
 # PATCH: allow radial structure in each angular mode (critical for T^4 odd-m asymptotics)
 RADIAL_BASIS_K = 6          # number of radial powers (k=0..K-1); 6–10 usually enough
@@ -667,7 +667,7 @@ if __name__ == "__main__":
             print(f"No M_Iee_*.pkl files found in {MATRIX_DIR}")
         else:
             csv_path = os.path.join(MATRIX_DIR, CSV_OUT)
-            fieldnames = ["mu", "Theta", "U"] + [f"m{m}" for m in ms]
+            fieldnames = ["mu", "Theta", "T_phys", "U"] + [f"m{m}" for m in ms]
             _write_csv_header(csv_path, fieldnames)
 
             print(f"Found {len(pkl_files)} files. Writing CSV to {csv_path}", flush=True)
@@ -679,6 +679,7 @@ if __name__ == "__main__":
                 Theta = float(meta.get("Theta", 0.0))
                 mu = float(meta.get("mu_phys", np.nan))
                 U_band = float(meta.get("U_band", np.nan))
+                T_phys = float(meta.get("T_phys", Theta * mu))
 
                 w_active_main = meta["w_active"].astype(np.float64)
                 w_safe_main = np.clip(w_active_main, 1e-30, None)
@@ -688,6 +689,7 @@ if __name__ == "__main__":
                 row = {
                     "mu": mu,
                     "Theta": Theta,
+                    "T_phys": T_phys,
                     "U": U_band,
                 }
                 for m in ms:

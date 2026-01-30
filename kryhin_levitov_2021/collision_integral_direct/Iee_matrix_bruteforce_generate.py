@@ -164,14 +164,11 @@ HBAR = 1.0         # ħ (set 1 for dimensionless)
 # print(Thetas)
 # PATCH: include the asymptotic window (1e-4 to 1e-3) where T^4 scaling should appear
 # Also include overlap with higher temperatures for continuity
-# Thetas = (np.geomspace(1e-4, 1e-3, 12).tolist()
-#           + [0.0012, 0.0016, 0.002, 0.0025, 0.0035, 0.005, 0.007, 0.01, 0.014, 0.02, 0.028, 0.04,
-#              0.056, 0.08, 0.112, 0.16, 0.224, 0.32, 0.448, 0.64, 0.896, 1.28])
-Thetas = np.geomspace(1e-4, 1, 100)
-#[1]
-
+# Choose fixed physical temperatures (same units as MU_PHYS and U_BAND)
+T_PHYS_LIST = [0.02 * U_BAND]   # e.g. T=U or T=U/10
+# print(T_PHYS_LIST)
 # Sweep over chemical potential values mu in dimensionless units (energy units of MU_PHYS)
-MU_LIST = [0.1, 1, 10]#np.geomspace(1e-2, 1e2, 100)
+MU_LIST = np.geomspace(1e-2, 1e2, 100)#[100]#[100]#[0.1, 1, 10]#np.geomspace(1e-2, 1e2, 100)
 # active-shell cutoff: only include states where f(1-f) > cutoff
 ACTIVE_CUTOFF = 1e-8
 
@@ -433,7 +430,7 @@ if USE_NUMBA:
                     Ma[a1, a2]  -= W
 
 
-def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
+def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float = None):
     nx, ny, half = build_centered_lattice(Nmax_T)
     idx_map = make_index_map(nx, ny, Nmax_T, half)
     px, py, P, eps, f = precompute(
@@ -545,6 +542,9 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
 
     # Store only minimal meta to keep .pkl sizes sane
     w_full = f * (1.0 - f)
+    # Compute T_phys if not provided (for backward compatibility)
+    if T_phys is None:
+        T_phys = float(Theta) * float(MU_PHYS)
     meta = {
         "Theta": float(Theta),
         "Nmax": int(Nmax_T),
@@ -566,6 +566,7 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
         "alpha": float(alpha),
         "dispersion": str(DISPERSION),
         "vF_dimless": float(vF),
+        "T_phys": float(T_phys),
         # Store only what eigen solver needs (active-only arrays):
         "active": active.astype(np.int32),
         "w_active": w_full[active].astype(np.float64),
@@ -573,7 +574,7 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float):
 
     os.makedirs(OUT_DIR, exist_ok=True)
     tag = f"{DISPERSION}_mu{MU_PHYS:.6g}_U{U_BAND:.6g}"
-    fname = os.path.join(OUT_DIR, f"M_Iee_{tag}_N{Nmax_T}_dp{dp_T:.8g}_T{Theta:.10g}.pkl")
+    fname = os.path.join(OUT_DIR, f"M_Iee_{tag}_N{Nmax_T}_dp{dp_T:.8g}_T{Theta:.10g}_Tphys{T_phys:.10g}.pkl")
     with open(fname, "wb") as fp:
         pickle.dump((M_to_save, meta), fp, protocol=pickle.HIGHEST_PROTOCOL)
     print(f"Saved: {fname}")
@@ -603,8 +604,12 @@ def main():
     for mu in MU_LIST:
         MU_PHYS = float(mu)
         print(f"\n===== Generating matrices for mu={MU_PHYS:.6g} =====")
-        for T in Thetas:
-            Theta = float(T)
+
+        for T_phys in T_PHYS_LIST:
+            Theta = float(T_phys) / float(MU_PHYS)   # key change: fixed physical T
+            # Optional: avoid extremely degenerate Theta if you don't want tiny shells
+            # if Theta < 1e-3: continue
+
             if AUTO_DP_FROM_ANCHOR:
                 dp_T = choose_dp(Theta)
                 Nmax_T = choose_Nmax(dp_T, Theta)
@@ -620,7 +625,7 @@ def main():
             else:
                 dp_T = float(dp)
                 Nmax_T = int(Nmax)
-            build_matrix_for_theta(Theta, Nmax_T, dp_T)
+            build_matrix_for_theta(Theta, Nmax_T, dp_T, T_phys=float(T_phys))
 
 
 if __name__ == "__main__":

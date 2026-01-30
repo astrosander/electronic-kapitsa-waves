@@ -26,7 +26,7 @@ plt.rcParams['legend.fontsize'] = 16
 plt.rcParams['figure.titlesize'] = 20
 
 # Default input/output filenames
-DEFAULT_IN_CSV = r"D:\Downloads\28_1\test\10.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu001\gamma_vs_mu_T0.1.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu\gamma_vs_mu_T0.1.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\gamma_vs_T_mu0p1_U1.csv"#"gamma_vs_T_mu0p1_U1.csv"
+DEFAULT_IN_CSV = r"D:\Downloads\28_1\test\mu01.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu001\gamma_vs_mu_T0.1.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu\gamma_vs_mu_T0.1.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\gamma_vs_T_mu0p1_U1.csv"#"gamma_vs_T_mu0p1_U1.csv"
 BASE_DIR = r"D:\Downloads\28_1\test"
 
 DEFAULT_OUT_PNG = f"{DEFAULT_IN_CSV.replace(BASE_DIR, '')}.png"
@@ -43,6 +43,7 @@ def load_data(csv_path: str):
 
     T = []
     T_requested = []
+    T_phys_list = []
     gammas = {}
     modes_set = set()
     
@@ -58,23 +59,36 @@ def load_data(csv_path: str):
         # and old formats: "m0, m1, ..." and "gamma_0, gamma_1, ..."
         control_key = None  # "T", "Theta", or "mu" depending on CSV
         
-        # First pass: prioritize temperature columns (T or Theta) over mu
-        for field in fieldnames:
-            field_stripped = field.strip()
-            low = field_stripped.lower()
-            # Prioritize temperature columns
-            if low in ("t", "theta"):
-                control_key = field_stripped
-                break  # Found temperature column, use it
+        # Check if T_phys column exists (indicates fixed-T scan vs mu)
+        has_t_phys = any(field.strip().lower() == "t_phys" for field in fieldnames)
+        has_mu = any(field.strip().lower() == "mu" for field in fieldnames)
         
-        # Second pass: if no temperature column found, look for mu
-        if control_key is None:
+        # If T_phys is present, prefer mu as control key (for fixed-T scans vs mu)
+        if has_t_phys and has_mu:
             for field in fieldnames:
                 field_stripped = field.strip()
                 low = field_stripped.lower()
                 if low == "mu":
                     control_key = field_stripped
                     break
+        else:
+            # First pass: prioritize temperature columns (T or Theta) over mu
+            for field in fieldnames:
+                field_stripped = field.strip()
+                low = field_stripped.lower()
+                # Prioritize temperature columns
+                if low in ("t", "theta"):
+                    control_key = field_stripped
+                    break  # Found temperature column, use it
+            
+            # Second pass: if no temperature column found, look for mu
+            if control_key is None:
+                for field in fieldnames:
+                    field_stripped = field.strip()
+                    low = field_stripped.lower()
+                    if low == "mu":
+                        control_key = field_stripped
+                        break
         
         # Now process all fields for mode detection
         for field in fieldnames:
@@ -135,6 +149,15 @@ def load_data(csv_path: str):
             else:
                 T_requested.append(T[-1])  # Use T as fallback
             
+            # Read T_phys if available (for fixed-temperature mu-scans)
+            if 'T_phys' in row and row['T_phys'].strip():
+                try:
+                    T_phys_list.append(float(row['T_phys']))
+                except (ValueError, TypeError):
+                    T_phys_list.append(None)
+            else:
+                T_phys_list.append(None)
+            
             # Read gammas for each mode
             for m in modes_set:
                 # Try different formats in order of preference
@@ -178,8 +201,26 @@ def load_data(csv_path: str):
     for m in gammas:
         gammas[m] = np.array(gammas[m], dtype=np.float64)
     
+    # Extract T_phys (should be constant for fixed-temperature scans)
+    T_phys = None
+    if T_phys_list:
+        T_phys_valid = [t for t in T_phys_list if t is not None]
+        if T_phys_valid:
+            T_phys_array = np.array(T_phys_valid, dtype=np.float64)
+            # Check if T_phys is constant (within tolerance)
+            if len(T_phys_valid) > 1:
+                T_phys_std = np.std(T_phys_array)
+                T_phys_mean = np.mean(T_phys_array)
+                if T_phys_std / (T_phys_mean + 1e-30) < 0.01:  # 1% tolerance
+                    T_phys = float(T_phys_mean)
+                else:
+                    print(f"Warning: T_phys varies (mean={T_phys_mean:.6g}, std={T_phys_std:.6g}), using mean")
+                    T_phys = float(T_phys_mean)
+            else:
+                T_phys = float(T_phys_valid[0])
+    
     # control_key tells us whether T is actually temperature or mu
-    return T, modes, gammas, T_requested, control_key
+    return T, modes, gammas, T_requested, control_key, T_phys
 
 
 def get_color_and_alpha(m, max_m=8):
@@ -255,7 +296,7 @@ def get_color_and_alpha(m, max_m=8):
         return color, 1.0
 
 
-def plot_from_data(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Temperature, $T/T_F$", control_key="T"):
+def plot_from_data(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Temperature, $T/T_F$", control_key="T", T_phys=None):
     """
     Plot gamma_m(T) from loaded data (without dividing by T^2).
     """
@@ -275,31 +316,43 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Tempe
         m_int = int(m)
         if m_int in gammas:
             gm = np.array(gammas[m_int], dtype=np.float64)
-            mask = np.isfinite(gm) & (gm > 0.0) & (T > 0.0)
+            # Use a very small threshold to include tiny positive values (like m=1 which can be ~1e-12)
+            # Only filter out truly zero or negative values
+            mask = np.isfinite(gm) & (gm >= 0.0) & (T > 0.0)
+            # For m=0, values are exactly 0 (conserved), so skip those for log-log plot
+            if m_int == 0:
+                # Skip m=0 in log-log plot (it's the conserved mode, always 0)
+                continue
             if np.any(mask):
                 T_plot = T[mask]
                 gm_plot = gm[mask]
-                T_valid.extend(T_plot)
-                gamma_valid.extend(gm_plot)
-                
-                color, alpha = get_color_and_alpha(m_int, max_m)
-                linestyle = '-' if m_int <= 1 else '-'
-                # Use thinner lines for red (even) modes to improve separation when close
-                # Keep thicker lines for blue (odd) modes and special modes
-                if m_int <= 1:
-                    linewidth = 3.5#1.8
-                elif m_int % 2 == 0:
-                    linewidth = 1.3  # Thinner for red (even) modes
-                else:
-                    linewidth = 2.0  # Thicker for blue (odd) modes
-                if m_int <= 1:
-                    # For m=0, m=1: label as relaxing modes
-                    label = fr"$m={m_int}$" if m_int in [0, 1] else fr"$m={m_int}$"
-                    ax.loglog(T_plot, gm_plot, label=label, 
+                # Filter out exactly zero values for log-log plot (but keep very small positive values)
+                nonzero_mask = gm_plot > 0.0
+                if np.any(nonzero_mask):
+                    T_plot = T_plot[nonzero_mask]
+                    gm_plot = gm_plot[nonzero_mask]
+                    T_valid.extend(T_plot)
+                    gamma_valid.extend(gm_plot)
+                    
+                    color, alpha = get_color_and_alpha(m_int, max_m)
+                    linestyle = '-'
+                    # Use thinner lines for red (even) modes to improve separation when close
+                    # Keep thicker lines for blue (odd) modes and special modes
+                    if m_int == 1:
+                        linewidth = 3.5  # Make m=1 prominent
+                        label = fr"$m={m_int}$"
+                    elif m_int <= 3:
+                        linewidth = 2.5  # Make low modes visible
+                        label = fr""#"$m={m_int}$"
+                    elif m_int % 2 == 0:
+                        linewidth = 1.3  # Thinner for red (even) modes
+                        label = None
+                    else:
+                        linewidth = 2.0  # Thicker for blue (odd) modes
+                        label = None
+                    
+                    ax.loglog(T_plot, gm_plot, label=label, #marker="o",
                              linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
-                else:
-                    ax.loglog(T_plot, gm_plot, #label=fr"$m={m_int}$", 
-                                 linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle)
 
     # Add T^2 and T^4 reference lines
     # Normalize to match a typical data point for visual reference
@@ -308,8 +361,11 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Tempe
         T_mid = np.sqrt(T_ref.min() * T_ref.max())  # geometric mean
         
         # Find a typical gamma value to normalize the reference lines
+        # Skip m=0 (conserved, always 0) and m=1 (often very small) for better scaling
         gamma_ref = None
         for m_int in sorted(gammas.keys()):
+            if m_int <= 1:
+                continue  # Skip m=0 and m=1 for reference line scaling
             gm = np.array(gammas[m_int], dtype=np.float64)
             mask = np.isfinite(gm) & (gm > 0.0) & (T > 0.0)
             if np.any(mask):
@@ -317,27 +373,32 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Tempe
                 idx = np.argmin(np.abs(T[mask] - T_mid))
                 gamma_ref = gm[mask][idx]
                 break
+        # Fallback: if no other mode found, try m=1
+        if gamma_ref is None:
+            if 1 in gammas:
+                gm = np.array(gammas[1], dtype=np.float64)
+                mask = np.isfinite(gm) & (gm > 0.0) & (T > 0.0)
+                if np.any(mask):
+                    idx = np.argmin(np.abs(T[mask] - T_mid))
+                    gamma_ref = gm[mask][idx]
         
         if gamma_ref is not None and gamma_ref > 0:
             # Determine if this is a mu-sweep or T-sweep
             is_mu_sweep = (control_key.lower() == "mu")
             
             if is_mu_sweep:
-                # For mu-sweeps: show mu^1, mu^2, mu^3, mu^4 reference lines
-                C_mu1 = gamma_ref / (T_mid ** 1)
-                C_mu2 = gamma_ref / (T_mid ** 2)
-                C_mu3 = gamma_ref / (T_mid ** 3)
-                C_mu4 = gamma_ref / (T_mid ** 4)
+                # For mu-sweeps: show mu^5, mu^-2, mu^-1 reference lines
+                C_mu5 = gamma_ref / (T_mid ** 5)
+                C_muneg2 = gamma_ref * (T_mid ** 2)  # For mu^-2: gamma = C / mu^2
+                C_muneg1 = gamma_ref * (T_mid ** 1)  # For mu^-1: gamma = C / mu^1
                 
-                ref_mu1 = C_mu1 * (T_ref ** 1)
-                ref_mu2 = C_mu2 * (T_ref ** 2)
-                ref_mu3 = C_mu3 * (T_ref ** 3)
-                ref_mu4 = C_mu4 * (T_ref ** 4)
+                ref_mu5 = C_mu5 * (T_ref ** 5)
+                ref_muneg2 = C_muneg2 / (T_ref ** 2)  # mu^-2
+                ref_muneg1 = C_muneg1 / (T_ref ** 1)  # mu^-1
                 
-                ax.loglog(T_ref, ref_mu1, ':', color='darkgreen', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^1$")
-                ax.loglog(T_ref, ref_mu2, '--', color='darkblue', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^2$")
-                ax.loglog(T_ref, ref_mu3, '-.', color='darkorange', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^3$")
-                ax.loglog(T_ref, ref_mu4, '--', color='darkred', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^4$")
+                ax.loglog(T_ref, ref_mu5, '--', color='darkred', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^5$")
+                ax.loglog(T_ref, ref_muneg2, '-.', color='darkblue', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^{-2}$")
+                ax.loglog(T_ref, ref_muneg1, ':', color='darkgreen', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^{-1}$")
             else:
                 # For T-sweeps or Theta-sweeps: show T^2, T^4, and T^8 reference lines
                 C_T2 = gamma_ref / (T_mid ** 2)
@@ -366,6 +427,11 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Tempe
 
     ax.set_xlabel(x_label)
     ax.set_ylabel(r"Decay rate (eigenvalue), $\gamma_m$")
+    
+    # Add title with T_phys if available and plotting vs mu
+    # if control_key.lower() == "mu" and T_phys is not None:
+    #     ax.set_title(f"Fixed physical temperature: $T_{{phys}} = {T_phys:.6g}$", fontsize=11)
+    
     ax.legend()
 
     fig.tight_layout()
@@ -381,7 +447,7 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Tempe
     # Don't show here, will show both figures together at the end
 
 
-def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Temperature, $T/T_F$", control_key="T"):
+def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Temperature, $T/T_F$", control_key="T", T_phys=None):
     """
     Plot logarithmic derivative of the decay rate gamma_m to extract the local scaling exponent.
     
@@ -401,8 +467,10 @@ def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None, x_
     T_ref = T[np.isfinite(T) & (T > 0)]
     if len(T_ref) > 0:
         if control_key.lower() == "mu":
-            # For mu-sweeps: show only mu^2 reference line
-            ax.axhline(y=2.0, color='red', linestyle='-.', linewidth=1.0, alpha=0.5, label=r"$\mu^2$")
+            # For mu-sweeps: show mu^5, mu^-2, and mu^-1 reference lines
+            ax.axhline(y=5.0, color='darkred', linestyle='--', linewidth=2.0, alpha=0.6, label=r"$\mu^5$")
+            ax.axhline(y=-2.0, color='darkblue', linestyle='-.', linewidth=2.0, alpha=0.6, label=r"$\mu^{-2}$")
+            ax.axhline(y=-1.0, color='darkgreen', linestyle=':', linewidth=2.0, alpha=0.6, label=r"$\mu^{-1}$")
         else:
             # For T-sweeps or Theta-sweeps: show T^2 and T^4 reference lines
             ax.axhline(y=2.0, color='blue', linestyle='--', linewidth=1.0, alpha=0.5, label=r"$\Theta^2$")
@@ -424,7 +492,7 @@ def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None, x_
                 # Compute logarithmic derivative: d(log(γ)) / d(log(T))
                 # Use span of 5 points to reduce noise: log(γ_{i+span}/γ_i) / log(T_{i+span}/T_i)
                 # Use smaller span if we don't have enough points
-                span = min(6, max(2, len(T_plot) - 1))
+                span = 10#min(1, max(2, len(T_plot) - 1))
                 if len(T_plot) > 1:
                     T_mid_list = []
                     exponent_list = []
@@ -468,7 +536,7 @@ def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None, x_
                             # Add label for m=1 (current mode)
                             label = fr"$m={m_int}$" if m_int == 1 else None
                             
-                            ax.semilogx(T_mid, exponent_plot, 
+                            ax.semilogx(T_mid, exponent_plot,  #marker="o", markersize=2,
                                       linewidth=linewidth, color=color, alpha=alpha, linestyle=linestyle, label=label)
     
     ax.set_xlabel(x_label)
@@ -479,7 +547,12 @@ def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None, x_
         ax.set_ylabel(r"$\frac{d\log(\gamma_m)}{d\log(\Theta)}$")
     else:
         ax.set_ylabel(r"$\frac{d\log(\gamma_m)}{d\log(T)}$")
-    ax.set_ylim([0, 10])  # Reasonable range for exponents (0 to 6)
+    
+    # Add title with T_phys if available and plotting vs mu
+    # if control_key.lower() == "mu" and T_phys is not None:
+    #     ax.set_title(f"Fixed physical temperature: $T_{{phys}} = {T_phys:.6g}$", fontsize=11)
+    
+    ax.set_ylim([-8, 5.5])  # Reasonable range for exponents (0 to 6)
     ax.legend(loc='best', fontsize=12, frameon=False)
     ax.grid(True, alpha=0.3, linestyle='--')
     
@@ -530,7 +603,7 @@ def main():
         args.output_svg = f"{base}_from_csv.svg"
     
     print(f"Loading data from: {args.input}")
-    T, modes, gammas, T_requested, control_key = load_data(args.input)
+    T, modes, gammas, T_requested, control_key, T_phys = load_data(args.input)
     
     print(f"Loaded {len(T)} points")
     print(f"Modes: {modes}")
@@ -539,6 +612,9 @@ def main():
     
     if T_requested is not None:
         print(f"Requested temperature range: {T_requested.min():.6g} to {T_requested.max():.6g}")
+    
+    if T_phys is not None:
+        print(f"Fixed physical temperature: T_phys = {T_phys:.6g}")
     
     # Restrict to modes m=1..4 as requested
     modes_plot = np.array([m for m in modes if 1 <= int(m) <= 30], dtype=np.int32)
@@ -554,7 +630,7 @@ def main():
         x_label = r"Temperature, $T/T_F$"
 
     # Plot main figure
-    plot_from_data(T, modes_plot, gammas, args.output_png, args.output_svg, x_label=x_label, control_key=control_key)
+    plot_from_data(T, modes_plot, gammas, args.output_png, args.output_svg, x_label=x_label, control_key=control_key, T_phys=T_phys)
     
     # Plot logarithmic derivative figure (for both T-scan and mu-scan)
     if args.output_png is not None:
@@ -565,7 +641,7 @@ def main():
     logderiv_png = f"{base}_logderiv.png"
     logderiv_svg = f"{base}_logderiv.svg"
     
-    plot_logarithmic_derivative(T, modes_plot, gammas, logderiv_png, logderiv_svg, x_label=x_label, control_key=control_key)
+    plot_logarithmic_derivative(T, modes_plot, gammas, logderiv_png, logderiv_svg, x_label=x_label, control_key=control_key, T_phys=T_phys)
     print("Plotting complete.")
 
 
