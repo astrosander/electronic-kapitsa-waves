@@ -26,7 +26,7 @@ plt.rcParams['legend.fontsize'] = 16
 plt.rcParams['figure.titlesize'] = 20
 
 # Default input/output filenames
-DEFAULT_IN_CSV = r"D:\Downloads\28_1\test\mu01.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu001\gamma_vs_mu_T0.1.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu\gamma_vs_mu_T0.1.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\gamma_vs_T_mu0p1_U1.csv"#"gamma_vs_T_mu0p1_U1.csv"
+DEFAULT_IN_CSV = r"D:\Downloads\30_1\levitov\mu0001.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu001\gamma_vs_mu_T0.1.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\mu\gamma_vs_mu_T0.1.csv"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\gamma_vs_T_mu0p1_U1.csv"#"gamma_vs_T_mu0p1_U1.csv"
 BASE_DIR = r"D:\Downloads\28_1\test"
 
 DEFAULT_OUT_PNG = f"{DEFAULT_IN_CSV.replace(BASE_DIR, '')}.png"
@@ -387,18 +387,24 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Tempe
             is_mu_sweep = (control_key.lower() == "mu")
             
             if is_mu_sweep:
-                # For mu-sweeps: show mu^5, mu^-2, mu^-1 reference lines
+                # For mu-sweeps: show mu^5, mu^-2, mu^-1, mu^-4, mu^-8 reference lines
                 C_mu5 = gamma_ref / (T_mid ** 5)
                 C_muneg2 = gamma_ref * (T_mid ** 2)  # For mu^-2: gamma = C / mu^2
                 C_muneg1 = gamma_ref * (T_mid ** 1)  # For mu^-1: gamma = C / mu^1
+                C_muneg4 = gamma_ref * (T_mid ** 4)  # For mu^-4: gamma = C / mu^4
+                C_muneg8 = gamma_ref * (T_mid ** 8)  # For mu^-8: gamma = C / mu^8
                 
                 ref_mu5 = C_mu5 * (T_ref ** 5)
                 ref_muneg2 = C_muneg2 / (T_ref ** 2)  # mu^-2
                 ref_muneg1 = C_muneg1 / (T_ref ** 1)  # mu^-1
+                ref_muneg4 = C_muneg4 / (T_ref ** 4)  # mu^-4
+                ref_muneg8 = C_muneg8 / (T_ref ** 8)  # mu^-8
                 
                 ax.loglog(T_ref, ref_mu5, '--', color='darkred', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^5$")
                 ax.loglog(T_ref, ref_muneg2, '-.', color='darkblue', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^{-2}$")
                 ax.loglog(T_ref, ref_muneg1, ':', color='darkgreen', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^{-1}$")
+                ax.loglog(T_ref, ref_muneg4, '-.', color='orange', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^{-4}$")
+                ax.loglog(T_ref, ref_muneg8, ':', color='brown', linewidth=3.5, alpha=0.8, label=r"$\propto \mu^{-8}$")
             else:
                 # For T-sweeps or Theta-sweeps: show T^2, T^4, and T^8 reference lines
                 C_T2 = gamma_ref / (T_mid ** 2)
@@ -424,7 +430,7 @@ def plot_from_data(T, modes, gammas, out_png=None, out_svg=None, x_label=r"Tempe
         gamma_valid = np.array(gamma_valid)
         ax.set_xlim([T_valid.min(), T_valid.max()])
         ax.set_ylim([gamma_valid.min(), gamma_valid.max()])
-
+    
     ax.set_xlabel(x_label)
     ax.set_ylabel(r"Decay rate (eigenvalue), $\gamma_m$")
     
@@ -467,10 +473,12 @@ def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None, x_
     T_ref = T[np.isfinite(T) & (T > 0)]
     if len(T_ref) > 0:
         if control_key.lower() == "mu":
-            # For mu-sweeps: show mu^5, mu^-2, and mu^-1 reference lines
+            # For mu-sweeps: show mu^5, mu^-2, mu^-1, mu^-4, and mu^-8 reference lines
             ax.axhline(y=5.0, color='darkred', linestyle='--', linewidth=2.0, alpha=0.6, label=r"$\mu^5$")
             ax.axhline(y=-2.0, color='darkblue', linestyle='-.', linewidth=2.0, alpha=0.6, label=r"$\mu^{-2}$")
             ax.axhline(y=-1.0, color='darkgreen', linestyle=':', linewidth=2.0, alpha=0.6, label=r"$\mu^{-1}$")
+            ax.axhline(y=-4.0, color='orange', linestyle='-.', linewidth=2.0, alpha=0.6, label=r"$\mu^{-4}$")
+            ax.axhline(y=-8.0, color='brown', linestyle=':', linewidth=2.0, alpha=0.6, label=r"$\mu^{-8}$")
         else:
             # For T-sweeps or Theta-sweeps: show T^2 and T^4 reference lines
             ax.axhline(y=2.0, color='blue', linestyle='--', linewidth=1.0, alpha=0.5, label=r"$\Theta^2$")
@@ -492,7 +500,7 @@ def plot_logarithmic_derivative(T, modes, gammas, out_png=None, out_svg=None, x_
                 # Compute logarithmic derivative: d(log(γ)) / d(log(T))
                 # Use span of 5 points to reduce noise: log(γ_{i+span}/γ_i) / log(T_{i+span}/T_i)
                 # Use smaller span if we don't have enough points
-                span = 10#min(1, max(2, len(T_plot) - 1))
+                span = 1#min(1, max(2, len(T_plot) - 1))
                 if len(T_plot) > 1:
                     T_mid_list = []
                     exponent_list = []
