@@ -26,6 +26,8 @@ NOTE:
 - Use numba if possible.
 """
 
+# outside active destroys the odd/even separation.
+# ------------------------------------------------------------
 import os
 import math
 import pickle
