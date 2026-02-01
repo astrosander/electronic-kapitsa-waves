@@ -12,8 +12,9 @@ from matplotlib import pyplot as plt
 ms = [1]#[0, 1, 2, 3]#, 4, 5, 6, 7]  # angular modes to extract
 
 # PATCH: allow radial structure in each angular mode (critical for T^4 odd-m asymptotics)
-RADIAL_BASIS_K = 6          # number of radial powers (k=0..K-1); 6–10 usually enough
-RADIAL_SIGMA_P_MULT = 3.0   # sets Gaussian envelope width in p around p=1
+RADIAL_BASIS_K = 6#30         # number of radial powers (k=0..K-1); increased to support high-node modes
+RADIAL_SIGMA_P_MULT = 3.0#10.0  # sets Gaussian envelope width in p around p=1; widened to span thick annulus
+RADIAL_MODE_INDEX = 2       # which radial excitation to select (0=ground state, higher=more rings)
 
 # PATCH: do NOT add an absolute diagonal regularization when chasing tiny low-T rates.
 REG_ABS = 0.0
@@ -132,18 +133,63 @@ def compute_general_eigenfunctions(Ma, meta, n_eigs=10):
 
     if sym_err < 1e-8 and n_eigs > 0:
         # Use symmetric solver
+        # Avoid using sigma to prevent memory-intensive LU factorization
+        # Use which="SM" to find smallest magnitude eigenvalues (slowest decay rates)
         try:
             vals, y = eigsh(
                 B,
                 k=n_eigs,
-                sigma=1e-10,
-                which="LM",
+                which="SM",  # Smallest magnitude - avoids shift-invert mode
                 tol=1e-8,
                 maxiter=20000,
             )
             vecs = (Dinv_sqrt @ y).astype(np.float64)
         except Exception as e:
             print(f"Warning: eigsh failed in general solver ({e}), falling back to eigs...", flush=True)
+            try:
+                # Try eigs without sigma first
+                vals, vecs = eigs(
+                    A,
+                    M=W,
+                    k=n_eigs,
+                    which="SM",  # Smallest magnitude - avoids shift-invert mode
+                    tol=1e-8,
+                    maxiter=20000,
+                )
+                vals = np.real(vals)
+                vecs = np.real(vecs)
+            except Exception as e2:
+                print(f"Warning: eigs with which='SM' also failed ({e2}), trying with sigma as last resort...", flush=True)
+                # Last resort: try with sigma, but this may fail with MemoryError
+                vals, vecs = eigs(
+                    A,
+                    M=W,
+                    k=n_eigs,
+                    sigma=1e-10,
+                    which="LM",
+                    tol=1e-8,
+                    maxiter=20000,
+                )
+                vals = np.real(vals)
+                vecs = np.real(vecs)
+    else:
+        # Non-symmetric fallback
+        print(f"Warning: Matrix not symmetric in general solver (error={sym_err:.3e}), using eigs", flush=True)
+        try:
+            # Try without sigma first to avoid memory issues
+            vals, vecs = eigs(
+                A,
+                M=W,
+                k=n_eigs,
+                which="SM",  # Smallest magnitude - avoids shift-invert mode
+                tol=1e-8,
+                maxiter=20000,
+            )
+            vals = np.real(vals)
+            vecs = np.real(vecs)
+        except Exception as e:
+            print(f"Warning: eigs with which='SM' failed ({e}), trying with sigma as last resort...", flush=True)
+            # Last resort: try with sigma, but this may fail with MemoryError
             vals, vecs = eigs(
                 A,
                 M=W,
@@ -155,20 +201,6 @@ def compute_general_eigenfunctions(Ma, meta, n_eigs=10):
             )
             vals = np.real(vals)
             vecs = np.real(vecs)
-    else:
-        # Non-symmetric fallback
-        print(f"Warning: Matrix not symmetric in general solver (error={sym_err:.3e}), using eigs", flush=True)
-        vals, vecs = eigs(
-            A,
-            M=W,
-            k=n_eigs,
-            sigma=1e-10,
-            which="LM",
-            tol=1e-8,
-            maxiter=20000,
-        )
-        vals = np.real(vals)
-        vecs = np.real(vecs)
 
     # Ensure real
     vals = np.real(vals)
@@ -357,7 +389,17 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
         # Solve eigenvalue problem in basis
         evals, evecs = np.linalg.eigh(C)
         evals = np.real(evals)
-        evals = evals[np.isfinite(evals) & (evals >= -1e-12)]
+        evecs = np.real(evecs)
+        
+        # Sort by eigenvalue
+        order = np.argsort(evals)
+        evals = evals[order]
+        evecs = evecs[:, order]
+        
+        # Filter to valid (finite, non-negative) eigenvalues
+        valid_mask = np.isfinite(evals) & (evals >= -1e-12)
+        evals = evals[valid_mask]
+        evecs = evecs[:, valid_mask]
         
         if len(evals) == 0:
             print(f"  [m={m}] No valid eigenvalues")
@@ -365,8 +407,20 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
             eigenvalues[m] = np.nan
             continue
         
-        # Choose smallest non-negative eigenvalue (slowest decay in this subspace)
-        j = np.argmin(np.maximum(evals, 0.0))
+        # Select radial mode: skip near-zero modes, then pick by RADIAL_MODE_INDEX
+        # This allows selecting higher radial excitations (more rings) instead of always the ground state
+        good = np.where(evals > 1e-12)[0]  # skip near-zero (conserved modes)
+        
+        if len(good) == 0:
+            # All modes are near-zero, use the first one
+            j = 0
+            radial_mode_used = 0
+        else:
+            # Select the requested radial mode index (higher = more rings)
+            mode_idx = min(RADIAL_MODE_INDEX, len(good) - 1)
+            j = good[mode_idx]
+            radial_mode_used = mode_idx
+        
         gamma = float(max(evals[j], 0.0))
         u = U @ evecs[:, j]
         
@@ -387,7 +441,7 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms=[0, 1, 2, 3, 4, 5, 6, 7, 8]):
         eigenfunctions[m] = u
         eigenvalues[m] = gamma
         
-        print(f"  [m={m}] gamma={gamma:.6e}")
+        print(f"  [m={m}] radial_mode={radial_mode_used}, gamma={gamma:.6e}")
     
     return eigenfunctions, eigenvalues, px, py
 
