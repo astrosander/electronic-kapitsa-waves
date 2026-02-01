@@ -19,19 +19,26 @@ matplotlib.use("Agg")  # non-interactive backend
 # -----------------------------
 # Configuration
 # -----------------------------
-ms = [1,2,3,4]  # angular modes to extract
+ms = [1]#,2,3,4]  # angular modes to extract
 
 # Radial basis parameters (used for m>=2)
-RADIAL_BASIS_K = 6
-RADIAL_SIGMA_P_MULT = 3.0
-RADIAL_MODE_INDEX = 0  # kept for compatibility, not used directly here
+RADIAL_BASIS_K = 1000#12
+# RADIAL_SIGMA_P_MULT = 3.0  # legacy (unused when BASIS_IN_X=True)
+# RADIAL_MODE_INDEX = 0  # kept for compatibility, not used directly here
+
+# NEW: build Ritz radial basis in x=(eps-1)/Theta as in the paper
+BASIS_IN_X = True
+
+# NEW: eigenvalue selection tolerance (exclude conserved/near-zero modes)
+ZERO_EIG_ABS = 0#1e-14
+ZERO_EIG_REL = 0#1e-12  # relative to max Ritz eigenvalue in subspace
 
 COMPUTE_RAW_EIGENVECTORS = True
 N_RAW_EIGS = 16
 N_RAW_PLOT = 16
 
 REG_ABS = 0.0  # do NOT add abs diagonal regularization when chasing tiny low-T rates
-RING_PIXEL_SIZE = 20.0
+RING_PIXEL_SIZE = 200.0
 
 # What to plot in the panels:
 #   "eta"        -> plot eta (will show zebra stripes)
@@ -42,13 +49,19 @@ PLOT_QUANTITY_RAW     = "eta"      # for eigenvector_panel_raw.svg
 
 # If RAW vectors you reconstruct behave like deltaf, you can convert to eta as v/(w+eps).
 # This flag makes RAW zebra stripes appear even when raw vectors are deltaf-like.
-FORCE_RAW_ETA_BY_DIVIDING_W = True
+# PATCH: In this code path, raw eigenvectors V returned from symmetrize_operator()
+# are already eta (generalized eigenproblem C v = gamma W v). Dividing by w would
+# plot eta/w which is NOT the eigenvector whose gamma is printed.
+FORCE_RAW_ETA_BY_DIVIDING_W = False
+
+# NEW: overlay p=1 ring on plots
+OVERLAY_FERMI_RING = True
 
 plt.rcParams["text.usetex"] = False
 plt.rcParams["font.family"] = "serif"
 plt.rcParams["legend.frameon"] = False
 
-DEFAULT_MATRIX_FILE = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_nonparabolic_mu2.5_U1_N320_dp0.03_T0.04_Tphys0.1.pkl"
+DEFAULT_MATRIX_FILE = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_nonparabolic_mu2.5_U1_N320_dp0.03_T0.04_Tphys0.1.pkl"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_nonparabolic_mu2.5_U1_N320_dp0.03_T0.04_Tphys0.1.pkl"
 
 
 # -----------------------------
@@ -125,6 +138,25 @@ def symmetrize_operator(C, w_diag):
         C = csr_matrix(C)
     A = diags(winv_sqrt, 0, format="csr") @ C @ diags(winv_sqrt, 0, format="csr")
     return A, apply_Winv_sqrt
+
+def reconstruct_eps_active(meta, px, py):
+    """
+    Prefer eps_active saved by generator. Fallback: recompute eps(p) from meta.
+    eps is dimensionless with eps(pF)=1.
+    """
+    if "eps_active" in meta:
+        return np.asarray(meta["eps_active"], dtype=np.float64)
+
+    # Fallback recompute from dispersion metadata
+    P = np.sqrt(px*px + py*py)
+    disp = str(meta.get("dispersion", "parabolic"))
+    alpha = float(meta.get("alpha", 0.0))
+    if disp == "parabolic":
+        return P*P
+    if disp == "nonparabolic":
+        a = alpha
+        return np.sqrt(a*a + (1.0 + 2.0*a)*(P*P)) - a
+    raise ValueError(f"Unknown dispersion={disp!r} and eps_active not provided.")
 
 
 # -----------------------------
@@ -226,13 +258,17 @@ def print_conservation_residuals(Ma, meta, px, py):
     A = -Ma if isinstance(Ma, csr_matrix) else csr_matrix(-Ma)
 
     ones = np.ones(A.shape[0], dtype=np.float64)
+    eps_a = reconstruct_eps_active(meta, px, py)
+    e_shift = eps_a - 1.0
     cands = {
         "eta:1":   ones,
         "eta:px":  px,
         "eta:py":  py,
+        "eta:eps": e_shift,
         "df:w":    w,
         "df:wpx":  w * px,
         "df:wpy":  w * py,
+        "df:weps": w * e_shift,
     }
 
     scale = float(np.max(np.abs(A.data)) + 1e-30)
@@ -347,13 +383,27 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms):
     Theta = float(meta.get("Theta", 0.0))
     dp = float(meta.get("dp", 0.0))
 
+    # NEW: energy variable x = (eps-1)/Theta as in the paper eigenproblem
+    eps_a = reconstruct_eps_active(meta, px, py)
+    if Theta <= 0:
+        raise ValueError("Theta must be > 0 for x=(eps-1)/Theta basis.")
+    x = (eps_a - 1.0) / Theta
+    # Bounded coordinate improves numerical conditioning of polynomial basis
+    y = np.tanh(0.5 * x)
+
     A = -Ma if isinstance(Ma, csr_matrix) else csr_matrix(-Ma)
     n = A.shape[0]
     if REG_ABS > 0.0:
         A = A + diags([REG_ABS] * n, 0, format="csr")
 
-    # Build invariants basis (density, px, py) and W-orthonormalize
-    inv_vecs = [np.ones(n, dtype=np.float64), px.copy(), py.copy()]
+    # Build invariants basis (density, momentum, energy) and W-orthonormalize
+    # These must be deflated for ALL m to avoid leakage on a discrete/truncated grid.
+    inv_vecs = [
+        np.ones(n, dtype=np.float64),
+        px.copy(),
+        py.copy(),
+        (eps_a - 1.0).copy(),
+    ]
     inv_orth = w_orthonormalize(inv_vecs, w)
 
     eigenfunctions = {}
@@ -367,22 +417,23 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms):
             print(f"  [m={m}] density mode: gamma=0.0 (conserved)", flush=True)
             continue
 
-        # --- Unified basis for all m>=1 (odd and even) ---
-        # Remove density always; for m=1 also remove momentum invariants (px, py)
-        if m == 1:
-            remove = []#inv_orth[:]#1]   # [density, px, py] after W-orthonormalize
-        else:
-            remove = []#inv_orth[:]#1]  # remove density only
-
-        sigma_p = max(RADIAL_SIGMA_P_MULT * (0.5 * Theta), 4.0 * dp, 1e-12)
-        z = (P - 1.0) / sigma_p
-        g = np.exp(-0.5 * z * z)
+        # --- PATCH: always remove ALL conserved invariants for ALL m ---
+        remove = []#inv_orth[:] if len(inv_orth) > 0 else None
 
         basis = []
         for kk in range(int(RADIAL_BASIS_K)):
-            rk = z ** kk
-            basis.append(g * rk * np.cos(m * theta))
-            basis.append(g * rk * np.sin(m * theta))
+            if BASIS_IN_X:
+                rk = y ** kk  # bounded [-1,1], includes constant mode exactly at kk=0
+                basis.append(rk * np.cos(m * theta))
+                basis.append(rk * np.sin(m * theta))
+            else:
+                # legacy (P-based) basis
+                sigma_p = max(RADIAL_SIGMA_P_MULT * (0.5 * Theta), 4.0 * dp, 1e-12)
+                z = (P - 1.0) / sigma_p
+                g = np.exp(-0.5 * z * z)
+                rk = z ** kk
+                basis.append(g * rk * np.cos(m * theta))
+                basis.append(g * rk * np.sin(m * theta))
 
         U_list = w_orthonormalize(basis, w, remove_basis=remove)
 
@@ -408,8 +459,8 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms):
         evals, evecs = eigh(K, M)
         evals = np.real(evals)
 
-        # keep finite and non-negative (up to small tolerance)
-        mask = np.isfinite(evals) & (evals >= -1e-12)
+        # keep finite
+        mask = np.isfinite(evals)
         if not np.any(mask):
             print(f"  [m={m}] No valid eigenvalues after filtering", flush=True)
             eigenfunctions[m] = None
@@ -419,9 +470,19 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms):
         evals = evals[mask]
         evecs = evecs[:, mask]
 
-        # smallest non-negative
-        j = int(np.argmin(np.maximum(evals, 0.0)))
-        a = evecs[:, j]
+        # PATCH: pick smallest strictly-positive eigenvalue (exclude conserved/near-zero)
+        tol = max(ZERO_EIG_ABS, ZERO_EIG_REL * float(np.max(np.abs(evals)) + 1e-300))
+        pos_mask = evals > tol
+        if not np.any(pos_mask):
+            print(f"  [m={m}] Only (near-)zero modes found in Ritz space; increase RADIAL_BASIS_K or check truncation.", flush=True)
+            eigenfunctions[m] = None
+            eigenvalues[m] = np.nan
+            continue
+
+        evals_pos = evals[pos_mask]
+        evecs_pos = evecs[:, pos_mask]
+        j = int(np.argmin(evals_pos))
+        a = evecs_pos[:, j]
         u = U @ a
 
         # Normalize and compute full Rayleigh gamma + residual
@@ -429,11 +490,12 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms):
         gamma = rayleigh_gamma(A, W, u)
         res_m = eigen_residual_rel(A, W, u, gamma)
 
-        # Sanity check for m=1 deflation (overlaps with momentum should be ~0)
-        if m == 1:
-            px_overlap = wdot(u, px, w)
-            py_overlap = wdot(u, py, w)
-            print(f"    overlaps (W): <u,px>={px_overlap:.3e}  <u,py>={py_overlap:.3e}", flush=True)
+        # Sanity check for m=1 deflation (overlaps with momentum and energy should be ~0)
+        # if m == 1:
+        #     px_overlap = wdot(u, px, w)
+        #     py_overlap = wdot(u, py, w)
+        #     eps_overlap = wdot(u, eps_a - 1.0, w)
+        #     print(f"    overlaps (W): <u,px>={px_overlap:.3e}  <u,py>={py_overlap:.3e}  <u,eps-1>={eps_overlap:.3e}", flush=True)
 
         eigenfunctions[m] = u
         eigenvalues[m] = gamma
@@ -487,6 +549,12 @@ def ring_scatter(ax, px, py, val, title=""):
     ax.set_title(title)
     ax.set_xticks([])
     ax.set_yticks([])
+    
+    # PATCH: overlay Fermi ring p=1
+    if OVERLAY_FERMI_RING:
+        t = np.linspace(0.0, 2.0*np.pi, 400)
+        ax.plot(np.cos(t), np.sin(t), linewidth=0.8, color='black', alpha=0.5)
+    
     return im
 
 def choose_plot_field(v, w, quantity, force_eta_by_dividing_w=False):
@@ -530,6 +598,33 @@ def choose_plot_field(v, w, quantity, force_eta_by_dividing_w=False):
 
     raise ValueError("quantity must be 'eta', 'deltaf', or 'eta_masked'")
 
+def overlap_W(u, v, w):
+    """Normalized absolute overlap |<u,v>_W| / (||u||_W ||v||_W)."""
+    nu = wnorm(u, w)
+    nv = wnorm(v, w)
+    if nu < 1e-300 or nv < 1e-300:
+        return 0.0
+    return abs(wdot(u, v, w)) / (nu * nv)
+
+def build_raw_matches_by_mode(eigenfunctions_by_m, raw_vecs, w):
+    """
+    For each raw eigenvector k, find best matching m-mode eigenvector by W-overlap.
+    Returns list of dicts: [{"best_m": m, "overlap": ov}, ...] length = n_raw.
+    """
+    ms_available = [m for m, u in eigenfunctions_by_m.items() if u is not None]
+    matches = []
+    for k in range(raw_vecs.shape[1]):
+        best_m = None
+        best_ov = -1.0
+        vk = raw_vecs[:, k]
+        for m in ms_available:
+            ov = overlap_W(eigenfunctions_by_m[m], vk, w)
+            if ov > best_ov:
+                best_ov = ov
+                best_m = m
+        matches.append({"best_m": best_m, "overlap": best_ov})
+    return matches
+
 def plot_eigenvector_panel(eigenfunctions, eigenvalues, px, py, Theta, ms, w, plot_quantity="eta"):
     valid_ms = [m for m in ms if eigenfunctions.get(m) is not None]
     if len(valid_ms) == 0:
@@ -559,37 +654,63 @@ def plot_eigenvector_panel(eigenfunctions, eigenvalues, px, py, Theta, ms, w, pl
     print(f"Saved: {fname_png}", flush=True)
     plt.close(fig)
 
-def plot_general_eigenvector_panel(vals, vecs, px, py, Theta, w, n_plot=10, plot_quantity="eta"):
+def plot_general_eigenvector_panel(vals, vecs, px, py, Theta, w, n_plot=10, plot_quantity="eta",
+                                   extra_items=None, raw_matches=None, filename="eigenvector_panel_raw.svg"):
     if vecs.size == 0:
         print("No general eigenvectors to plot", flush=True)
         return
 
-    n_vecs = min(n_plot, vecs.shape[1])
+    # extra_items: list of (label, gamma, vector) that will be plotted first
+    if extra_items is None:
+        extra_items = []
+
+    n_raw = min(n_plot, vecs.shape[1])
+    total = len(extra_items) + n_raw
+
+    if raw_matches is None:
+        raw_matches = [None] * n_raw
 
     n_cols = 4
-    n_rows = (n_vecs + n_cols - 1) // n_cols
+    n_rows = (total + n_cols - 1) // n_cols
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(16, 4 * n_rows))
     axes = np.array([axes]) if not isinstance(axes, np.ndarray) else axes.flatten()
 
-    for i in range(n_vecs):
-        ax = axes[i]
+    slot = 0
+
+    # ---- First: plot the m-projected (by-mode) eigenvectors in the SAME file ----
+    for (label, gamma, v) in extra_items:
+        ax = axes[slot]
+        v_plot = choose_plot_field(v, w, plot_quantity, force_eta_by_dividing_w=False)
+        ring_scatter(ax, px, py, v_plot, title=f"{label}\nγ={gamma:.6e}, Θ={Theta:.6g}")
+        slot += 1
+
+    # ---- Then: plot raw eigenvectors, but plot the SAME object that gamma refers to ----
+    for i in range(n_raw):
+        ax = axes[slot]
         v = vecs[:, i]
         gamma = vals[i]
 
-        # IMPORTANT: to "see zebra stripes in raw" set FORCE_RAW_ETA_BY_DIVIDING_W=True and plot_quantity="eta"
+        # PATCH: raw vecs here are eta; do NOT divide by w unless you *know* vecs are deltaf
         v_plot = choose_plot_field(v, w, plot_quantity, force_eta_by_dividing_w=FORCE_RAW_ETA_BY_DIVIDING_W)
 
-        ring_scatter(ax, px, py, v_plot, title=f"mode #{i+1}, γ={gamma:.6e}, Θ={Theta:.6g}")
+        mi = raw_matches[i] if i < len(raw_matches) else None
+        if mi is not None and mi.get("best_m") is not None:
+            bm = mi["best_m"]
+            ov = mi["overlap"]
+            title = f"raw #{i+1}, γ={gamma:.6e}\nbest m={bm}, overlap={ov:.3f}, Θ={Theta:.6g}"
+        else:
+            title = f"raw #{i+1}, γ={gamma:.6e}, Θ={Theta:.6g}"
 
-    for i in range(n_vecs, len(axes)):
+        ring_scatter(ax, px, py, v_plot, title=title)
+        slot += 1
+
+    for i in range(slot, len(axes)):
         axes[i].set_visible(False)
 
-    plt.suptitle("Raw eigenvectors (no angular-mode projection)", fontsize=14, fontweight="bold", y=0.995)
+    # plt.suptitle("Combined: m-projected modes + raw eigenvectors", fontsize=14, fontweight="bold", y=0.995)
     plt.tight_layout(rect=[0, 0, 1, 0.99])
-
-    fname = "eigenvector_panel_raw.svg"
-    plt.savefig(fname, dpi=300, bbox_inches="tight")
-    print(f"Saved: {fname}", flush=True)
+    plt.savefig(filename, dpi=300, bbox_inches="tight")
+    print(f"Saved: {filename}", flush=True)
     plt.close(fig)
 
 
@@ -646,7 +767,25 @@ if __name__ == "__main__":
 
         print()
         print(f"=== Creating raw eigenvector panel (plotting {N_RAW_PLOT} modes) ===", flush=True)
-        plot_general_eigenvector_panel(gammas_raw, vecs_raw, px_raw, py_raw, Theta, w, n_plot=N_RAW_PLOT, plot_quantity=PLOT_QUANTITY_RAW)
+        # ---- PATCH: include the m-projected eigenvectors (the ones in M_Iee_...svg) into raw panel ----
+        extra_items = []
+        for m in ms:
+            u = eigenfunctions.get(m)
+            if u is None:
+                continue
+            extra_items.append((f"MODE m={m}", float(eigenvalues[m]), u))
+
+        # ---- PATCH: compute best-match m for each raw eigenvector (helps correspondence) ----
+        raw_matches = build_raw_matches_by_mode(eigenfunctions, vecs_raw, w)
+
+        plot_general_eigenvector_panel(
+            gammas_raw, vecs_raw, px_raw, py_raw, Theta, w,
+            n_plot=N_RAW_PLOT,
+            plot_quantity=PLOT_QUANTITY_RAW,
+            extra_items=extra_items,
+            raw_matches=raw_matches,
+            filename="eigenvector_panel_raw.svg",
+        )
     else:
         print()
         print("=== Skipping raw eigenvector computation (COMPUTE_RAW_EIGENVECTORS=False) ===", flush=True)
