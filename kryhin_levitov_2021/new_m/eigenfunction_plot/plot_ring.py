@@ -370,9 +370,9 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms):
         # --- Unified basis for all m>=1 (odd and even) ---
         # Remove density always; for m=1 also remove momentum invariants (px, py)
         if m == 1:
-            remove = inv_orth[:]#1]   # [density, px, py] after W-orthonormalize
+            remove = []#inv_orth[:]#1]   # [density, px, py] after W-orthonormalize
         else:
-            remove = inv_orth[:]#1]  # remove density only
+            remove = []#inv_orth[:]#1]  # remove density only
 
         sigma_p = max(RADIAL_SIGMA_P_MULT * (0.5 * Theta), 4.0 * dp, 1e-12)
         z = (P - 1.0) / sigma_p
