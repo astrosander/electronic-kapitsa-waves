@@ -38,7 +38,7 @@ N_RAW_EIGS = 16
 N_RAW_PLOT = 16
 
 REG_ABS = 0.0  # do NOT add abs diagonal regularization when chasing tiny low-T rates
-RING_PIXEL_SIZE = 20.0
+RING_PIXEL_SIZE = 200.0
 
 # What to plot in the panels:
 #   "eta"        -> plot eta (will show zebra stripes)
@@ -49,7 +49,13 @@ PLOT_QUANTITY_RAW     = "eta"      # for eigenvector_panel_raw.svg
 
 # If RAW vectors you reconstruct behave like deltaf, you can convert to eta as v/(w+eps).
 # This flag makes RAW zebra stripes appear even when raw vectors are deltaf-like.
-FORCE_RAW_ETA_BY_DIVIDING_W = True
+# PATCH: In this code path, raw eigenvectors V returned from symmetrize_operator()
+# are already eta (generalized eigenproblem C v = gamma W v). Dividing by w would
+# plot eta/w which is NOT the eigenvector whose gamma is printed.
+FORCE_RAW_ETA_BY_DIVIDING_W = False
+
+# NEW: overlay p=1 ring on plots
+OVERLAY_FERMI_RING = True
 
 plt.rcParams["text.usetex"] = False
 plt.rcParams["font.family"] = "serif"
@@ -543,6 +549,12 @@ def ring_scatter(ax, px, py, val, title=""):
     ax.set_title(title)
     ax.set_xticks([])
     ax.set_yticks([])
+    
+    # PATCH: overlay Fermi ring p=1
+    if OVERLAY_FERMI_RING:
+        t = np.linspace(0.0, 2.0*np.pi, 400)
+        ax.plot(np.cos(t), np.sin(t), linewidth=0.8, color='black', alpha=0.5)
+    
     return im
 
 def choose_plot_field(v, w, quantity, force_eta_by_dividing_w=False):
@@ -586,6 +598,33 @@ def choose_plot_field(v, w, quantity, force_eta_by_dividing_w=False):
 
     raise ValueError("quantity must be 'eta', 'deltaf', or 'eta_masked'")
 
+def overlap_W(u, v, w):
+    """Normalized absolute overlap |<u,v>_W| / (||u||_W ||v||_W)."""
+    nu = wnorm(u, w)
+    nv = wnorm(v, w)
+    if nu < 1e-300 or nv < 1e-300:
+        return 0.0
+    return abs(wdot(u, v, w)) / (nu * nv)
+
+def build_raw_matches_by_mode(eigenfunctions_by_m, raw_vecs, w):
+    """
+    For each raw eigenvector k, find best matching m-mode eigenvector by W-overlap.
+    Returns list of dicts: [{"best_m": m, "overlap": ov}, ...] length = n_raw.
+    """
+    ms_available = [m for m, u in eigenfunctions_by_m.items() if u is not None]
+    matches = []
+    for k in range(raw_vecs.shape[1]):
+        best_m = None
+        best_ov = -1.0
+        vk = raw_vecs[:, k]
+        for m in ms_available:
+            ov = overlap_W(eigenfunctions_by_m[m], vk, w)
+            if ov > best_ov:
+                best_ov = ov
+                best_m = m
+        matches.append({"best_m": best_m, "overlap": best_ov})
+    return matches
+
 def plot_eigenvector_panel(eigenfunctions, eigenvalues, px, py, Theta, ms, w, plot_quantity="eta"):
     valid_ms = [m for m in ms if eigenfunctions.get(m) is not None]
     if len(valid_ms) == 0:
@@ -615,37 +654,63 @@ def plot_eigenvector_panel(eigenfunctions, eigenvalues, px, py, Theta, ms, w, pl
     print(f"Saved: {fname_png}", flush=True)
     plt.close(fig)
 
-def plot_general_eigenvector_panel(vals, vecs, px, py, Theta, w, n_plot=10, plot_quantity="eta"):
+def plot_general_eigenvector_panel(vals, vecs, px, py, Theta, w, n_plot=10, plot_quantity="eta",
+                                   extra_items=None, raw_matches=None, filename="eigenvector_panel_raw.svg"):
     if vecs.size == 0:
         print("No general eigenvectors to plot", flush=True)
         return
 
-    n_vecs = min(n_plot, vecs.shape[1])
+    # extra_items: list of (label, gamma, vector) that will be plotted first
+    if extra_items is None:
+        extra_items = []
+
+    n_raw = min(n_plot, vecs.shape[1])
+    total = len(extra_items) + n_raw
+
+    if raw_matches is None:
+        raw_matches = [None] * n_raw
 
     n_cols = 4
-    n_rows = (n_vecs + n_cols - 1) // n_cols
+    n_rows = (total + n_cols - 1) // n_cols
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(16, 4 * n_rows))
     axes = np.array([axes]) if not isinstance(axes, np.ndarray) else axes.flatten()
 
-    for i in range(n_vecs):
-        ax = axes[i]
+    slot = 0
+
+    # ---- First: plot the m-projected (by-mode) eigenvectors in the SAME file ----
+    for (label, gamma, v) in extra_items:
+        ax = axes[slot]
+        v_plot = choose_plot_field(v, w, plot_quantity, force_eta_by_dividing_w=False)
+        ring_scatter(ax, px, py, v_plot, title=f"{label}\nγ={gamma:.6e}, Θ={Theta:.6g}")
+        slot += 1
+
+    # ---- Then: plot raw eigenvectors, but plot the SAME object that gamma refers to ----
+    for i in range(n_raw):
+        ax = axes[slot]
         v = vecs[:, i]
         gamma = vals[i]
 
-        # IMPORTANT: to "see zebra stripes in raw" set FORCE_RAW_ETA_BY_DIVIDING_W=True and plot_quantity="eta"
+        # PATCH: raw vecs here are eta; do NOT divide by w unless you *know* vecs are deltaf
         v_plot = choose_plot_field(v, w, plot_quantity, force_eta_by_dividing_w=FORCE_RAW_ETA_BY_DIVIDING_W)
 
-        ring_scatter(ax, px, py, v_plot, title=f"mode #{i+1}, γ={gamma:.6e}, Θ={Theta:.6g}")
+        mi = raw_matches[i] if i < len(raw_matches) else None
+        if mi is not None and mi.get("best_m") is not None:
+            bm = mi["best_m"]
+            ov = mi["overlap"]
+            title = f"raw #{i+1}, γ={gamma:.6e}\nbest m={bm}, overlap={ov:.3f}, Θ={Theta:.6g}"
+        else:
+            title = f"raw #{i+1}, γ={gamma:.6e}, Θ={Theta:.6g}"
 
-    for i in range(n_vecs, len(axes)):
+        ring_scatter(ax, px, py, v_plot, title=title)
+        slot += 1
+
+    for i in range(slot, len(axes)):
         axes[i].set_visible(False)
 
-    plt.suptitle("Raw eigenvectors (no angular-mode projection)", fontsize=14, fontweight="bold", y=0.995)
+    # plt.suptitle("Combined: m-projected modes + raw eigenvectors", fontsize=14, fontweight="bold", y=0.995)
     plt.tight_layout(rect=[0, 0, 1, 0.99])
-
-    fname = "eigenvector_panel_raw.svg"
-    plt.savefig(fname, dpi=300, bbox_inches="tight")
-    print(f"Saved: {fname}", flush=True)
+    plt.savefig(filename, dpi=300, bbox_inches="tight")
+    print(f"Saved: {filename}", flush=True)
     plt.close(fig)
 
 
@@ -702,7 +767,25 @@ if __name__ == "__main__":
 
         print()
         print(f"=== Creating raw eigenvector panel (plotting {N_RAW_PLOT} modes) ===", flush=True)
-        plot_general_eigenvector_panel(gammas_raw, vecs_raw, px_raw, py_raw, Theta, w, n_plot=N_RAW_PLOT, plot_quantity=PLOT_QUANTITY_RAW)
+        # ---- PATCH: include the m-projected eigenvectors (the ones in M_Iee_...svg) into raw panel ----
+        extra_items = []
+        for m in ms:
+            u = eigenfunctions.get(m)
+            if u is None:
+                continue
+            extra_items.append((f"MODE m={m}", float(eigenvalues[m]), u))
+
+        # ---- PATCH: compute best-match m for each raw eigenvector (helps correspondence) ----
+        raw_matches = build_raw_matches_by_mode(eigenfunctions, vecs_raw, w)
+
+        plot_general_eigenvector_panel(
+            gammas_raw, vecs_raw, px_raw, py_raw, Theta, w,
+            n_plot=N_RAW_PLOT,
+            plot_quantity=PLOT_QUANTITY_RAW,
+            extra_items=extra_items,
+            raw_matches=raw_matches,
+            filename="eigenvector_panel_raw.svg",
+        )
     else:
         print()
         print("=== Skipping raw eigenvector computation (COMPUTE_RAW_EIGENVECTORS=False) ===", flush=True)
