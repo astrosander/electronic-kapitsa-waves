@@ -121,7 +121,8 @@ RING_SHELL_TIGHTEN = 1.0   # wider ring to reduce boundary truncation effects (w
 # Radial structure resolution: increase annulus thickness to allow more radial oscillations
 # This multiplies the radial half-width p_rad, including more layers around p=1.
 # Higher values allow more radial structure (more "stripes") but increase Nactive.
-ANNULUS_MULT = 2.5   # try 2.0, 2.5, 3.0 (higher = thicker annulus = more radial layers)
+ANNULUS_MULT =3.5   # try 2.0, 2.5, 3.0 (higher = thicker annulus = more radial layers)
+ANNULUS_MIN_LAYERS = 12.0
 
 # Compute pixel ratios for both regions
 PIXEL_RATIO_LOW  = (THETA_ANCHOR_LOW  / (DP_ANCHOR_LOW  * DP_ANCHOR_LOW )) * RING_PIXEL_BOOST
@@ -353,18 +354,25 @@ def active_indices(f: np.ndarray, eps: np.ndarray, P: np.ndarray, Theta: float,
     # This avoids the low-T "sqrt(T)" floor that comes from using dp in eps-space.
     SHELL_REL = 20.0
     SHELL_DP2_REL = 80.0
+    # base_width = max(SHELL_REL * Theta, SHELL_DP2_REL * (dp * dp))
+    # shell_width = float(RING_SHELL_TIGHTEN) * base_width
     base_width = max(SHELL_REL * Theta, SHELL_DP2_REL * (dp * dp))
+    # Widen the *actual* annulus by widening the energy window too (since you intersect ring & shell)
+    base_width *= float(ANNULUS_MULT)
     shell_width = float(RING_SHELL_TIGHTEN) * base_width
 
     # Convert energy window into a radial window around p≈1 using vF = (d eps/dp)|_{p=1}:
     #   |eps-1| ≈ vF |p-1|
     # => |p-1| < shell_width / vF.
     vF_safe = max(float(vF), 1e-12)
-    p_rad = shell_width / vF_safe
-    p_rad = max(p_rad, 6.0 * dp)  # wider minimum ring thickness to reduce truncation artifacts (was 2.5)
+    # p_rad = shell_width / vF_safe
+    # p_rad = max(p_rad, 6.0 * dp)  # wider minimum ring thickness to reduce truncation artifacts (was 2.5)
     
-    # Apply annulus multiplier to include more radial layers (allows more radial structure)
-    p_rad *= float(ANNULUS_MULT)
+    # # Apply annulus multiplier to include more radial layers (allows more radial structure)
+    # p_rad *= float(ANNULUS_MULT)
+    p_rad = shell_width / vF_safe
+    p_rad = max(p_rad, float(ANNULUS_MIN_LAYERS) * dp)
+
 
     ring = np.abs(P - 1.0) < p_rad
     shell = np.abs(eps - 1.0) < shell_width
@@ -593,6 +601,9 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
         # Store only what eigen solver needs (active-only arrays):
         "active": active.astype(np.int32),
         "w_active": w_full[active].astype(np.float64),
+        "annulus_mult": float(ANNULUS_MULT),
+        "annulus_min_layers": float(ANNULUS_MIN_LAYERS),
+        "ring_shell_tighten": float(RING_SHELL_TIGHTEN),
     }
 
     os.makedirs(OUT_DIR, exist_ok=True)
