@@ -26,8 +26,6 @@ NOTE:
 - Use numba if possible.
 """
 
-# outside active destroys the odd/even separation.
-# ------------------------------------------------------------
 import os
 import math
 import pickle
@@ -117,8 +115,13 @@ THETA_PBOX_SWITCH = 1e-3
 # PATCH (strong): push much higher ring accuracy.
 # Smaller dp is necessary to expose clean T^2 (even m) and especially T^4 (odd m).
 # We will *not* try to keep file sizes constant here; accuracy first.
-RING_PIXEL_BOOST = 1.0      # strong; try 2.5–4.0
-RING_SHELL_TIGHTEN = 0.45   # tighter ring (suppresses bulk contamination)
+RING_PIXEL_BOOST = 0.5#2.5      # strong; try 2.5–4.0 (higher = smaller dp = more radial resolution)
+RING_SHELL_TIGHTEN = 1.0   # wider ring to reduce boundary truncation effects (was 0.45)
+
+# Radial structure resolution: increase annulus thickness to allow more radial oscillations
+# This multiplies the radial half-width p_rad, including more layers around p=1.
+# Higher values allow more radial structure (more "stripes") but increase Nactive.
+ANNULUS_MULT = 2.5   # try 2.0, 2.5, 3.0 (higher = thicker annulus = more radial layers)
 
 # Compute pixel ratios for both regions
 PIXEL_RATIO_LOW  = (THETA_ANCHOR_LOW  / (DP_ANCHOR_LOW  * DP_ANCHOR_LOW )) * RING_PIXEL_BOOST
@@ -129,6 +132,7 @@ PIXEL_RATIO_HIGH = (THETA_ANCHOR_HIGH / (DP_ANCHOR_HIGH * DP_ANCHOR_HIGH)) * (0.
 PBOX_MIN = PBOX_MIN_HIGH
 NMAX_MIN = 320   # Level-2: increased from 200 to allow better high-T accuracy (was clamped before)
 NMAX_MAX = 3200  # Increased to allow valid box at ultra-low T (Theta ~ 1e-4)
+# If you increase RING_PIXEL_BOOST and hit clamping, raise NMAX_MAX (e.g., 5000) if memory allows
 
 # --- NEW: grid shift (take half-integers instead of integers) ---
 # Physical momenta are p = dp * (n + shift), where n is integer lattice index.
@@ -151,6 +155,7 @@ SHIFT_Y = 0.5
 # PATCH: dp^2 floor (not dp). Under momentum conservation, typical Δε mismatch scales ~O(dp^2).
 LAMBDA_REL = 0.03        # lambda_T = 0.03 * Theta  (was 0.1)
 LAMBDA_DP2_REL = 5.0      # lambda_dp2 = 5.0 * dp^2 (energy spacing scale)
+# Lower LAMBDA_DP2_REL (e.g., 1.0-2.0) can reveal more fine energy structure but may affect stability
 LAMBDA_MIN = 1e-16       # reduced from 1e-12 to allow tiny rates at very low T
 
 V2   = 1.0         # |V|^2
@@ -167,12 +172,13 @@ HBAR = 1.0         # ħ (set 1 for dimensionless)
 # PATCH: include the asymptotic window (1e-4 to 1e-3) where T^4 scaling should appear
 # Also include overlap with higher temperatures for continuity
 # Choose fixed physical temperatures (same units as MU_PHYS and U_BAND)
-T_PHYS_LIST = [0.02 * U_BAND]   # e.g. T=U or T=U/10
+T_PHYS_LIST = [0.1 * U_BAND]   # e.g. T=U or T=U/10
 # print(T_PHYS_LIST)
 # Sweep over chemical potential values mu in dimensionless units (energy units of MU_PHYS)
-MU_LIST = np.geomspace(1e-2, 1e2, 100)#[100]#[100]#[0.1, 1, 10]#np.geomspace(1e-2, 1e2, 100)
+MU_LIST = [2.5]#np.geomspace(1e-2, 1e2, 100)#[100]#[100]#[0.1, 1, 10]#np.geomspace(1e-2, 1e2, 100)
 # active-shell cutoff: only include states where f(1-f) > cutoff
-ACTIVE_CUTOFF = 1e-8
+# Lower values include more radial layers (can reveal more structure) but increase Nactive.
+ACTIVE_CUTOFF = 1e-8   # try 1e-10 or 1e-12 for more radial extent
 
 # DO NOT include an explicit 1/Theta prefactor.
 # If you want a constant phase-space normalization, keep only the constant (2π)^-4.
@@ -185,6 +191,12 @@ OUT_DIR = "Matrixes_bruteforce"
 # Build and save ONLY the closed active-subspace operator (recommended).
 # This avoids huge Nstates^2 memory and preserves the weighted symmetry better.
 BUILD_ACTIVE_ONLY = True
+
+# DIAGNOSTIC SWITCH:
+# If True (default): require 2' active (closed operator on active set) -> drops events scattering outside.
+# If False: keep events even when 2' is inactive, but omit the +eta_{2'} contribution (Dirichlet outside).
+# Use False ONLY to test whether zebra stripes come from truncation/closure.
+REQUIRE_2P_ACTIVE = True
 
 
 def _alpha_from_params(mu_phys: float, u_band: float) -> float:
@@ -349,7 +361,10 @@ def active_indices(f: np.ndarray, eps: np.ndarray, P: np.ndarray, Theta: float,
     # => |p-1| < shell_width / vF.
     vF_safe = max(float(vF), 1e-12)
     p_rad = shell_width / vF_safe
-    p_rad = max(p_rad, 2.5 * dp)  # ensure multiple lattice points across ring
+    p_rad = max(p_rad, 6.0 * dp)  # wider minimum ring thickness to reduce truncation artifacts (was 2.5)
+    
+    # Apply annulus multiplier to include more radial layers (allows more radial structure)
+    p_rad *= float(ANNULUS_MULT)
 
     ring = np.abs(P - 1.0) < p_rad
     shell = np.abs(eps - 1.0) < shell_width
@@ -359,7 +374,8 @@ def active_indices(f: np.ndarray, eps: np.ndarray, P: np.ndarray, Theta: float,
 if USE_NUMBA:
     @njit(cache=True, fastmath=True, parallel=True)
     def assemble_rows_numba_active(Ma, nx, ny, idx_map, half, eps, f,
-                                   active, pos, dp, lam_eff, pref, dimless_scale):
+                                   active, pos, dp, lam_eff, pref, dimless_scale,
+                                   require_2p_active):
         """
         Assemble CLOSED active-subspace operator Ma (shape Nactive x Nactive).
         NOTE: This implements a closed operator on the active subspace:
@@ -406,9 +422,9 @@ if USE_NUMBA:
                     if i2p < 0:
                         continue
 
-                    # Require 2' active => closed operator on active subspace
+                    # If 2' is inactive: either drop event (closed) or keep it but omit +eta_{2'} (Dirichlet outside)
                     a2p = pos[i2p]
-                    if a2p < 0:
+                    if a2p < 0 and require_2p_active == 1:
                         continue
 
                     e2p = eps[i2p]
@@ -427,7 +443,8 @@ if USE_NUMBA:
 
                     # (eta_{1'} + eta_{2'} - eta_1 - eta_2)
                     Ma[a1, a1p] += W
-                    Ma[a1, a2p] += W
+                    if a2p >= 0:
+                        Ma[a1, a2p] += W
                     Ma[a1, a1]  -= W
                     Ma[a1, a2]  -= W
 
@@ -489,7 +506,8 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
             assemble_rows_numba_active(
                 Ma, nx, ny, idx_map, half, eps, f,
                 active, pos,
-                float(dp_T), float(lam_eff), float(pref), float(dimless_scale)
+                float(dp_T), float(lam_eff), float(pref), float(dimless_scale),
+                1 if REQUIRE_2P_ACTIVE else 0
             )
         else:
             dp4 = dp_T ** 4
@@ -512,8 +530,8 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
                         if i2p < 0:
                             continue
                         a2p = int(pos[i2p])
-                        # Require 2' active => closed operator on active subspace
-                        if a2p < 0:
+                        # If 2' is inactive: either drop event (closed) or keep it but omit +eta_{2'} (Dirichlet outside)
+                        if a2p < 0 and REQUIRE_2P_ACTIVE:
                             continue
 
                         e2p, f2p = float(eps[i2p]), float(f[i2p])
@@ -526,8 +544,10 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
                         F = 0.5 * (F_fwd + F_bwd)
                         W = pref * dimless_scale * F * delta_eps * dp4
 
+                        # (eta_{1'} + eta_{2'} - eta_1 - eta_2)
                         Ma[a1, a1p] += W
-                        Ma[a1, a2p] += W
+                        if a2p >= 0:
+                            Ma[a1, a2p] += W
                         Ma[a1, a1]  -= W
                         Ma[a1, a2]  -= W
 
@@ -569,6 +589,7 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
         "dispersion": str(DISPERSION),
         "vF_dimless": float(vF),
         "T_phys": float(T_phys),
+        "require_2p_active": bool(REQUIRE_2P_ACTIVE),
         # Store only what eigen solver needs (active-only arrays):
         "active": active.astype(np.int32),
         "w_active": w_full[active].astype(np.float64),
@@ -632,3 +653,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
