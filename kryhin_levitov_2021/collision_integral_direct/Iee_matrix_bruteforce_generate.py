@@ -121,8 +121,10 @@ RING_SHELL_TIGHTEN = 1.0   # wider ring to reduce boundary truncation effects (w
 # Radial structure resolution: increase annulus thickness to allow more radial oscillations
 # This multiplies the radial half-width p_rad, including more layers around p=1.
 # Higher values allow more radial structure (more "stripes") but increase Nactive.
-ANNULUS_MULT =3.5   # try 2.0, 2.5, 3.0 (higher = thicker annulus = more radial layers)
-ANNULUS_MIN_LAYERS = 12.0
+ANNULUS_MULT = 12.0          # way wider (try 8–20)
+ANNULUS_MIN_LAYERS = 80.0    # huge minimum dp-layers each side of p=1
+ANNULUS_P_INNER_FLOOR = 0.4    # exclude P < 0.4 (try 0.3–0.8)
+ANNULUS_P_OUTER_CAP   = 3.0    # optional cap on outer edge (try 2.5–4.0)
 
 # Compute pixel ratios for both regions
 PIXEL_RATIO_LOW  = (THETA_ANCHOR_LOW  / (DP_ANCHOR_LOW  * DP_ANCHOR_LOW )) * RING_PIXEL_BOOST
@@ -179,7 +181,9 @@ T_PHYS_LIST = [0.1 * U_BAND]   # e.g. T=U or T=U/10
 MU_LIST = [2.5]#np.geomspace(1e-2, 1e2, 100)#[100]#[100]#[0.1, 1, 10]#np.geomspace(1e-2, 1e2, 100)
 # active-shell cutoff: only include states where f(1-f) > cutoff
 # Lower values include more radial layers (can reveal more structure) but increase Nactive.
-ACTIVE_CUTOFF = 1e-8   # try 1e-10 or 1e-12 for more radial extent
+ACTIVE_CUTOFF = 1e-8
+# WAY wider: allow much smaller w inside the annulus only
+ACTIVE_CUTOFF_RING = 1e-18    # try 1e-12 .. 1e-18 (lower => much wider, much slower)
 
 # DO NOT include an explicit 1/Theta prefactor.
 # If you want a constant phase-space normalization, keep only the constant (2π)^-4.
@@ -357,9 +361,8 @@ def active_indices(f: np.ndarray, eps: np.ndarray, P: np.ndarray, Theta: float,
     # base_width = max(SHELL_REL * Theta, SHELL_DP2_REL * (dp * dp))
     # shell_width = float(RING_SHELL_TIGHTEN) * base_width
     base_width = max(SHELL_REL * Theta, SHELL_DP2_REL * (dp * dp))
-    # Widen the *actual* annulus by widening the energy window too (since you intersect ring & shell)
-    base_width *= float(ANNULUS_MULT)
-    shell_width = float(RING_SHELL_TIGHTEN) * base_width
+    # widen the ENERGY window too (since you intersect ring & shell)
+    shell_width = float(RING_SHELL_TIGHTEN) * float(ANNULUS_MULT) * base_width
 
     # Convert energy window into a radial window around p≈1 using vF = (d eps/dp)|_{p=1}:
     #   |eps-1| ≈ vF |p-1|
@@ -373,11 +376,14 @@ def active_indices(f: np.ndarray, eps: np.ndarray, P: np.ndarray, Theta: float,
     p_rad = shell_width / vF_safe
     p_rad = max(p_rad, float(ANNULUS_MIN_LAYERS) * dp)
 
-
-    ring = np.abs(P - 1.0) < p_rad
+    p_lo = max(1.0 - p_rad, float(ANNULUS_P_INNER_FLOOR))
+    p_hi = min(1.0 + p_rad, float(ANNULUS_P_OUTER_CAP))
+    ring = (P >= p_lo) & (P <= p_hi)
     shell = np.abs(eps - 1.0) < shell_width
-    return np.where((w > cutoff) & shell & ring)[0].astype(np.int32)
-
+    # return np.where((w > cutoff) & shell & ring)[0].astype(np.int32)
+    core = (w > cutoff)
+    wide = ring & shell & (w > float(ACTIVE_CUTOFF_RING))
+    return np.where(core | wide)[0].astype(np.int32)
 
 if USE_NUMBA:
     @njit(cache=True, fastmath=True, parallel=True)
@@ -473,6 +479,8 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
 
     # Temperature-following active shell
     active = active_indices(f, eps, P, Theta, ACTIVE_CUTOFF, dp_T, vF)
+    P_a = P[active]
+    print(f"[ACTIVE] P range: {P_a.min():.3f} .. {P_a.max():.3f} ; max|P-1|={np.max(np.abs(P_a-1.0)):.3f}")
     Nstates = nx.size
     Nactive = int(active.size)
     
@@ -614,7 +622,7 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
     print(f"Saved: {fname}")
 
     # Optional: parabolic-limit check (eps_nonpar ~ p^2 when alpha >> 1)
-    if VERIFY_PARABOLIC_LIMIT and DISPERSION == "nonparabolic":
+    if VERIFY_PARABOLIC_LIMIT and DISPERSION == "nonparabolic" and alpha > 20.0:
         if Nactive > 0:
             P_a = P[active]
             eps_a = eps[active]
