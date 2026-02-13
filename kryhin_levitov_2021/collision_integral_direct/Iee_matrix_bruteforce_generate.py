@@ -146,12 +146,14 @@ SHIFT_Y = 0.5
 # With Theta_min=0.0025 you want dp <= ~0.03 (since dp^2=9e-4).
 # dp=0.08 => dp^2=6.4e-3 > Theta_min, which produces a T->0 "floor".
 
-# Energy delta broadening (Lorentzian) --- MUST scale with temperature to avoid T->0 floor
-# PATCH (strong): sharpen energy conservation to recover proper low-T exponents.
-# PATCH: dp^2 floor (not dp). Under momentum conservation, typical Δε mismatch scales ~O(dp^2).
-LAMBDA_REL = 0.03        # lambda_T = 0.03 * Theta  (was 0.1)
-LAMBDA_DP2_REL = 5.0      # lambda_dp2 = 5.0 * dp^2 (energy spacing scale)
-LAMBDA_MIN = 1e-16       # reduced from 1e-12 to allow tiny rates at very low T
+#
+# Energy delta broadening (Lorentzian)
+# We intentionally BREAK energy conservation by using a FIXED, LARGE lambda.
+# Units: dimensionless energy eps=E/mu, so lambda here is also in units of mu.
+#
+LAMBDA_CONST = 0.10       # <-- make larger if you want more smearing (try 0.05..0.3)
+LAMBDA_DP2_REL = 5.0      # still keep dp^2 floor so the lattice mismatch doesn't kill events
+LAMBDA_MIN = 1e-16
 
 V2   = 1.0         # |V|^2
 HBAR = 1.0         # ħ (set 1 for dimensionless)
@@ -170,7 +172,7 @@ HBAR = 1.0         # ħ (set 1 for dimensionless)
 T_PHYS_LIST = [0.02 * U_BAND]   # e.g. T=U or T=U/10
 # print(T_PHYS_LIST)
 # Sweep over chemical potential values mu in dimensionless units (energy units of MU_PHYS)
-MU_LIST = np.geomspace(1e-2, 1e2, 100)#[100]#[100]#[0.1, 1, 10]#np.geomspace(1e-2, 1e2, 100)
+MU_LIST = [1]#np.geomspace(1e-2, 1e2, 100)#[100]#[100]#[0.1, 1, 10]#np.geomspace(1e-2, 1e2, 100)
 # active-shell cutoff: only include states where f(1-f) > cutoff
 ACTIVE_CUTOFF = 1e-8
 
@@ -476,11 +478,10 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
         # keep ONLY constant (2π)^-4, NOT 1/Theta
         dimless_scale = DIMLESS_CONST
 
-    # Temperature-scaled Lorentzian width to avoid T->0 floor
-    # PATCH: dp^2 floor for λ (see comment above).
-    lam_T   = LAMBDA_REL * Theta
-    lam_dp2 = LAMBDA_DP2_REL * (dp_T * dp_T)
-    lam_eff = max(lam_T, lam_dp2, LAMBDA_MIN)
+    # Fixed Lorentzian width: INTENTIONALLY breaks energy conservation.
+    lam_const = float(LAMBDA_CONST)
+    lam_dp2   = float(LAMBDA_DP2_REL) * (dp_T * dp_T)
+    lam_eff   = max(lam_const, lam_dp2, float(LAMBDA_MIN))
 
     if BUILD_ACTIVE_ONLY:
         Ma = np.zeros((Nactive, Nactive), dtype=np.float64)

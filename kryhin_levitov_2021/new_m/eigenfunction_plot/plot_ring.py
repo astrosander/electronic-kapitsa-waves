@@ -22,7 +22,7 @@ matplotlib.use("Agg")  # non-interactive backend
 ms = [1]#,2,3,4]  # angular modes to extract
 
 # Radial basis parameters (used for m>=2)
-RADIAL_BASIS_K = 1000#12
+RADIAL_BASIS_K = 200#12
 # RADIAL_SIGMA_P_MULT = 3.0  # legacy (unused when BASIS_IN_X=True)
 # RADIAL_MODE_INDEX = 0  # kept for compatibility, not used directly here
 
@@ -61,8 +61,7 @@ plt.rcParams["text.usetex"] = False
 plt.rcParams["font.family"] = "serif"
 plt.rcParams["legend.frameon"] = False
 
-DEFAULT_MATRIX_FILE = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_nonparabolic_mu2.5_U1_N320_dp0.03_T0.04_Tphys0.1.pkl"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_nonparabolic_mu2.5_U1_N320_dp0.03_T0.04_Tphys0.1.pkl"
-
+DEFAULT_MATRIX_FILE = r"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_nonparabolic_mu1_U1_N320_dp0.03_T0.02_Tphys0.02.pkl"
 
 # -----------------------------
 # Utilities: W-inner products etc.
@@ -279,6 +278,26 @@ def print_conservation_residuals(Ma, meta, px, py):
         print(f"{name:8s}  rel_resid = {rel:.3e}", flush=True)
     print("=========================================\n", flush=True)
 
+def print_energy_like_gamma(Ma, meta, px, py):
+    # A = -Ma, W = diag(w)
+    w = np.clip(meta["w_active"].astype(np.float64), 1e-30, None)
+    W = diags(w, 0, format="csr")
+    A = -Ma if isinstance(Ma, csr_matrix) else csr_matrix(-Ma)
+
+    eps_a = reconstruct_eps_active(meta, px, py)
+    v = (eps_a - 1.0).astype(np.float64)
+
+    # Remove density component in W-inner product: v <- v - <1,v>_W/<1,1>_W * 1
+    ones = np.ones_like(v)
+    denom = wdot(ones, ones, w) + 1e-300
+    v -= (wdot(ones, v, w) / denom) * ones
+
+    # Normalize and print gamma
+    v = normalize_W(v, W)
+    gamma_E = rayleigh_gamma(A, W, v)
+    res_E = eigen_residual_rel(A, W, v, gamma_E)
+    print(f"[energy-like] gamma={gamma_E:.6e}  rel_resid={res_E:.3e}", flush=True)
+
 
 # -----------------------------
 # Raw (general) eigenfunctions
@@ -443,21 +462,42 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms):
             eigenvalues[m] = np.nan
             continue
 
-        U = np.column_stack(U_list)              # n x r
-        AU = A.dot(U)                             # n x r
-        WU = (w[:, None] * U)                     # n x r (since W is diagonal)
+                # --- Build Ritz basis and enforce exact W-orthonormality ---
+        U = np.column_stack(U_list)  # n x r (possibly ill-conditioned)
 
-        # Generalized Ritz matrices
-        K = U.T @ AU                              # r x r
-        M = U.T @ WU                              # r x r
+        # QR in sqrt(W) metric: Q = sqrt(W) U  => make Q Euclidean-orthonormal
+        sqrtw = np.sqrt(np.clip(w, 1e-300, None))
+        Q = (sqrtw[:, None] * U)
 
-        # Symmetrize (numerical safety)
-        K = 0.5 * (K + K.T)
-        M = 0.5 * (M + M.T)
+        # Reduced QR
+        Q, R = np.linalg.qr(Q, mode="reduced")
 
-        # Solve K a = gamma M a
-        evals, evecs = eigh(K, M)
+        # Drop nearly dependent columns (rank-revealing)
+        diagR = np.abs(np.diag(R)) if R.size else np.array([])
+        if diagR.size:
+            keep = diagR > (1e-12 * diagR.max())
+            Q = Q[:, keep]
+
+        # Map back: U <- W^{-1/2} Q  (now U^T W U = I up to roundoff)
+        U = Q / (sqrtw[:, None] + 1e-300)
+
+        # If QR killed everything, skip
+        r = U.shape[1]
+        if r == 0:
+            print(f"  [m={m}] Ritz basis became empty after QR; reduce RADIAL_BASIS_K.", flush=True)
+            eigenfunctions[m] = None
+            eigenvalues[m] = np.nan
+            continue
+
+        # --- Standard (NOT generalized) Ritz matrix because M ~ I ---
+        AU = A.dot(U)            # n x r
+        K = U.T @ AU             # r x r
+        K = 0.5 * (K + K.T)      # symmetrize
+
+        # Solve K a = gamma a
+        evals, evecs = np.linalg.eigh(K)
         evals = np.real(evals)
+
 
         # keep finite
         mask = np.isfinite(evals)
@@ -743,6 +783,7 @@ if __name__ == "__main__":
 
     # conservation diagnostics
     print_conservation_residuals(Ma, meta, px, py)
+    print_energy_like_gamma(Ma, meta, px, py)
 
     print("=== Summary: angular-mode eigenvalues ===", flush=True)
     for m in ms:
