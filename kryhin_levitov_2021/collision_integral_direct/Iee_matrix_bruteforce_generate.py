@@ -26,6 +26,8 @@ NOTE:
 - Use numba if possible.
 """
 
+# outside active destroys the odd/even separation.
+# ------------------------------------------------------------
 import os
 import math
 import pickle
@@ -115,16 +117,8 @@ THETA_PBOX_SWITCH = 1e-3
 # PATCH (strong): push much higher ring accuracy.
 # Smaller dp is necessary to expose clean T^2 (even m) and especially T^4 (odd m).
 # We will *not* try to keep file sizes constant here; accuracy first.
-RING_PIXEL_BOOST = 0.5#2.5      # strong; try 2.5–4.0 (higher = smaller dp = more radial resolution)
-RING_SHELL_TIGHTEN = 1.0   # wider ring to reduce boundary truncation effects (was 0.45)
-
-# Radial structure resolution: increase annulus thickness to allow more radial oscillations
-# This multiplies the radial half-width p_rad, including more layers around p=1.
-# Higher values allow more radial structure (more "stripes") but increase Nactive.
-ANNULUS_MULT = 12.0          # way wider (try 8–20)
-ANNULUS_MIN_LAYERS = 80.0    # huge minimum dp-layers each side of p=1
-ANNULUS_P_INNER_FLOOR = 0.4    # exclude P < 0.4 (try 0.3–0.8)
-ANNULUS_P_OUTER_CAP   = 3.0    # optional cap on outer edge (try 2.5–4.0)
+RING_PIXEL_BOOST = 1.0      # strong; try 2.5–4.0
+RING_SHELL_TIGHTEN = 0.45   # tighter ring (suppresses bulk contamination)
 
 # Compute pixel ratios for both regions
 PIXEL_RATIO_LOW  = (THETA_ANCHOR_LOW  / (DP_ANCHOR_LOW  * DP_ANCHOR_LOW )) * RING_PIXEL_BOOST
@@ -135,7 +129,6 @@ PIXEL_RATIO_HIGH = (THETA_ANCHOR_HIGH / (DP_ANCHOR_HIGH * DP_ANCHOR_HIGH)) * (0.
 PBOX_MIN = PBOX_MIN_HIGH
 NMAX_MIN = 320   # Level-2: increased from 200 to allow better high-T accuracy (was clamped before)
 NMAX_MAX = 3200  # Increased to allow valid box at ultra-low T (Theta ~ 1e-4)
-# If you increase RING_PIXEL_BOOST and hit clamping, raise NMAX_MAX (e.g., 5000) if memory allows
 
 # --- NEW: grid shift (take half-integers instead of integers) ---
 # Physical momenta are p = dp * (n + shift), where n is integer lattice index.
@@ -158,7 +151,6 @@ SHIFT_Y = 0.5
 # PATCH: dp^2 floor (not dp). Under momentum conservation, typical Δε mismatch scales ~O(dp^2).
 LAMBDA_REL = 0.03        # lambda_T = 0.03 * Theta  (was 0.1)
 LAMBDA_DP2_REL = 5.0      # lambda_dp2 = 5.0 * dp^2 (energy spacing scale)
-# Lower LAMBDA_DP2_REL (e.g., 1.0-2.0) can reveal more fine energy structure but may affect stability
 LAMBDA_MIN = 1e-16       # reduced from 1e-12 to allow tiny rates at very low T
 
 V2   = 1.0         # |V|^2
@@ -175,15 +167,12 @@ HBAR = 1.0         # ħ (set 1 for dimensionless)
 # PATCH: include the asymptotic window (1e-4 to 1e-3) where T^4 scaling should appear
 # Also include overlap with higher temperatures for continuity
 # Choose fixed physical temperatures (same units as MU_PHYS and U_BAND)
-T_PHYS_LIST = [0.1 * U_BAND]   # e.g. T=U or T=U/10
+T_PHYS_LIST = [0.02 * U_BAND]   # e.g. T=U or T=U/10
 # print(T_PHYS_LIST)
 # Sweep over chemical potential values mu in dimensionless units (energy units of MU_PHYS)
-MU_LIST = [2.5]#np.geomspace(1e-2, 1e2, 100)#[100]#[100]#[0.1, 1, 10]#np.geomspace(1e-2, 1e2, 100)
+MU_LIST = np.geomspace(1e-2, 1e2, 100)#[100]#[100]#[0.1, 1, 10]#np.geomspace(1e-2, 1e2, 100)
 # active-shell cutoff: only include states where f(1-f) > cutoff
-# Lower values include more radial layers (can reveal more structure) but increase Nactive.
 ACTIVE_CUTOFF = 1e-8
-# WAY wider: allow much smaller w inside the annulus only
-ACTIVE_CUTOFF_RING = 1e-18    # try 1e-12 .. 1e-18 (lower => much wider, much slower)
 
 # DO NOT include an explicit 1/Theta prefactor.
 # If you want a constant phase-space normalization, keep only the constant (2π)^-4.
@@ -196,12 +185,6 @@ OUT_DIR = "Matrixes_bruteforce"
 # Build and save ONLY the closed active-subspace operator (recommended).
 # This avoids huge Nstates^2 memory and preserves the weighted symmetry better.
 BUILD_ACTIVE_ONLY = True
-
-# DIAGNOSTIC SWITCH:
-# If True (default): require 2' active (closed operator on active set) -> drops events scattering outside.
-# If False: keep events even when 2' is inactive, but omit the +eta_{2'} contribution (Dirichlet outside).
-# Use False ONLY to test whether zebra stripes come from truncation/closure.
-REQUIRE_2P_ACTIVE = True
 
 
 def _alpha_from_params(mu_phys: float, u_band: float) -> float:
@@ -358,38 +341,25 @@ def active_indices(f: np.ndarray, eps: np.ndarray, P: np.ndarray, Theta: float,
     # This avoids the low-T "sqrt(T)" floor that comes from using dp in eps-space.
     SHELL_REL = 20.0
     SHELL_DP2_REL = 80.0
-    # base_width = max(SHELL_REL * Theta, SHELL_DP2_REL * (dp * dp))
-    # shell_width = float(RING_SHELL_TIGHTEN) * base_width
     base_width = max(SHELL_REL * Theta, SHELL_DP2_REL * (dp * dp))
-    # widen the ENERGY window too (since you intersect ring & shell)
-    shell_width = float(RING_SHELL_TIGHTEN) * float(ANNULUS_MULT) * base_width
+    shell_width = float(RING_SHELL_TIGHTEN) * base_width
 
     # Convert energy window into a radial window around p≈1 using vF = (d eps/dp)|_{p=1}:
     #   |eps-1| ≈ vF |p-1|
     # => |p-1| < shell_width / vF.
     vF_safe = max(float(vF), 1e-12)
-    # p_rad = shell_width / vF_safe
-    # p_rad = max(p_rad, 6.0 * dp)  # wider minimum ring thickness to reduce truncation artifacts (was 2.5)
-    
-    # # Apply annulus multiplier to include more radial layers (allows more radial structure)
-    # p_rad *= float(ANNULUS_MULT)
     p_rad = shell_width / vF_safe
-    p_rad = max(p_rad, float(ANNULUS_MIN_LAYERS) * dp)
+    p_rad = max(p_rad, 2.5 * dp)  # ensure multiple lattice points across ring
 
-    p_lo = max(1.0 - p_rad, float(ANNULUS_P_INNER_FLOOR))
-    p_hi = min(1.0 + p_rad, float(ANNULUS_P_OUTER_CAP))
-    ring = (P >= p_lo) & (P <= p_hi)
+    ring = np.abs(P - 1.0) < p_rad
     shell = np.abs(eps - 1.0) < shell_width
-    # return np.where((w > cutoff) & shell & ring)[0].astype(np.int32)
-    core = (w > cutoff)
-    wide = ring & shell & (w > float(ACTIVE_CUTOFF_RING))
-    return np.where(core | wide)[0].astype(np.int32)
+    return np.where((w > cutoff) & shell & ring)[0].astype(np.int32)
+
 
 if USE_NUMBA:
     @njit(cache=True, fastmath=True, parallel=True)
     def assemble_rows_numba_active(Ma, nx, ny, idx_map, half, eps, f,
-                                   active, pos, dp, lam_eff, pref, dimless_scale,
-                                   require_2p_active):
+                                   active, pos, dp, lam_eff, pref, dimless_scale):
         """
         Assemble CLOSED active-subspace operator Ma (shape Nactive x Nactive).
         NOTE: This implements a closed operator on the active subspace:
@@ -436,9 +406,9 @@ if USE_NUMBA:
                     if i2p < 0:
                         continue
 
-                    # If 2' is inactive: either drop event (closed) or keep it but omit +eta_{2'} (Dirichlet outside)
+                    # Require 2' active => closed operator on active subspace
                     a2p = pos[i2p]
-                    if a2p < 0 and require_2p_active == 1:
+                    if a2p < 0:
                         continue
 
                     e2p = eps[i2p]
@@ -457,8 +427,7 @@ if USE_NUMBA:
 
                     # (eta_{1'} + eta_{2'} - eta_1 - eta_2)
                     Ma[a1, a1p] += W
-                    if a2p >= 0:
-                        Ma[a1, a2p] += W
+                    Ma[a1, a2p] += W
                     Ma[a1, a1]  -= W
                     Ma[a1, a2]  -= W
 
@@ -479,8 +448,6 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
 
     # Temperature-following active shell
     active = active_indices(f, eps, P, Theta, ACTIVE_CUTOFF, dp_T, vF)
-    P_a = P[active]
-    print(f"[ACTIVE] P range: {P_a.min():.3f} .. {P_a.max():.3f} ; max|P-1|={np.max(np.abs(P_a-1.0)):.3f}")
     Nstates = nx.size
     Nactive = int(active.size)
     
@@ -522,8 +489,7 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
             assemble_rows_numba_active(
                 Ma, nx, ny, idx_map, half, eps, f,
                 active, pos,
-                float(dp_T), float(lam_eff), float(pref), float(dimless_scale),
-                1 if REQUIRE_2P_ACTIVE else 0
+                float(dp_T), float(lam_eff), float(pref), float(dimless_scale)
             )
         else:
             dp4 = dp_T ** 4
@@ -546,8 +512,8 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
                         if i2p < 0:
                             continue
                         a2p = int(pos[i2p])
-                        # If 2' is inactive: either drop event (closed) or keep it but omit +eta_{2'} (Dirichlet outside)
-                        if a2p < 0 and REQUIRE_2P_ACTIVE:
+                        # Require 2' active => closed operator on active subspace
+                        if a2p < 0:
                             continue
 
                         e2p, f2p = float(eps[i2p]), float(f[i2p])
@@ -560,10 +526,8 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
                         F = 0.5 * (F_fwd + F_bwd)
                         W = pref * dimless_scale * F * delta_eps * dp4
 
-                        # (eta_{1'} + eta_{2'} - eta_1 - eta_2)
                         Ma[a1, a1p] += W
-                        if a2p >= 0:
-                            Ma[a1, a2p] += W
+                        Ma[a1, a2p] += W
                         Ma[a1, a1]  -= W
                         Ma[a1, a2]  -= W
 
@@ -605,13 +569,9 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
         "dispersion": str(DISPERSION),
         "vF_dimless": float(vF),
         "T_phys": float(T_phys),
-        "require_2p_active": bool(REQUIRE_2P_ACTIVE),
         # Store only what eigen solver needs (active-only arrays):
         "active": active.astype(np.int32),
         "w_active": w_full[active].astype(np.float64),
-        "annulus_mult": float(ANNULUS_MULT),
-        "annulus_min_layers": float(ANNULUS_MIN_LAYERS),
-        "ring_shell_tighten": float(RING_SHELL_TIGHTEN),
     }
 
     os.makedirs(OUT_DIR, exist_ok=True)
@@ -622,7 +582,7 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
     print(f"Saved: {fname}")
 
     # Optional: parabolic-limit check (eps_nonpar ~ p^2 when alpha >> 1)
-    if VERIFY_PARABOLIC_LIMIT and DISPERSION == "nonparabolic" and alpha > 20.0:
+    if VERIFY_PARABOLIC_LIMIT and DISPERSION == "nonparabolic":
         if Nactive > 0:
             P_a = P[active]
             eps_a = eps[active]
@@ -672,4 +632,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
