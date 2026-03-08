@@ -418,12 +418,15 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms):
         #     continue
 
         # --- PATCH: always remove ALL conserved invariants for ALL m ---
-        remove = []#inv_orth[:] if len(inv_orth) > 0 else None
+        remove = inv_orth[:] if len(inv_orth) > 0 else None
 
         basis = []
         for kk in range(int(RADIAL_BASIS_K)):
             if BASIS_IN_X:
-                rk = y ** kk  # bounded [-1,1], includes constant mode exactly at kk=0
+                # Legendre polynomials on [-1,1]: better conditioned than monomials y^k
+                coeffs = np.zeros(kk + 1, dtype=np.float64)
+                coeffs[kk] = 1.0
+                rk = np.polynomial.legendre.legval(y, coeffs)
                 basis.append(rk * np.cos(m * theta))
                 basis.append(rk * np.sin(m * theta))
             else:
