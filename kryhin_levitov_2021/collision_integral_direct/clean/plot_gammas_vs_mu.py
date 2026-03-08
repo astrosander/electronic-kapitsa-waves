@@ -196,6 +196,8 @@ def plot_gammas_vs_mu(csv_path: str, out_prefix: str = "gammas_vs_mu"):
         y_min = np.min(all_y_valid)
         y_max = np.max(all_y_valid)
         plt.ylim(y_min, y_max)
+    
+    plt.ylim(1e-21, 1e1)
 
     plt.xlabel(r"$\mu$", fontsize=18)
     plt.ylabel(r"$\gamma_m$", fontsize=18)
@@ -213,7 +215,7 @@ def plot_gammas_vs_mu(csv_path: str, out_prefix: str = "gammas_vs_mu"):
     print(f"Saved plots: {png_path}, {svg_path}")
 
     # ---- Log-derivative slope figure: d log(gamma_m) / d log(mu) ----
-    plt.figure(figsize=(8, 6.5))
+    plt.figure(figsize=(5, 4.5))
     
     def compute_smooth_slope(log_mu, log_y, window=10):
         """
@@ -258,7 +260,7 @@ def plot_gammas_vs_mu(csv_path: str, out_prefix: str = "gammas_vs_mu"):
         mu_m = mus[mask]
         log_mu = np.log(mu_m)
         log_y = np.log(y[mask])
-        slope = compute_smooth_slope(log_mu, log_y, window=20)
+        slope = compute_smooth_slope(log_mu, log_y, window=40)
         
         # Only plot points where slope is valid
         valid_slope = np.isfinite(slope)
@@ -283,6 +285,7 @@ def plot_gammas_vs_mu(csv_path: str, out_prefix: str = "gammas_vs_mu"):
 
     plt.legend(frameon=True, fancybox=False, edgecolor="black", framealpha=0.9)
     plt.xlim(1e-2, 1e5)
+    plt.ylim(-5, -1)
 
     slope_svg_path = f"{out_prefix}_log_slope.svg"
     plt.tight_layout()
