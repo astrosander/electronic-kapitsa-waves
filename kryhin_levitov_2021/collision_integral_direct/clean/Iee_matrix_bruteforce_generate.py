@@ -67,7 +67,7 @@ dp   = 0.08         # Δp
 #
 # Non-parabolic bilayer dispersion in these units is:
 #   eps(p) = sqrt(alpha^2 + (1+2alpha) p^2) - alpha,  alpha = U / μ.
-# Parabolic limit (alpha >> 1) is eps(p) -> p^2. 
+# Parabolic limit (alpha >> 1) is eps(p) -> p^2.
 MU_PHYS = 1.0       # chemical potential μ (energy units) [default; can be swept over MU_LIST]
 U_BAND  = 1.0      # band parameter U (energy units)
 V_BAND  = 1.0        # velocity scale v (drops out after nondimensionalization, kept for metadata)
@@ -117,7 +117,7 @@ THETA_PBOX_SWITCH = 1e-3
 # PATCH (strong): push much higher ring accuracy.
 # Smaller dp is necessary to expose clean T^2 (even m) and especially T^4 (odd m).
 # We will *not* try to keep file sizes constant here; accuracy first.
-RING_PIXEL_BOOST = 2.0      # strong; try 2.5–4.0
+RING_PIXEL_BOOST = 1.5      # strong; try 2.5–4.0
 RING_SHELL_TIGHTEN = 0.45   # tighter ring (suppresses bulk contamination)
 
 # Compute pixel ratios for both regions
@@ -167,10 +167,15 @@ HBAR = 1.0         # ħ (set 1 for dimensionless)
 # PATCH: include the asymptotic window (1e-4 to 1e-3) where T^4 scaling should appear
 # Also include overlap with higher temperatures for continuity
 # Choose fixed physical temperatures (same units as MU_PHYS and U_BAND)
+
 T_PHYS_LIST = [U_BAND]   # e.g. T=U or T=U/10
+
 # print(T_PHYS_LIST)
 # Sweep over chemical potential values mu in dimensionless units (energy units of MU_PHYS)
-MU_LIST = np.geomspace(1e-1, 1e1, 10)#[100]#[100]#[0.1, 1, 10]#np.geomspace(1e-2, 1e2, 100)
+
+# Non-degenerate / classical: μ < 0 at fixed T_phys (Θ = T/μ < 0).
+MU_LIST = -np.geomspace(1e-2, 1e2, 10)
+
 # active-shell cutoff: only include states where f(1-f) > cutoff
 ACTIVE_CUTOFF = 1e-8
 
@@ -190,8 +195,8 @@ BUILD_ACTIVE_ONLY = True
 def _alpha_from_params(mu_phys: float, u_band: float) -> float:
     mu = float(mu_phys)
     u  = float(u_band)
-    if mu <= 0.0:
-        raise ValueError("MU_PHYS must be > 0")
+    if mu == 0.0:
+        raise ValueError("MU_PHYS must be nonzero (alpha = U/μ is undefined at μ=0)")
     if u < 0.0:
         raise ValueError("U_BAND must be >= 0")
     return u / mu
@@ -232,8 +237,8 @@ def fermi_dirac_eps(eps: np.ndarray, Theta: float) -> np.ndarray:
     Theta here is dimensionless T/μ (consistent with eps dimensionless ε/μ).
     """
     T = float(Theta)
-    if T <= 0.0:
-        # T->0 limit: step at eps=1
+    if T == 0.0:
+        # T->0 limit: step at eps=1 (only literal Θ=0; Θ<0 from μ<0 still uses FD below)
         return (eps < 1.0).astype(np.float64)
     x = (eps - 1.0) / T
     x = np.clip(x, -700.0, 700.0)
@@ -256,33 +261,29 @@ def even_ge(n: int) -> int:
 
 
 def pbox_for_theta(theta: float) -> float:
-    """Return appropriate pbox requirement based on temperature."""
-    t = float(theta)
+    """Return appropriate pbox requirement based on |Θ| (Θ = T/μ may be negative for μ < 0)."""
+    t = abs(float(theta))
     return float(PBOX_MIN_LOW) if (t <= float(THETA_PBOX_SWITCH)) else float(PBOX_MIN_HIGH)
 
 
 def choose_dp(theta: float) -> float:
     """
-    Choose dp to keep Theta/dp^2 constant (constant ring pixels / Nactive).
-    Uses piecewise anchors: low-T (0.01-0.1) and high-T (0.1-1) regions.
+    Choose dp to keep |Θ|/dp^2 constant (constant ring pixels / Nactive).
+    Uses piecewise anchors: low-|Θ| and high-|Θ| regions (Θ = T/μ may be negative for μ < 0).
     If PRIORITIZE_SIZE_OVER_RING is True, allows dp to exceed DP_RING_MAX to maintain size.
     """
-    theta_val = float(theta)
-    pbox = pbox_for_theta(theta_val)
-    
-    # Choose anchor based on temperature range
-    if theta_val < THETA_CROSSOVER:
-        # Low-T region: use low-T anchor
+    theta_abs = abs(float(theta))
+    pbox = pbox_for_theta(theta_abs)
+
+    # Choose anchor based on |Θ| range
+    if theta_abs < THETA_CROSSOVER:
         pixel_ratio = PIXEL_RATIO_LOW
-        dp_T = math.sqrt(theta_val / pixel_ratio)
-        # Apply ring cap only if prioritizing ring detail over size
+        dp_T = math.sqrt(theta_abs / pixel_ratio)
         if DP_RING_MAX is not None and not PRIORITIZE_SIZE_OVER_RING:
             dp_T = min(dp_T, float(DP_RING_MAX))
     else:
-        # High-T region: use high-T anchor
         pixel_ratio = PIXEL_RATIO_HIGH
-        dp_T = math.sqrt(theta_val / pixel_ratio)
-        # No ring cap for high-T (dp is already large)
+        dp_T = math.sqrt(theta_abs / pixel_ratio)
     
     # --- CRITICAL: ensure the box can actually contain the required momentum range ---
     # If dp is too small, choose_Nmax(dp) would demand Nmax > NMAX_MAX, then clamp happens,
@@ -341,7 +342,7 @@ def active_indices(f: np.ndarray, eps: np.ndarray, P: np.ndarray, Theta: float,
     # This avoids the low-T "sqrt(T)" floor that comes from using dp in eps-space.
     SHELL_REL = 20.0
     SHELL_DP2_REL = 80.0
-    base_width = max(SHELL_REL * Theta, SHELL_DP2_REL * (dp * dp))
+    base_width = max(SHELL_REL * abs(float(Theta)), SHELL_DP2_REL * (dp * dp))
     shell_width = float(RING_SHELL_TIGHTEN) * base_width
 
     # Convert energy window into a radial window around p≈1 using vF = (d eps/dp)|_{p=1}:
@@ -465,9 +466,9 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
               f"Low-T eigenvalues will be garbage. Increase NMAX_MAX or relax dp(theta) scaling / pbox.")
 
     # Resolution warning (this is *the* main reason your curves don't scale at very low T on a Cartesian grid)
-    if (dp_T * dp_T) > (0.5 * Theta):
-        print(f"WARNING: dp^2={dp_T*dp_T:.3e} is not << Theta={Theta:.3e}. "
-              f"Low-T scaling will saturate/fail. Consider dp<=sqrt(Theta_min)/3.")
+    if (dp_T * dp_T) > (0.5 * abs(float(Theta))):
+        print(f"WARNING: dp^2={dp_T*dp_T:.3e} is not << |Theta|={abs(float(Theta)):.3e}. "
+              f"Low-T scaling will saturate/fail. Consider dp<=sqrt(|Theta|_min)/3.")
 
     # map global index -> active subspace index (or -1 if inactive)
     pos = -np.ones(Nstates, dtype=np.int32)
@@ -567,6 +568,7 @@ def build_matrix_for_theta(Theta: float, Nmax_T: int, dp_T: float, T_phys: float
         "shift_y": float(SHIFT_Y),
         # band / dispersion metadata
         "mu_phys": float(MU_PHYS),
+        "mu": float(MU_PHYS),  # alias for collect_gammas / filename parsers
         "U_band": float(U_BAND),
         "v_band": float(V_BAND),
         "alpha": float(alpha),
@@ -620,14 +622,14 @@ def main():
                 dp_T = choose_dp(Theta)
                 Nmax_T = choose_Nmax(dp_T, Theta)
                 # Determine which anchor was used
-                if Theta < THETA_CROSSOVER:
+                if abs(Theta) < THETA_CROSSOVER:
                     pixel_ratio = PIXEL_RATIO_LOW
-                    anchor_info = f"low-T anchor"
+                    anchor_info = f"low-|Theta| anchor"
                 else:
                     pixel_ratio = PIXEL_RATIO_HIGH
-                    anchor_info = f"high-T anchor"
+                    anchor_info = f"high-|Theta| anchor"
                 print(f"[AUTO_GRID] Theta={Theta:.6g} -> dp={dp_T:.8g}, Nmax={Nmax_T} ({anchor_info}) "
-                      f"(Theta/dp^2={Theta/(dp_T*dp_T):.3f}, target={pixel_ratio:.3f})")
+                      f"(|Theta|/dp^2={abs(Theta)/(dp_T*dp_T):.3f}, target={pixel_ratio:.3f})")
             else:
                 dp_T = float(dp)
                 Nmax_T = int(Nmax)

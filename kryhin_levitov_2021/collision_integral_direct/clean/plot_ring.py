@@ -61,7 +61,7 @@ plt.rcParams["text.usetex"] = False
 plt.rcParams["font.family"] = "serif"
 plt.rcParams["legend.frameon"] = False
 
-DEFAULT_MATRIX_FILE = r"Matrixes_bruteforce\M_Iee_nonparabolic_mu2.15443_U1_N320_dp0.13649477_T0.4641588834_Tphys1.pkl"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_nonparabolic_mu2.5_U1_N320_dp0.03_T0.04_Tphys0.1.pkl"
+DEFAULT_MATRIX_FILE = r"Matrixes_bruteforce\M_Iee_nonparabolic_mu-1.29155_U1_N320_dp0.2035619_T0.7742636827_Tphys1.pkl"#"D:\Рабочая папка\GitHub\electronic-kapitsa-waves\kryhin_levitov_2021\collision_integral_direct\Matrixes_bruteforce\M_Iee_nonparabolic_mu2.5_U1_N320_dp0.03_T0.04_Tphys0.1.pkl"
 
 
 # -----------------------------
@@ -384,9 +384,10 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms):
     dp = float(meta.get("dp", 0.0))
 
     # NEW: energy variable x = (eps-1)/Theta as in the paper eigenproblem
+    # With eps = ε/μ and Theta = T/μ (signed), x = (ε-μ)/T for any μ ≠ 0 (including μ < 0).
     eps_a = reconstruct_eps_active(meta, px, py)
-    if Theta <= 0:
-        raise ValueError("Theta must be > 0 for x=(eps-1)/Theta basis.")
+    if Theta == 0.0:
+        raise ValueError("Theta must be nonzero for x=(eps-1)/Theta basis.")
     x = (eps_a - 1.0) / Theta
     # Bounded coordinate improves numerical conditioning of polynomial basis
     y = np.tanh(0.5 * x)
@@ -418,20 +419,17 @@ def compute_eigenfunctions_by_mode(Ma, meta, ms):
         #     continue
 
         # --- PATCH: always remove ALL conserved invariants for ALL m ---
-        remove = inv_orth[:] if len(inv_orth) > 0 else None
+        remove = []#inv_orth[:] if len(inv_orth) > 0 else None
 
         basis = []
         for kk in range(int(RADIAL_BASIS_K)):
             if BASIS_IN_X:
-                # Legendre polynomials on [-1,1]: better conditioned than monomials y^k
-                coeffs = np.zeros(kk + 1, dtype=np.float64)
-                coeffs[kk] = 1.0
-                rk = np.polynomial.legendre.legval(y, coeffs)
+                rk = y ** kk  # bounded [-1,1], includes constant mode exactly at kk=0
                 basis.append(rk * np.cos(m * theta))
                 basis.append(rk * np.sin(m * theta))
             else:
                 # legacy (P-based) basis
-                sigma_p = max(RADIAL_SIGMA_P_MULT * (0.5 * Theta), 4.0 * dp, 1e-12)
+                sigma_p = max(RADIAL_SIGMA_P_MULT * (0.5 * abs(Theta)), 4.0 * dp, 1e-12)
                 z = (P - 1.0) / sigma_p
                 g = np.exp(-0.5 * z * z)
                 rk = z ** kk

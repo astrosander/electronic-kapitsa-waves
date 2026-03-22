@@ -155,49 +155,91 @@ def plot_gammas_vs_mu(csv_path: str, out_prefix: str = "gammas_vs_mu"):
             # label=f"m={m}",
         )
 
-    # Add reference power-law slopes: mu^{-1}, mu^{-3}, mu^{-5}
-    # Normalize them to pass through a representative point of m=2 for visual comparison
-    mask_pos = mus > 0
-    if np.any(mask_pos):
-        mus_pos = mus[mask_pos]
-        idx_mid = np.where(mask_pos)[0][len(mus_pos) // 2]
-        mu_ref = mus[idx_mid]
-
-        y2 = gammas[2]
-        if np.isfinite(y2[idx_mid]) and y2[idx_mid] > 0:
-            gamma_ref = y2[idx_mid]
-        else:
-            # Fallback: use median positive finite value of gamma_2
-            y2_valid = y2[np.isfinite(y2) & (y2 > 0)]
-            gamma_ref = np.median(y2_valid) if y2_valid.size > 0 else 1.0
-
-        # Use distinct colors for reference lines
-        for p, ls, lab, col in [(-1, ":",  r"$\mu^{-1}$", "black"),
-                                (-3, "--", r"$\mu^{-3}$", "red"),
-                                (-5, "-.", r"$\mu^{-5}$", "blue")]:
-            ref = gamma_ref * (mus / mu_ref) ** p
-            plt.plot(
-                mus,
-                ref,
-                linestyle=ls,
-                color=col,
-                linewidth=2.5,
-                alpha=0.8,
-                label=lab,
-            )
-
-    # Use log-log scale
-    plt.xscale("log")
+    has_neg = np.any(mus < 0)
+    has_pos = np.any(mus > 0)
     plt.yscale("log")
-    plt.xlim(1e-2, 1e5)
-    
-    # Set ylim based on data curves only (min/max of valid gamma values)
+    if has_neg and has_pos:
+        plt.xscale("symlog", linthresh=np.maximum(1e-4, 0.01 * np.min(mus[mus > 0])))
+    elif has_neg:
+        plt.xscale("symlog", linthresh=np.maximum(1e-4, 0.01 * np.min(np.abs(mus[mus != 0]))))
+    else:
+        plt.xscale("log")
+
+    mu_finite = mus[np.isfinite(mus)]
+    if mu_finite.size > 0:
+        pad = 0.05 * (np.max(mu_finite) - np.min(mu_finite) + 1e-300)
+        plt.xlim(np.min(mu_finite) - pad, np.max(mu_finite) + pad)
+        plt.xlim(-10000.0, -5)
+        print(np.min(mu_finite) - pad, np.max(mu_finite) + pad)
+        # plt.xlim()
+
+    # plt.xlim(1e-4,1e-0)
+
     if all_y_valid:
         y_min = np.min(all_y_valid)
         y_max = np.max(all_y_valid)
-        plt.ylim(y_min, y_max)
-    
-    plt.ylim(1e-21, 1e1)
+        plt.ylim(0.5 * y_min, 2.0 * y_max)
+
+    # Power-law guides: γ ∝ (|μ|/μ₀)^p with μ₀=γ₀=1e-9, scaled so each curve hits y_anchor at μ_mid.
+    # Raw templates often span many decades on μ∈[-1e4,-5] and disappear under log-y clipping; we (i) build
+    # μ on [max(xmin,μmin), min(xmax,μmax)] from the CSV, (ii) only draw points with ymin<ref_y<ymax.
+    ax = plt.gca()
+    xmin, xmax = ax.get_xlim()
+    ymin, ymax = ax.get_ylim()
+    if not (np.isfinite(ymin) and np.isfinite(ymax) and ymin > 0 and ymax > ymin):
+        ymin, ymax = 1e-30, 1.0
+    mus_f = mus[np.isfinite(mus)]
+    if mus_f.size > 0:
+        lo = max(xmin, float(np.min(mus_f)))
+        hi = min(xmax, float(np.max(mus_f)))
+        if lo > hi:
+            lo, hi = xmin, xmax
+        mu_line = np.linspace(lo, hi, 1200)
+    else:
+        mu_line = np.linspace(xmin, xmax, 1200)
+
+    REF_MU = 1e-9
+    REF_GAMMA = 1e-9
+    ref_mag = np.maximum(np.abs(mu_line), REF_MU)
+    mu_mid = 0.5 * (float(mu_line[0]) + float(mu_line[-1]))
+    ref_mag_mid = max(abs(mu_mid), REF_MU)
+    if ymin > 0 and ymax > 0 and np.isfinite(ymin) and np.isfinite(ymax):
+        y_anchor = float(np.sqrt(ymin * ymax))
+    else:
+        y_anchor = 1e-9
+
+    y_lo = ymin * 0.98
+    y_hi = ymax * 1.02
+
+    for p, ls, lab, col in [
+        (-2, ":", r"$\mu^{-2}$", "black"),
+        (-3, "--", r"$\mu^{-3}$", "red"),
+        (-5, "-.", r"$\mu^{-5}$", "blue"),
+        # (1, "-", r"$\mu^{1}$", "forestgreen"),
+        # (3, "--", r"$\mu^{3}$", "darkorange"),
+        # (5, "-.", r"$\mu^{5}$", "purple"),
+    ]:
+        ref_raw = REF_GAMMA * (ref_mag / REF_MU) ** p
+        ref_raw_mid = REF_GAMMA * (ref_mag_mid / REF_MU) ** p
+        if not np.isfinite(ref_raw_mid) or ref_raw_mid <= 0:
+            continue
+        ref_y = ref_raw * (y_anchor / ref_raw_mid)
+        ok = np.isfinite(ref_y) & (ref_y > 0) & (ref_y >= y_lo) & (ref_y <= y_hi)
+        if np.count_nonzero(ok) < 2:
+            ok = np.isfinite(ref_y) & (ref_y > 0)
+        if np.count_nonzero(ok) < 2:
+            continue
+        ax.plot(
+            mu_line[ok],
+            ref_y[ok],
+            linestyle=ls,
+            color=col,
+            linewidth=2.5,
+            alpha=0.9,
+            label=lab,
+            zorder=5,
+            clip_on=False,
+        )
 
     plt.xlabel(r"$\mu$", fontsize=18)
     plt.ylabel(r"$\gamma_m$", fontsize=18)
@@ -206,7 +248,7 @@ def plot_gammas_vs_mu(csv_path: str, out_prefix: str = "gammas_vs_mu"):
 
     png_path = f"{out_prefix}.png"
     svg_path = f"{out_prefix}.svg"
-
+    # plt.xlim(1e-4, 1e5)
     plt.tight_layout()
     plt.savefig(png_path, dpi=300, bbox_inches="tight", pad_inches=0.1)
     plt.savefig(svg_path, bbox_inches="tight", pad_inches=0.1)
@@ -214,9 +256,7 @@ def plot_gammas_vs_mu(csv_path: str, out_prefix: str = "gammas_vs_mu"):
 
     print(f"Saved plots: {png_path}, {svg_path}")
 
-    # ---- Log-derivative slope figure: d log(gamma_m) / d log(mu) ----
-    plt.figure(figsize=(5, 4.5))
-    
+    # ---- Log-derivative slope: d log(gamma_m) / d log|mu| on each sign (classical vs degenerate) ----
     def compute_smooth_slope(log_mu, log_y, window=10):
         """
         Compute derivative using a window of points for smoothing.
@@ -251,48 +291,111 @@ def plot_gammas_vs_mu(csv_path: str, out_prefix: str = "gammas_vs_mu"):
                 slope[i] = coeffs[0]
         
         return slope
-    
-    for m in range(2, 21):
-        y = gammas[m]
-        mask = np.isfinite(y) & (y > 0) & (mus > 0)
-        if np.count_nonzero(mask) < 10:  # Need at least 10 points for smoothing
-            continue
-        mu_m = mus[mask]
-        log_mu = np.log(mu_m)
-        log_y = np.log(y[mask])
-        slope = compute_smooth_slope(log_mu, log_y, window=40)
-        
-        # Only plot points where slope is valid
-        valid_slope = np.isfinite(slope)
-        if np.any(valid_slope):
-            plt.plot(
-                mu_m[valid_slope],
-                slope[valid_slope],
-                linestyle="-",
-                color=color_map[m],
-                # label=f"m={m}",
-            )
 
-    plt.xscale("log")
-    plt.xlabel(r"$\mu$", fontsize=18)
-    plt.ylabel(r"$d \log \gamma_m / d \log \mu$", fontsize=18)
-    plt.grid(True, alpha=0.3, linestyle="--", linewidth=0.5)
+    def plot_slope_panel(ax, mask, xvals, ylab, title, xscale, xlim, xlabel):
+        ax.set_title(title, fontsize=14)
+        for m in range(2, 21):
+            y = gammas[m]
+            msk = np.isfinite(y) & (y > 0) & mask
+            if np.count_nonzero(msk) < 10:
+                continue
+            x_plot = xvals[msk]
+            log_mu = np.log(np.maximum(x_plot, 1e-300))
+            log_y = np.log(y[msk])
+            slope = compute_smooth_slope(log_mu, log_y, window=min(40, max(10, np.count_nonzero(msk) // 2)))
+            valid_slope = np.isfinite(slope)
+            if np.any(valid_slope):
+                ax.plot(
+                    x_plot[valid_slope],
+                    slope[valid_slope],
+                    linestyle="-",
+                    color=color_map[m],
+                )
+        ax.set_xscale(xscale)
+        ax.set_xlabel(xlabel, fontsize=18)
+        ax.set_ylabel(ylab, fontsize=18)
+        ax.grid(True, alpha=0.3, linestyle="--", linewidth=0.5)
+        ax.axhline(-1, color="black", linestyle=":", linewidth=2.5, alpha=0.7, label=r"$-1$")
+        ax.axhline(-3, color="red", linestyle="--", linewidth=2.5, alpha=0.7, label=r"$-3$")
+        ax.axhline(-5, color="blue", linestyle="-.", linewidth=2.5, alpha=0.7, label=r"$-5$")
+        ax.legend(frameon=True, fancybox=False, edgecolor="black", framealpha=0.9)
+        ax.set_ylim(-5, -1)
+        if xlim is not None:
+            ax.set_xlim(*xlim)
 
-    # Reference horizontal lines corresponding to slopes mu^{-1}, mu^{-3} and mu^{-5}
-    plt.axhline(-1, color="black", linestyle=":", linewidth=2.5, alpha=0.7, label=r"$-1$")
-    plt.axhline(-3, color="red", linestyle="--", linewidth=2.5, alpha=0.7, label=r"$-3$")
-    plt.axhline(-5, color="blue", linestyle="-.", linewidth=2.5, alpha=0.7, label=r"$-5$")
-
-    plt.legend(frameon=True, fancybox=False, edgecolor="black", framealpha=0.9)
-    plt.xlim(1e-2, 1e5)
-    plt.ylim(-5, -1)
-
-    slope_svg_path = f"{out_prefix}_log_slope.svg"
-    plt.tight_layout()
-    plt.savefig(slope_svg_path, bbox_inches="tight", pad_inches=0.1)
-    plt.close()
-
-    print(f"Saved log-slope plot: {slope_svg_path}")
+    mask_neg = mus < 0
+    mask_pos = mus > 0
+    if np.any(mask_neg) and np.any(mask_pos):
+        fig, (axn, axp) = plt.subplots(1, 2, figsize=(11, 4.5))
+        abs_mu = np.abs(mus)
+        plot_slope_panel(
+            axn,
+            mask_neg,
+            abs_mu,
+            r"$d \log \gamma_m / d \log |\mu|$",
+            r"$\mu < 0$ (non-degenerate / classical branch)",
+            "log",
+            None,
+            r"$|\mu|$",
+        )
+        mus_neg = mus[mask_neg]
+        if mus_neg.size:
+            axn.set_xlim(1.1 * np.min(abs_mu[mask_neg]), 0.9 * np.max(abs_mu[mask_neg]))
+        plot_slope_panel(
+            axp,
+            mask_pos,
+            mus,
+            r"$d \log \gamma_m / d \log \mu$",
+            r"$\mu > 0$ (degenerate branch)",
+            "log",
+            None,
+            r"$\mu$",
+        )
+        mus_pos_only = mus[mask_pos]
+        if mus_pos_only.size:
+            axp.set_xlim(0.9 * np.min(mus_pos_only), 1.1 * np.max(mus_pos_only))
+        plt.tight_layout()
+        plt.savefig(f"{out_prefix}_log_slope_panels.svg", bbox_inches="tight", pad_inches=0.1)
+        plt.close()
+        print(f"Saved log-slope panels: {out_prefix}_log_slope_panels.svg")
+    elif np.any(mask_pos):
+        plt.figure(figsize=(5, 4.5))
+        plot_slope_panel(
+            plt.gca(),
+            mask_pos,
+            mus,
+            r"$d \log \gamma_m / d \log \mu$",
+            "",
+            "log",
+            (1e-2, 1e5),
+            r"$\mu$",
+        )
+        slope_svg_path = f"{out_prefix}_log_slope.svg"
+        plt.tight_layout()
+        plt.savefig(slope_svg_path, bbox_inches="tight", pad_inches=0.1)
+        plt.close()
+        print(f"Saved log-slope plot: {slope_svg_path}")
+    elif np.any(mask_neg):
+        plt.figure(figsize=(5, 4.5))
+        abs_mu = np.abs(mus)
+        plot_slope_panel(
+            plt.gca(),
+            mask_neg,
+            abs_mu,
+            r"$d \log \gamma_m / d \log |\mu|$",
+            "",
+            "log",
+            None,
+            r"$|\mu|$",
+        )
+        mus_neg = mus[mask_neg]
+        if mus_neg.size:
+            plt.xlim(1.1 * np.min(abs_mu[mask_neg]), 0.9 * np.max(abs_mu[mask_neg]))
+        slope_svg_path = f"{out_prefix}_log_slope.svg"
+        plt.tight_layout()
+        plt.savefig(slope_svg_path, bbox_inches="tight", pad_inches=0.1)
+        plt.close()
+        print(f"Saved log-slope plot: {slope_svg_path}")
 
 
 if __name__ == "__main__":

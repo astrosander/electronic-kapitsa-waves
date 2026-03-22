@@ -18,11 +18,12 @@ def extract_mu_from_meta_or_name(meta: Dict, filename: str) -> float:
     fall back to parsing it from the filename, assuming a pattern like
     ..._mu2.15443_U1_...
     """
-    if "mu" in meta:
-        try:
-            return float(meta["mu"])
-        except Exception:
-            pass
+    for key in ("mu_phys", "mu"):
+        if key in meta:
+            try:
+                return float(meta[key])
+            except Exception:
+                pass
 
     # Fallback: parse from filename
     base = os.path.basename(filename)
